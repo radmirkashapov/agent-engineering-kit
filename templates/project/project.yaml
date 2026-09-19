@@ -1,0 +1,13 @@
+version: 1
+id: example-project
+name: Example Project
+repositories:
+  - id: root
+    path: .
+components: []
+documentation:
+  index: docs/INDEX.md
+  roots:
+    - docs
+memory:
+  namespace: example-project

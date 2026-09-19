@@ -1,0 +1,6 @@
+version: 1
+id: cline
+entrypoint: AI.md
+instructions: AGENTS.md
+skills: skills
+mcp: mcp/registry.yaml

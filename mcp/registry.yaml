@@ -1,0 +1,45 @@
+version: 1
+servers:
+  - id: codebase-memory
+    category: core
+    transport: stdio
+    enabled: true
+    required: false
+    command: codebase-memory-mcp
+    args: []
+    state: native
+    policy: configurable
+
+  - id: serena
+    category: core
+    transport: stdio
+    enabled: true
+    required: false
+    command: serena-mcp
+    args: []
+    state: native
+    policy: configurable
+
+  - id: github
+    category: scm
+    transport: stdio
+    enabled: false
+    required: false
+    command: github-mcp-server
+    args: []
+    environment:
+      GITHUB_TOKEN: env:GITHUB_TOKEN
+    state: stateless
+    policy: locked
+
+  - id: sonar
+    category: quality
+    transport: stdio
+    enabled: false
+    required: false
+    command: sonar-mcp
+    args: []
+    environment:
+      SONAR_TOKEN: env:SONAR_TOKEN
+    state: native
+    policy: configurable

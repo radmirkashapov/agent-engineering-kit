@@ -1,0 +1,6 @@
+version: 1
+id: claude-code
+entrypoint: AI.md
+instructions: CLAUDE.md
+skills: skills
+mcp: mcp/registry.yaml

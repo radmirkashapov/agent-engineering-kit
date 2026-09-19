@@ -1,0 +1,20 @@
+repos:
+  - repo: local
+    hooks:
+      - id: agent-kit-validate
+        name: agent-kit corporate baseline validation
+        entry: python tools/precommit.py validate --ci
+        language: python
+        additional_dependencies:
+          - PyYAML>=6.0.2,<7
+          - jsonschema>=4.23,<5
+        pass_filenames: false
+      - id: agent-kit-tests
+        name: agent-kit tests
+        entry: python tools/precommit.py tests
+        language: python
+        additional_dependencies:
+          - PyYAML>=6.0.2,<7
+          - jsonschema>=4.23,<5
+          - pytest>=8.3,<10
+        pass_filenames: false

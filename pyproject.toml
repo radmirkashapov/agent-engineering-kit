@@ -1,0 +1,31 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agent-engineering-kit"
+dynamic = ["version"]
+description = "Универсальный локальный engineering kit для AI coding agents"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+  "PyYAML>=6.0.2,<7",
+  "jsonschema>=4.23,<5",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.3,<10", "pytest-cov>=6,<8"]
+
+[project.scripts]
+agent-kit = "agent_engineering_kit.cli:main"
+
+[tool.hatch.version]
+path = "src/agent_engineering_kit/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agent_engineering_kit"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
