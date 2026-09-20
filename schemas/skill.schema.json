@@ -2,11 +2,11 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent-engineering-kit.local/schemas/skill.schema.json",
   "type": "object",
-  "required": ["version", "id", "description", "requires"],
+  "required": ["version", "name", "description", "requires"],
   "additionalProperties": false,
   "properties": {
     "version": { "const": 1 },
-    "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+    "name": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
     "description": { "type": "string", "minLength": 1 },
     "policy": { "enum": ["configurable", "enforced"] },
     "requires": {

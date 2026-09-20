@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -135,6 +134,16 @@ def _probable_components(root: Path, repositories: list[dict[str, str]]) -> list
     return components
 
 
+def detect_project(root: Path) -> dict[str, Any]:
+    """Read-only preview logical topology."""
+    root = root.expanduser().resolve()
+    existing = find_project(root)
+    if existing:
+        return {"root": str(existing.root), "manifest": str(existing.manifest_path), "id": existing.identifier, "repositories": existing.manifest.get("repositories", []), "components": existing.manifest.get("components", [])}
+    repositories = _find_repositories(root)
+    return {"root": str(root), "manifest": None, "id": slugify(root.name), "repositories": repositories, "components": _probable_components(root, repositories)}
+
+
 def register_memory(project: LogicalProject, paths: KitPaths) -> Path:
     ensure_runtime(paths)
     memory = paths.projects / project.identifier
@@ -154,21 +163,18 @@ def register_memory(project: LogicalProject, paths: KitPaths) -> Path:
 
 def register_integrations(project: LogicalProject, repository: Path, paths: KitPaths) -> Path:
     """Зафиксировать local mapping, не забирая native state у MCP."""
+    from .mcp_manager import McpManager
+
     memory = register_memory(project, paths)
-    registry = load_yaml(repository / "mcp" / "registry.yaml")
     integrations = []
-    for server in registry.get("servers", []):
-        available = False
-        if server.get("transport") == "stdio":
-            available = bool(shutil.which(server.get("command", "")))
-        elif server.get("transport") in {"http", "sse"}:
-            available = bool(server.get("endpoint"))
+    for server in McpManager(repository, paths).list(project):
         integrations.append(
             {
                 "id": server["id"],
-                "enabled": bool(server.get("enabled", True)),
-                "available": available,
-                "state_owner": "mcp-native" if server.get("state") == "native" else "stateless",
+                "enabled": server["enabled"],
+                "available": server["available"],
+                "status": server["status"],
+                "state_owner": "mcp-native",
             }
         )
     target = memory / "integrations" / "registry.yaml"

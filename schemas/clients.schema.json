@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object", "additionalProperties": false, "required": ["version", "clients"],
+  "properties": {
+    "version": {"const": 1},
+    "clients": {"type": "array", "minItems": 5, "items": {
+      "type": "object", "additionalProperties": false, "required": ["id", "instructions", "skills", "mcp"],
+      "properties": {"id": {"type": "string"}, "instructions": {"type": "string"}, "skills": {"type": "string"}, "mcp": {"type": "string"}}
+    }}
+  }
+}

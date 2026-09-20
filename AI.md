@@ -4,7 +4,7 @@
 
 ## Session bootstrap
 
-1. При старте новой session запусти `agent-kit sync`; текущая Git revision записывается в local runtime.
+1. При старте новой session запусти `agent-kit resync`; текущая Git revision и effective snapshot записываются в local state.
 2. Не меняй revision kit посреди активной task.
 3. Найди logical project по ближайшему вверх `.ai-team/project.yaml`.
 4. Если manifest отсутствует, предложи `agent-kit project init`, не приравнивай Git repository к project автоматически.
@@ -14,14 +14,14 @@
 
 ## Version и paths
 
-Версия kit находится в `app.version`, точная deployed revision — в Git `HEAD`, session revision — в `<data>/runtime/session-revision.json`.
+Версия kit находится в `app.version`, точная deployed revision — в Git `HEAD`, session revision — в `<data>/state/session-revision.json`.
 
 Canonical path resolver реализован в `agent_engineering_kit.paths`. На Unix data root: `$XDG_DATA_HOME/agent-engineering-kit` или `~/.local/share/agent-engineering-kit`; на Windows: `%LOCALAPPDATA%\agent-engineering-kit`. `AGENT_KIT_DATA_HOME` и `AGENT_KIT_REPOSITORY` — явные deployment overrides.
 
 Всегда сохраняй границу:
 
 ```text
-repository != runtime != project memory != MCP-native state != client-native state
+repository != installations != control-plane state != project memory != MCP-native state != client-native state
 ```
 
 ## Logical project
@@ -42,18 +42,19 @@ Local memory находится в `<data>/projects/<project-id>/` и содер
 - `rules/security.md`
 - `rules/context.md`
 - `rules/models.md`
+- `rules/external-tools.md`
 
 Project committed instructions могут уточнять global rules, но не ослаблять enforced security, model policy и mandatory validation.
 
 ## Skills и agents
 
-Skills обнаруживаются как `skills/*/SKILL.md`. Читай YAML front matter и применяй skill, когда task соответствует `description`. First-party skills находятся только в `skills/`; third-party code — только в `upstream/`.
+First-party skills находятся в `skills/first-party/*/SKILL.md`. External skills разрешаются через `catalog/skills.yaml` + lock в machine-local installation; Git checkout никогда не содержит их тела. Используй только `ACTIVE` effective exposure.
 
 Agent roles находятся в `agents/*.md`. Role выбирается по задаче: `scout` для discovery, `implementer` для изменения, `reviewer` для review, `verify` для проверки, `auditor` для границ/policy. `policy: enforced` нельзя отключить local override.
 
 ## MCP
 
-Источник configuration intent — `mcp/registry.yaml`. Выбирай минимальный набор по category/capability, учитывай `enabled`, `required` и `policy`. Secrets читаются только из указанной environment variable. Базы/cache MCP остаются в native storage; kit хранит лишь local mapping integration.
+Источник configuration intent — `mcp/registry.yaml`, version intent — `locks/mcp.lock.yaml`. Core MCP обязательны; conditional MCP выбираются по project signals. Secrets читаются только из environment/native OAuth. Базы/cache MCP остаются в native storage.
 
 ## Model policy
 

@@ -5,7 +5,10 @@ import shutil
 
 import pytest
 
-from agent_engineering_kit.overrides import validate_overrides
+from agent_engineering_kit.overrides import apply_local_overrides, validate_overrides
+from agent_engineering_kit.errors import AgentKitError
+from agent_engineering_kit.mcp_manager import McpManager
+from agent_engineering_kit.paths import KitPaths
 from conftest import write_yaml
 
 
@@ -45,3 +48,39 @@ def test_disable_enforced_skill_fails(kit: tuple[Path, Path]) -> None:
     repository, overrides = kit
     write_yaml(overrides / "global/skills/verification.yaml", {"target": "verification", "override": {"mode": "disable"}})
     assert not validate_overrides(repository, overrides).ok
+
+
+def test_required_external_skill_cannot_be_disabled(tmp_path: Path) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    overrides = tmp_path / "overrides"
+    write_yaml(overrides / "global/skills/superpowers.yaml", {"target": "superpowers", "override": {"mode": "disable"}})
+    assert not validate_overrides(repository, overrides).ok
+
+
+def test_project_override_wins_over_global_override(tmp_path: Path) -> None:
+    overrides = tmp_path / "overrides"
+    write_yaml(overrides / "global/mcp/optional.yaml", {"target": "optional", "override": {"mode": "extend", "value": {"installation": {"endpoint": "https://global.invalid/mcp"}}}})
+    write_yaml(overrides / "projects/demo/mcp/optional.yaml", {"target": "optional", "override": {"mode": "extend", "value": {"installation": {"endpoint": "https://project.invalid/mcp"}}}})
+    items = [{"id": "optional", "installation": {"type": "remote", "endpoint": "https://base.invalid/mcp"}}]
+    effective = apply_local_overrides(items, overrides, "mcp", "demo")
+    assert effective[0]["installation"]["endpoint"] == "https://project.invalid/mcp"
+
+
+def test_disable_removes_optional_effective_component(tmp_path: Path) -> None:
+    overrides = tmp_path / "overrides"
+    write_yaml(overrides / "global/mcp/optional.yaml", {"target": "optional", "override": {"mode": "disable"}})
+    assert apply_local_overrides([{"id": "optional"}], overrides, "mcp") == []
+
+
+def test_incomplete_mcp_replace_is_rejected_as_configuration_error(tmp_path: Path) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    data = tmp_path / "data"
+    paths = KitPaths(repository, data, data / "runtime", data / "projects", data / "overrides")
+    write_yaml(
+        paths.overrides / "global/mcp/github.yaml",
+        {"target": "github", "override": {"mode": "replace", "value": {"installation": {"type": "remote", "endpoint": "https://example.invalid/mcp"}}}},
+    )
+
+    with pytest.raises(AgentKitError, match="Некорректный effective MCP override"):
+        McpManager(repository, paths).list()
+    assert not validate_overrides(repository, paths.overrides).ok

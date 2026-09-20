@@ -3,10 +3,15 @@ models/user.local.yaml
 models/*.local.yaml
 
 # Пользовательские overrides
+overrides/
 overrides/*.local.*
 overrides/local/
 .local/
 .runtime/
+runtime/
+installations/
+state/
+projects/
 
 # Secrets
 .env
@@ -21,6 +26,7 @@ secrets/
 # Runtime
 .cache/
 .codebase-memory/
+.serena/
 logs/
 tmp/
 *.log

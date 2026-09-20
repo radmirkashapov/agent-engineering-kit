@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import shutil
 import sys
+import json
 from pathlib import Path
 
 from .models import load_policy
-from .io import load_yaml
+from .mcp_manager import McpManager
 from .paths import KitPaths, ensure_runtime
 from .result import ValidationResult
+from .security_tools import SecurityToolManager
 
 
 def doctor(repository: Path, paths: KitPaths) -> ValidationResult:
@@ -31,17 +33,23 @@ def doctor(repository: Path, paths: KitPaths) -> ValidationResult:
         result.info("doctor", f"Runtime доступен для записи: {paths.runtime}")
     except OSError as error:
         result.error("doctor", f"Runtime недоступен для записи: {error}")
-    policy = load_policy(repository)
+    policy = load_policy(repository, local_path=paths.overrides / "models.yaml")
     result.info("doctor", f"Corporate models: {len(policy.corporate)}; user-local models: {len(policy.local)}")
-    for server in load_yaml(repository / "mcp" / "registry.yaml").get("servers", []):
-        if not server.get("enabled", True) or server.get("transport") != "stdio":
-            continue
-        available = shutil.which(server.get("command", "")) is not None
-        message = f"MCP {server['id']}: {'доступен' if available else 'command не найден'}"
-        if not available and server.get("required"):
-            result.error("doctor", message)
-        elif not available:
-            result.warning("doctor", message)
-        else:
-            result.info("doctor", message)
+    result.extend(McpManager(repository, paths).doctor())
+    registrations = paths.state / "client-mcp-registrations.json"
+    if registrations.is_file():
+        try:
+            rows = json.loads(registrations.read_text(encoding="utf-8")).get("registrations", [])
+            for row in rows:
+                status = row.get("status")
+                label = f"{row.get('client')}/{row.get('mcp', 'adapter')}: {status}"
+                if status == "ERROR":
+                    result.error("client-mcp-doctor", label)
+                elif status in {"AUTH_REQUIRED", "CONFIG_REQUIRED", "NOT_SUPPORTED"}:
+                    result.warning("client-mcp-doctor", label)
+        except (OSError, json.JSONDecodeError) as error:
+            result.error("client-mcp-doctor", f"State client registrations повреждён: {error}")
+    else:
+        result.warning("client-mcp-doctor", "Client MCP registrations ещё не созданы; выполните agent-kit resync")
+    result.extend(SecurityToolManager(repository, paths).doctor())
     return result

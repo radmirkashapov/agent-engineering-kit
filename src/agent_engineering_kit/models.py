@@ -31,7 +31,7 @@ class ModelPolicy:
 
     @property
     def runtime_allowed_ids(self) -> set[str]:
-        return set(self.corporate) if self.corporate_active else set(self.local)
+        return set(self.corporate) | set(self.local)
 
 
 def _model_map(document: dict[str, Any]) -> tuple[dict[str, dict[str, Any]], list[str]]:
@@ -47,9 +47,20 @@ def _model_map(document: dict[str, Any]) -> tuple[dict[str, dict[str, Any]], lis
     return mapping, duplicates
 
 
-def load_policy(repository: Path, *, include_local: bool = True) -> ModelPolicy:
+def _local_model_document(repository: Path, include_local: bool, local_path: Path | None) -> dict[str, Any]:
+    if not include_local:
+        return {}
+    candidates = [local_path] if local_path else []
+    candidates.append(repository / "models" / "user.local.yaml")
+    for candidate in candidates:
+        if candidate and candidate.is_file():
+            return load_yaml(candidate)
+    return {}
+
+
+def load_policy(repository: Path, *, include_local: bool = True, local_path: Path | None = None) -> ModelPolicy:
     corporate_document = load_yaml(repository / "models" / "corporate.yaml")
-    local_document = load_yaml(repository / "models" / "user.local.yaml", required=False) if include_local else {}
+    local_document = _local_model_document(repository, include_local, local_path)
     corporate, _ = _model_map(corporate_document)
     local, _ = _model_map(local_document)
     providers = {
@@ -89,6 +100,16 @@ def _collect_model_references(value: Any, *, parent_key: str = "") -> Iterable[s
             yield from _collect_model_references(nested, parent_key=parent_key)
 
 
+def model_references(value: Any) -> set[str]:
+    return set(_collect_model_references(value))
+
+
+def allowed_model_references(policy: ModelPolicy) -> set[str]:
+    corporate_aliases, _ = _aliases(policy.corporate)
+    local_aliases, _ = _aliases(policy.local)
+    return set(policy.corporate) | set(policy.local) | set(corporate_aliases) | set(local_aliases)
+
+
 def _definition_documents(repository: Path) -> Iterable[tuple[Path, dict[str, Any]]]:
     for dirname in COMMITTED_DEFINITION_DIRS:
         root = repository / dirname
@@ -105,17 +126,17 @@ def _definition_documents(repository: Path) -> Iterable[tuple[Path, dict[str, An
                     yield path, metadata
 
 
-def validate_models(repository: Path, *, include_local: bool = True) -> ValidationResult:
+def validate_models(repository: Path, *, include_local: bool = True, local_path: Path | None = None) -> ValidationResult:
     result = ValidationResult()
     corporate_path = repository / "models" / "corporate.yaml"
-    local_path = repository / "models" / "user.local.yaml"
+    effective_local_path = local_path or repository / "models" / "user.local.yaml"
     corporate_document = load_yaml(corporate_path)
     schema_path = repository / "models" / "schemas" / "models.schema.json"
     result.extend(validate_instance(corporate_document, schema_path, str(corporate_path)))
 
-    local_document = load_yaml(local_path, required=False) if include_local else {}
+    local_document = _local_model_document(repository, include_local, local_path)
     if local_document:
-        result.extend(validate_instance(local_document, schema_path, str(local_path)))
+        result.extend(validate_instance(local_document, schema_path, str(effective_local_path)))
 
     corporate, corporate_duplicates = _model_map(corporate_document)
     local, local_duplicates = _model_map(local_document)

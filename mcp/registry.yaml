@@ -2,44 +2,134 @@ version: 1
 servers:
   - id: codebase-memory
     category: core
+    required: true
     transport: stdio
-    enabled: true
-    required: false
+    activation: always
     command: codebase-memory-mcp
-    args: []
+    source:
+      type: git
+      repository: https://github.com/DeusData/codebase-memory-mcp.git
+    installation:
+      type: pinned-release-installer
+      scripts:
+        posix: install.sh
+        windows: install.ps1
+      download_base: https://github.com/DeusData/codebase-memory-mcp/releases/download/{version}
     state: native
-    policy: configurable
+    policy: locked
 
   - id: serena
     category: core
+    required: true
     transport: stdio
-    enabled: true
-    required: false
-    command: serena-mcp
-    args: []
+    activation: always
+    command: serena
+    args: [start-mcp-server, --project-from-cwd, --context, codex]
+    source:
+      type: git
+      repository: https://github.com/oraios/serena.git
+    installation:
+      type: uv-tool
+      python: "3.13"
+      requirement: serena-agent @ git+https://github.com/oraios/serena.git@{revision}
     state: native
-    policy: configurable
+    policy: locked
 
-  - id: github
-    category: scm
-    transport: stdio
-    enabled: false
-    required: false
-    command: github-mcp-server
-    args: []
-    environment:
-      GITHUB_TOKEN: env:GITHUB_TOKEN
+  - id: context7
+    category: core
+    required: true
+    transport: http
+    activation: always
+    source:
+      type: git
+      repository: https://github.com/upstash/context7.git
+    installation:
+      type: remote
+      endpoint: https://mcp.context7.com/mcp/oauth
+      authentication: oauth
     state: stateless
     policy: locked
 
-  - id: sonar
-    category: quality
-    transport: stdio
-    enabled: false
+  - id: github
+    category: scm
     required: false
-    command: sonar-mcp
-    args: []
+    transport: stdio
+    activation: github
+    command: docker
+    args: [run, -i, --rm, -e, GITHUB_PERSONAL_ACCESS_TOKEN, "ghcr.io/github/github-mcp-server@sha256:508a0857ec762b1ab1cece29193345b501fab1dd9d1228a7b617062954cecac6"]
+    source:
+      type: git
+      repository: https://github.com/github/github-mcp-server.git
+    installation:
+      type: external-command
+      command: docker
+      image: ghcr.io/github/github-mcp-server@sha256:508a0857ec762b1ab1cece29193345b501fab1dd9d1228a7b617062954cecac6
     environment:
-      SONAR_TOKEN: env:SONAR_TOKEN
+      GITHUB_PERSONAL_ACCESS_TOKEN: env:GITHUB_PERSONAL_ACCESS_TOKEN
+    state: native
+    policy: configurable
+
+  - id: gitlab
+    category: scm
+    required: false
+    transport: http
+    activation: gitlab
+    source:
+      type: git
+      repository: https://github.com/gitlabhq/gitlabhq.git
+    installation:
+      type: remote
+      endpoint: https://gitlab.com/api/v4/mcp
+      authentication: oauth
+    state: native
+    policy: configurable
+
+  - id: sonarqube
+    category: quality
+    required: false
+    transport: stdio
+    activation: sonar
+    command: docker
+    args: [run, -i, --rm, -e, SONARQUBE_TOKEN, "sonarsource/sonarqube-mcp@sha256:25e9eabc440515651ae62e0dc8382ca2c41d243c2aca68759ddd721825d408bd"]
+    source:
+      type: git
+      repository: https://github.com/SonarSource/sonarqube-mcp-server.git
+    installation:
+      type: external-command
+      command: docker
+      image: sonarsource/sonarqube-mcp@sha256:25e9eabc440515651ae62e0dc8382ca2c41d243c2aca68759ddd721825d408bd
+    environment:
+      SONARQUBE_TOKEN: env:SONARQUBE_TOKEN
+    state: native
+    policy: configurable
+
+  - id: playwright
+    category: quality
+    required: false
+    transport: stdio
+    activation: web
+    command: npx
+    args: [-y, "@playwright/mcp@0.0.47"]
+    source:
+      type: git
+      repository: https://github.com/microsoft/playwright-mcp.git
+    installation:
+      type: external-command
+      command: npx
+    state: native
+    policy: configurable
+
+  - id: atlassian
+    category: collaboration
+    required: false
+    transport: http
+    activation: atlassian
+    source:
+      type: service
+      repository: https://developer.atlassian.com/cloud/rovo-mcp/
+    installation:
+      type: remote
+      endpoint: https://mcp.atlassian.com/v2/mcp
+      authentication: oauth
     state: native
     policy: configurable

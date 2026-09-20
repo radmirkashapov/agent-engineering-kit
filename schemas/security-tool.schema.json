@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["schema", "id", "name", "required", "source", "version", "platforms", "permissions", "network"],
+  "properties": {
+    "schema": {"const": "agent-engineering-kit/security-tool/v1"},
+    "id": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"}, "name": {"type": "string"}, "required": {"type": "boolean"},
+    "source": {"type": "object"}, "version": {"type": "object"}, "platforms": {"type": "array", "items": {"type": "string"}},
+    "permissions": {"type": "object"}, "network": {"type": "object"}
+  }
+}

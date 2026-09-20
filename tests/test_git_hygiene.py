@@ -33,7 +33,10 @@ def repository(tmp_path: Path) -> Path:
     return tmp_path
 
 
-@pytest.mark.parametrize("name", ["models/user.local.yaml", "overrides/local/skill.yaml", ".runtime/state"])
+@pytest.mark.parametrize(
+    "name",
+    ["models/user.local.yaml", "overrides/local/skill.yaml", ".runtime/state", "clients/codex/generated/state.json"],
+)
 def test_local_only_tracked_fails(repository: Path, name: str) -> None:
     path = repository / name
     path.parent.mkdir(parents=True, exist_ok=True)

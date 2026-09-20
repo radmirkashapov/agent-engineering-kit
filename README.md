@@ -17,16 +17,29 @@
 - Непустой corporate model allowlist authoritative для committed definitions.
 - Любое изменение проверяется локально и в CI без user-local inputs.
 
-## Архитектура
+## Один kit на машину
 
-`AI.md` — короткая machine-readable точка входа. Она направляет agent к `rules/`, подходящим `skills/` и `agents/`, `mcp/registry.yaml`, model policy и manifest logical project. Python CLI materializes только local state.
+Canonical checkout один. Он служит control plane для Codex, Claude Code, Claude Desktop, OpenCode и Cline и одновременно обслуживает множество logical projects.
+
+## Что находится в Git
+
+Rules, agents, first-party skills, catalogs, locks, schemas, security contracts, thin client adapters, bootstrap scripts, tests и ADR.
+
+## Что никогда не находится в Git
+
+Third-party source, binaries, project memory, MCP databases/cache, sessions, OAuth state, credentials, user models, local overrides, indexes и generated client configuration.
+
+## Архитектура desired state
+
+`AI.md` — короткая machine-readable точка входа. Каталоги задают desired state, lock-файлы — approved revisions, а Python CLI materializes только machine-local state.
 
 Пути определяет единый resolver:
 
 | Назначение | Unix по умолчанию | Windows по умолчанию |
 |---|---|---|
 | deployment repository | `<data>/repository` | `<data>\repository` |
-| runtime | `~/.local/share/agent-engineering-kit/runtime` | `%LOCALAPPDATA%\agent-engineering-kit\runtime` |
+| installations | `~/.local/share/agent-engineering-kit/installations` | `%LOCALAPPDATA%\agent-engineering-kit\installations` |
+| state/locks/logs | `~/.local/share/agent-engineering-kit/{state,locks,logs}` | `%LOCALAPPDATA%\agent-engineering-kit\{state,locks,logs}` |
 | project memory | `~/.local/share/agent-engineering-kit/projects` | `%LOCALAPPDATA%\agent-engineering-kit\projects` |
 | overrides | `~/.local/share/agent-engineering-kit/overrides` | `%LOCALAPPDATA%\agent-engineering-kit\overrides` |
 
@@ -65,7 +78,7 @@ python -m pip install -e '.[dev]'
 ```bash
 agent-kit doctor
 agent-kit validate
-agent-kit sync --no-update
+agent-kit resync --no-update
 agent-kit project init /path/to/workspace --id stable-project-id
 agent-kit project status /path/to/workspace
 agent-kit config explain /path/to/workspace
@@ -73,15 +86,39 @@ agent-kit config explain /path/to/workspace
 
 `project init` создаёт только `.ai-team/project.yaml` и отсутствующий `docs/INDEX.md`, находит top-level Git repositories и probable components, затем регистрирует внешний memory namespace. Повторный запуск идемпотентен.
 
+## Resync
+
+`agent-kit resync` валидирует checkout, читает `catalog/` + `locks/`, устанавливает security tools, fetches external candidates, выполняет security/compatibility gates, атомарно активирует и синхронизирует client discovery. Повторный запуск идемпотентен. `agent-kit install` выполняет тот же materialization без обновления checkout.
+
 ## Обновление
 
-`agent-kit sync` выполняет `git fetch origin`, `git pull --ff-only`, validation, generation thin adapters и записывает revision. Merge commits и destructive reset не создаются; dirty checkout блокирует update. `--no-update` выполняет validation/generation без network Git operations.
+Kit update (`git fetch` + `pull --ff-only`) отделён от dependency update. External component никогда не следует `latest`: новая версия проходит candidate validation, lock review и activation. `skills rollback <id>` возвращает предыдущую validated revision.
 
 Revision фиксируется в начале session и не меняется посреди активной task.
 
-## Как подключается новый клиент
+## Client adapters
 
 Создайте `clients/<id>/adapter.yaml` и `README.md`. Adapter обязан ссылаться на `AI.md`, `skills/` и `mcp/registry.yaml`, а не копировать их. Добавьте client ID в `CLIENTS`, golden/validation test и native integration notes. Generated absolute paths создаются только в `<data>/runtime/clients/<id>/`.
+
+### Codex / Codex Desktop
+
+Используются official `AGENTS.md`, `~/.agents/skills` и `~/.codex/config.toml`; namespaced core MCP регистрируются без замены чужих entries.
+
+### Claude Code
+
+Используются `~/.claude/CLAUDE.md`, `~/.claude/skills` и user-scope MCP. OAuth endpoints требуют интерактивного подтверждения.
+
+### Claude Desktop
+
+Отдельный contract охватывает MCP и Desktop Extensions; он не считается Claude Code.
+
+### OpenCode
+
+Предпочитаются native `AGENTS.md`, `~/.agents/skills` и собственный MCP config.
+
+### Cline
+
+Используются Cline Rules/`AGENTS.md` и native MCP settings; недокументированные global paths не перезаписываются.
 
 ## Поддерживаемые клиенты
 
@@ -95,9 +132,13 @@ Revision фиксируется в начале session и не меняется
 
 `rules/` содержит обязательные engineering, Git, testing, review, documentation, security, context/precedence и model rules. Project configuration может уточнять их, но не ослаблять enforced invariants.
 
-## Skills
+## First-party skills
 
-First-party skills находятся в `skills/*/SKILL.md`, имеют schema-validated front matter и в первую очередь объявляют model capabilities. `upstream/` изолирует third-party dependencies.
+First-party skills находятся в `skills/first-party/*/SKILL.md`, имеют schema-validated front matter и объявляют model capabilities.
+
+## External skills
+
+`catalog/skills.yaml` и `locks/skills.lock.yaml` управляют external skills без vendoring. Baseline `obra/superpowers` закреплён на validated revision и устанавливается только в `<data>/installations/skills/`; обязательные upstream capabilities проверяются перед `ACTIVE`. Source tree никогда не копируется в этот Git repository.
 
 ## Agents
 
@@ -107,13 +148,13 @@ First-party skills находятся в `skills/*/SKILL.md`, имеют schema-
 
 `mcp/registry.yaml` хранит configuration intent, а не credentials и не базы. Environment передаётся как `env:NAME`. Native CBM/Serena/другой cache остаётся в storage соответствующего MCP. Local mapping project → integration допускается в `projects/<id>/integrations/`.
 
-## Model policy
+## Corporate model policy
 
 ### Corporate models
 
 `models/corporate.yaml` tracked и задаёт providers, model IDs, aliases и capabilities. Если список непуст, только эти IDs разрешены в committed agents/skills/client/MCP/template definitions.
 
-### User-local models
+## User-local models
 
 `models/user.local.yaml` defensive-ignored. Он разрешает local runtime models конкретного разработчика. Файл не расширяет corporate Git baseline. При пустом corporate list local runtime может использовать local models, но committed definition не получает portability guarantee.
 
@@ -172,7 +213,19 @@ Diagnostics имеют severity `ERROR`, `WARNING`, `INFO`; exit code ненул
 
 ## Security
 
-Secrets хранятся только в environment/secret store, список переменных — в `.env.example`. `.gitignore`, `git ls-files`, `git diff --cached` и content scan дают независимые уровни защиты. Pre-commit удобен, CI обязателен.
+Secrets хранятся только в environment/secret store, список переменных — в `.env.example`. Installation contracts описывают SkillEvaluator, SkillSpector, Semgrep, Gitleaks и Bumblebee. Внешний skill проходит source verification и blocking scanners до activation. Bumblebee используется для inventory/exposure scanning, не research. Pre-commit удобен, CI обязателен.
+
+## Lock files
+
+`skills.lock.yaml`, `mcp.lock.yaml`, `security.lock.yaml` содержат full revisions. Catalog без lock или stale lock — validation error. Rollback использует сохранённую предыдущую active revision.
+
+## Dependency updates
+
+Сначала обнаруживается новая upstream version, затем source и security validation, compatibility tests и review lock-файла. Только после commit lock новая candidate может стать `ACTIVE`.
+
+## Rollback
+
+`agent-kit skills rollback <id>` атомарно возвращает предыдущую validated revision. Для MCP/security откат выполняется возвратом lock-файла и повторным `resync`; project/native state не удаляется.
 
 ## Git workflow самого agent-engineering-kit
 

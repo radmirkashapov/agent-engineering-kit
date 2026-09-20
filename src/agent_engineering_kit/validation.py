@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .clients import validate_clients
-from .definitions import validate_agents, validate_mcp, validate_skills
+from .definitions import validate_agents, validate_locks, validate_mcp, validate_skills
 from .git_hygiene import validate_git_hygiene
 from .models import validate_models
 from .overrides import validate_overrides
@@ -17,13 +17,14 @@ from .security import validate_security
 
 VALIDATORS = {
     "schemas": lambda repository, paths, include_local: validate_repository_schemas(repository),
-    "models": lambda repository, paths, include_local: validate_models(repository, include_local=include_local),
+    "models": lambda repository, paths, include_local: validate_models(repository, include_local=include_local, local_path=paths.overrides / "models.yaml"),
     "agents": lambda repository, paths, include_local: validate_agents(repository),
     "skills": lambda repository, paths, include_local: validate_skills(repository),
     "mcp": lambda repository, paths, include_local: validate_mcp(repository),
+    "catalogs": lambda repository, paths, include_local: validate_locks(repository),
     "clients": lambda repository, paths, include_local: validate_clients(repository),
     "overrides": lambda repository, paths, include_local: validate_overrides(repository, paths.overrides) if include_local else ValidationResult(),
-    "git-hygiene": lambda repository, paths, include_local: validate_git_hygiene(repository),
+    "git-hygiene": lambda repository, paths, include_local: validate_git_hygiene(repository, paths, require_gitleaks=not include_local),
     "security": lambda repository, paths, include_local: validate_security(repository),
 }
 

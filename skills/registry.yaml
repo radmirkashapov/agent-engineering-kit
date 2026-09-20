@@ -1,0 +1,7 @@
+version: 1
+source: catalog/skills.yaml
+first_party_root: skills/first-party
+external_installation_root: installations/skills
+policy:
+  vendor_external_source: false
+  activation_requires_validation: true

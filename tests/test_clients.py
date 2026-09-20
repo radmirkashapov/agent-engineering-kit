@@ -2,8 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from agent_engineering_kit.clients import CLIENTS, sync_clients, validate_clients
+import json
+import pytest
+
+from agent_engineering_kit.clients import CLIENTS, expose_native_instructions, expose_native_skills, register_native_mcp, sync_clients, validate_clients
 from agent_engineering_kit.paths import KitPaths
+from agent_engineering_kit.errors import AgentKitError
+from agent_engineering_kit.process import CommandResult
 
 
 def test_client_adapters_validate() -> None:
@@ -22,8 +27,133 @@ def test_sync_generates_thin_runtime_adapters(tmp_path: Path) -> None:
         "# Сгенерировано agent-kit; локальный runtime, не Git.\n"
         f"kit_repository: {repository}\n"
         f"entrypoint: {repository / 'AI.md'}\n"
+        f"effective_policy: {data / 'installations/clients/shared/effective-policy.json'}\n"
         f"skills: {repository / 'skills'}\n"
         f"mcp_registry: {repository / 'mcp' / 'registry.yaml'}\n"
     )
     assert content == expected
     assert str(tmp_path) not in "\n".join(path.read_text(encoding="utf-8") for path in repository.glob("clients/*/adapter.yaml"))
+
+
+def test_core_mcp_registration_is_namespaced_and_oauth_safe(tmp_path: Path, monkeypatch) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    data = tmp_path / "data"
+    paths = KitPaths(repository, data, data / "runtime", data / "projects", data / "overrides")
+    for identifier, command in (("codebase-memory", "codebase-memory-mcp"), ("serena", "serena")):
+        binary = paths.installations / "mcp" / identifier / "bin" / command
+        binary.parent.mkdir(parents=True)
+        binary.write_text("fixture", encoding="utf-8")
+    monkeypatch.setattr("agent_engineering_kit.clients.shutil.which", lambda name: f"/usr/bin/{name}" if name in {"codex", "claude"} else None)
+    calls: list[list[str]] = []
+
+    def runner(args, **kwargs):
+        calls.append(args)
+        return CommandResult(tuple(args), 1 if "get" in args else 0, "", "")
+
+    state_path = register_native_mcp(repository, paths, runner=runner)
+    additions = [args for args in calls if "add" in args]
+    assert len(additions) == 6
+    assert all(any(value.startswith("agent-kit-") for value in args) for args in additions)
+    assert sum("https://mcp.context7.com/mcp/oauth" in args for args in additions) == 2
+    registrations = json.loads(state_path.read_text(encoding="utf-8"))["registrations"]
+    assert sum(item.get("mcp") == "context7" and item["status"] == "AUTH_REQUIRED" for item in registrations) == 2
+
+
+def test_instruction_bridge_preserves_user_text_and_is_idempotent(tmp_path: Path) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    paths = KitPaths(repository, tmp_path / "data", tmp_path / "runtime", tmp_path / "projects", tmp_path / "overrides")
+    target = tmp_path / ".codex/AGENTS.md"
+    target.parent.mkdir(parents=True)
+    target.write_text("# Мои инструкции\n", encoding="utf-8")
+    expose_native_instructions(repository, paths, home=tmp_path)
+    first = target.read_text(encoding="utf-8")
+    expose_native_instructions(repository, paths, home=tmp_path)
+    assert target.read_text(encoding="utf-8") == first
+    assert "# Мои инструкции" in first
+    assert first.count("agent-engineering-kit:start") == 1
+
+
+def test_stale_managed_skill_exposure_is_removed(tmp_path: Path) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    data = tmp_path / "data"
+    paths = KitPaths(repository, data, data / "runtime", data / "projects", data / "overrides")
+    root = tmp_path / "discovery"
+    expose_native_skills(repository, paths, roots=(root,))
+    stale = root / "obsolete"
+    stale.symlink_to(paths.installations / "clients/shared/skills/change-impact", target_is_directory=True)
+    state = paths.state / "managed-skill-exposures.json"
+    document = json.loads(state.read_text(encoding="utf-8"))
+    document["paths"].append(str(stale))
+    state.write_text(json.dumps(document), encoding="utf-8")
+    expose_native_skills(repository, paths, roots=(root,))
+    assert not stale.exists() and not stale.is_symlink()
+
+
+def test_stale_user_symlink_with_installations_prefix_is_preserved(tmp_path: Path) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    data = tmp_path / "data"
+    paths = KitPaths(repository, data, data / "runtime", data / "projects", data / "overrides")
+    root = tmp_path / "discovery"
+    expose_native_skills(repository, paths, roots=(root,))
+    user_skill = tmp_path / "data/installations-user/custom"
+    user_skill.mkdir(parents=True)
+    stale = root / "user-owned"
+    stale.symlink_to(user_skill, target_is_directory=True)
+    state = paths.state / "managed-skill-exposures.json"
+    document = json.loads(state.read_text(encoding="utf-8"))
+    document["paths"].append(str(stale))
+    state.write_text(json.dumps(document), encoding="utf-8")
+
+    expose_native_skills(repository, paths, roots=(root,))
+
+    assert stale.resolve() == user_skill
+
+
+def test_user_owned_skill_symlink_collision_is_preserved(tmp_path: Path) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    data = tmp_path / "data"
+    paths = KitPaths(repository, data, data / "runtime", data / "projects", data / "overrides")
+    root = tmp_path / "discovery"
+    user_skill = tmp_path / "user-skill"
+    user_skill.mkdir()
+    root.mkdir()
+    collision = root / "change-impact"
+    collision.symlink_to(user_skill, target_is_directory=True)
+    with pytest.raises(AgentKitError, match="пользовательским symlink"):
+        expose_native_skills(repository, paths, roots=(root,))
+    assert collision.resolve() == user_skill
+
+
+def test_user_owned_symlink_inside_data_overrides_is_preserved(tmp_path: Path) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    data = tmp_path / "data"
+    paths = KitPaths(repository, data, data / "runtime", data / "projects", data / "overrides")
+    root = tmp_path / "discovery"
+    user_skill = paths.overrides / "global/skills/change-impact"
+    user_skill.mkdir(parents=True)
+    root.mkdir()
+    collision = root / "change-impact"
+    collision.symlink_to(user_skill, target_is_directory=True)
+
+    with pytest.raises(AgentKitError, match="пользовательским symlink"):
+        expose_native_skills(repository, paths, roots=(root,))
+
+    assert collision.resolve() == user_skill
+
+
+def test_agent_and_rule_overrides_are_materialized_into_effective_policy(tmp_path: Path) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    data = tmp_path / "data"
+    paths = KitPaths(repository, data, data / "runtime", data / "projects", data / "overrides")
+    agent_override = paths.overrides / "global/agents/reviewer.yaml"
+    agent_override.parent.mkdir(parents=True)
+    agent_override.write_text("target: reviewer\noverride:\n  mode: extend\n  value:\n    local_note: strict\n", encoding="utf-8")
+    rule_override = paths.overrides / "projects/demo/rules/review.yaml"
+    rule_override.parent.mkdir(parents=True)
+    rule_override.write_text("target: review\noverride:\n  mode: extend\n  value:\n    local_note: project\n", encoding="utf-8")
+
+    sync_clients(repository, paths, project_id="demo")
+
+    policy = json.loads((paths.installations / "clients/shared/effective-policy.json").read_text(encoding="utf-8"))
+    assert next(item for item in policy["agents"] if item["id"] == "reviewer")["local_note"] == "strict"
+    assert next(item for item in policy["rules"] if item["id"] == "review")["local_note"] == "project"

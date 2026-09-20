@@ -15,6 +15,21 @@ class KitPaths:
     runtime: Path
     projects: Path
     overrides: Path
+    installations: Path | None = None
+    state: Path | None = None
+    locks: Path | None = None
+    logs: Path | None = None
+
+    def __post_init__(self) -> None:
+        defaults = {
+            "installations": self.data / "installations",
+            "state": self.data / "state",
+            "locks": self.data / "locks",
+            "logs": self.data / "logs",
+        }
+        for name, value in defaults.items():
+            if getattr(self, name) is None:
+                object.__setattr__(self, name, value)
 
 
 def _data_home(environ: dict[str, str]) -> Path:
@@ -44,9 +59,27 @@ def resolve_paths(environ: dict[str, str] | None = None) -> KitPaths:
         runtime=data / "runtime",
         projects=data / "projects",
         overrides=data / "overrides",
+        installations=data / "installations",
+        state=data / "state",
+        locks=data / "locks",
+        logs=data / "logs",
     )
 
 
 def ensure_runtime(paths: KitPaths) -> None:
-    for directory in (paths.runtime, paths.projects, paths.overrides / "global", paths.overrides / "projects"):
+    directories = (
+        paths.runtime,
+        paths.projects,
+        paths.overrides / "global",
+        paths.overrides / "projects",
+        paths.installations / "skills",
+        paths.installations / "mcp",
+        paths.installations / "security",
+        paths.installations / "clients",
+        paths.state / "components",
+        paths.state / "candidates",
+        paths.locks,
+        paths.logs,
+    )
+    for directory in directories:
         directory.mkdir(parents=True, exist_ok=True)

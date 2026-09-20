@@ -42,6 +42,14 @@ def test_corporate_empty_uses_local_model_at_runtime(tmp_path: Path, real_reposi
     assert load_policy(repository).runtime_allowed_ids == {"local-model"}
 
 
+def test_local_models_extend_non_empty_runtime_policy(tmp_path: Path, real_repository: Path) -> None:
+    repository = make_model_repository(
+        tmp_path, real_repository, [model("corp-model")], [model("local-model", "ollama")]
+    )
+
+    assert load_policy(repository).runtime_allowed_ids == {"corp-model", "local-model"}
+
+
 def test_unknown_model_fails(tmp_path: Path, real_repository: Path) -> None:
     repository = make_model_repository(tmp_path, real_repository, [model("corp-model")])
     write_agent(repository, "missing-model")

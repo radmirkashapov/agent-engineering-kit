@@ -5,7 +5,9 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from .io import markdown_frontmatter
 from .result import ValidationResult
+from .schema import validate_instance
 
 
 SECRET_ASSIGNMENT = re.compile(r"(?i)(token|secret|password|api[_-]?key)\s*[:=]\s*['\"]?[A-Za-z0-9_./+=-]{16,}")
@@ -23,6 +25,19 @@ def validate_security(repository: Path) -> ValidationResult:
                 continue
             if SECRET_ASSIGNMENT.search(line):
                 result.error("security", f"Возможный literal secret: {path.relative_to(repository)}:{number}")
+    expected = {"skill-evaluator", "skillspector", "semgrep", "gitleaks", "bumblebee"}
+    contracts = repository / "security" / "catalog"
+    found: set[str] = set()
+    for path in sorted(contracts.glob("*.md")):
+        metadata = markdown_frontmatter(path)
+        result.extend(validate_instance(metadata, repository / "schemas" / "security-tool.schema.json", str(path.relative_to(repository))))
+        found.add(str(metadata.get("id")))
+        body = path.read_text(encoding="utf-8")
+        for heading in ("Назначение", "Почему используется", "Threat model", "Источник", "Поддерживаемые платформы", "Установка", "Проверка", "Обновление", "Rollback", "Удаление", "Permissions", "Network access", "Интеграция с agent-kit", "Ограничения"):
+            if f"# {heading}" not in body:
+                result.error("security", f"{path.relative_to(repository)}: отсутствует раздел {heading}")
+    if found != expected:
+        result.error("security", f"Неполный набор security contracts: {sorted(expected - found)}")
     if result.ok:
         result.info("security", "Literal secrets не обнаружены")
     return result

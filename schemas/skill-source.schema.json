@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["version", "skills"],
+  "properties": {
+    "version": {"const": 1},
+    "skills": {"type": "array", "items": {"type": "object", "required": ["id", "source", "installation", "required"], "properties": {
+      "id": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"},
+      "source": {"type": "object", "required": ["type", "repository"], "properties": {"type": {"const": "git"}, "repository": {"type": "string", "format": "uri"}}},
+      "installation": {"type": "object"}, "required": {"type": "boolean"}, "capabilities": {"type": "array", "uniqueItems": true, "items": {"type": "string"}}
+    }}}
+  }
+}

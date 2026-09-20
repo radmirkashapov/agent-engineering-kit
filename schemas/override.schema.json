@@ -8,7 +8,11 @@
     "target": { "type": "string", "minLength": 1 },
     "override": {
       "type": "object", "required": ["mode"],
-      "properties": { "mode": { "enum": ["extend", "replace", "disable"] } }
+      "additionalProperties": false,
+      "properties": {
+        "mode": { "enum": ["extend", "replace", "disable"] },
+        "value": { "type": "object" }
+      }
     }
   }
 }

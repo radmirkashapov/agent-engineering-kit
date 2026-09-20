@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .io import load_yaml, markdown_frontmatter
+from .external_skills import ExternalSkillManager
+from .io import markdown_frontmatter
+from .overrides import apply_local_overrides
+from .mcp_manager import McpManager
 from .models import load_policy
 from .paths import KitPaths
 from .projects import LogicalProject, find_project
@@ -12,7 +15,7 @@ from .sync import revision
 
 
 def explain(repository: Path, paths: KitPaths, start: Path) -> str:
-    policy = load_policy(repository)
+    policy = load_policy(repository, local_path=paths.overrides / "models.yaml")
     project = find_project(start)
     lines = ["Agent Engineering Kit", f"revision: {revision(repository)}", ""]
     lines.extend(["Logical project:", project.identifier if project else "не определён", ""])
@@ -23,13 +26,19 @@ def explain(repository: Path, paths: KitPaths, start: Path) -> str:
     lines.extend(["", "User-local models:"])
     lines.extend([f"- {item} (local-only)" for item in sorted(policy.local)] or ["- отсутствуют"])
     lines.extend(["", "Skills:"])
-    for skill in sorted((repository / "skills").glob("*/SKILL.md")):
-        metadata = markdown_frontmatter(skill)
-        lines.append(f"- {metadata.get('id', skill.parent.name)} (source: core)")
+    skill_manager = ExternalSkillManager(repository, paths, project_id=project.identifier if project else None)
+    for state in skill_manager.list():
+        if state.get("source") == "first-party":
+            lines.append(f"- {state['id']} (source: first-party; validation: PASS)")
+        else:
+            lines.append(f"- {state['id']} (source: {state['source']}; revision: {state.get('revision', state.get('desired_revision'))}; validation: {state['status']})")
     lines.extend(["", "Agents:"])
+    agents = []
     for agent in sorted((repository / "agents").glob("*.md")):
         metadata = markdown_frontmatter(agent)
-        lines.append(f"- {metadata.get('id', agent.stem)} (source: core)")
+        agents.append({**metadata, "id": metadata.get("id", agent.stem)})
+    for agent in apply_local_overrides(agents, paths.overrides, "agents", project.identifier if project else None):
+        lines.append(f"- {agent['id']} (source: effective core/local)")
     lines.extend(["", "Local overlays:"])
     overlay_roots = [("user-global", paths.overrides / "global")]
     if project:
@@ -37,7 +46,8 @@ def explain(repository: Path, paths: KitPaths, start: Path) -> str:
     overlays = [f"- {path.relative_to(root)} (source: {source})" for source, root in overlay_roots if root.exists() for path in sorted(root.rglob("*.yaml"))]
     lines.extend(overlays or ["- отсутствуют"])
     lines.extend(["", "MCP:"])
-    for server in load_yaml(repository / "mcp" / "registry.yaml").get("servers", []):
-        lines.append(f"- {server['id']}: {'enabled' if server.get('enabled', True) else 'disabled'}")
+    for server in McpManager(repository, paths).list(project):
+        activation = "enabled" if server["enabled"] else "disabled"
+        lines.append(f"- {server['id']}: {activation}; {server['status']}")
     lines.extend(["", "Memory:", str(paths.projects / project.identifier) if project else "не определена"])
     return "\n".join(lines) + "\n"

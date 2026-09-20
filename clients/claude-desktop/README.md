@@ -1,3 +1,3 @@
 # Claude Desktop
 
-Adapter регистрирует MCP через native Desktop configuration. Claude Desktop не гарантирует filesystem project instructions, поэтому `AI.md` передаётся через доступный MCP/resource или вручную в session context. Durable project docs остаются в logical project.
+Claude Desktop не считается эквивалентом Claude Code. Contract охватывает MCP/Desktop Extensions и native `claude_desktop_config.json`; discovery filesystem/project instructions ограничен и остаётся client-owned. Global rules не копируются в Desktop configuration.

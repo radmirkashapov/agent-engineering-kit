@@ -1,33 +1,19 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://agent-engineering-kit.local/schemas/mcp.schema.json",
   "type": "object",
   "required": ["version", "servers"],
-  "additionalProperties": false,
   "properties": {
-    "version": { "const": 1 },
-    "servers": {
-      "type": "array",
-      "items": {
-        "type": "object", "required": ["id", "category", "transport", "enabled", "required"], "additionalProperties": false,
-        "properties": {
-          "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
-          "category": { "enum": ["core", "scm", "quality", "collaboration"] },
-          "transport": { "enum": ["stdio", "http", "sse"] },
-          "enabled": { "type": "boolean" },
-          "required": { "type": "boolean" },
-          "command": { "type": "string" },
-          "args": { "type": "array", "items": { "type": "string" } },
-          "endpoint": { "type": "string" },
-          "environment": { "type": "object", "additionalProperties": { "type": "string", "pattern": "^env:[A-Z][A-Z0-9_]*$" } },
-          "state": { "enum": ["native", "stateless"] },
-          "policy": { "enum": ["configurable", "locked"] }
-        },
-        "allOf": [
-          { "if": { "properties": { "transport": { "const": "stdio" } } }, "then": { "required": ["command"] } },
-          { "if": { "properties": { "transport": { "enum": ["http", "sse"] } } }, "then": { "required": ["endpoint"] } }
-        ]
+    "version": {"const": 1},
+    "servers": {"type": "array", "items": {
+      "type": "object", "required": ["id", "category", "required", "transport", "activation", "source", "installation", "state", "policy"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"},
+        "category": {"enum": ["core", "scm", "quality", "collaboration"]}, "required": {"type": "boolean"},
+        "transport": {"enum": ["stdio", "http", "sse"]}, "activation": {"type": "string"}, "command": {"type": "string"},
+        "args": {"type": "array", "items": {"type": "string"}}, "source": {"type": "object"}, "installation": {"type": "object"},
+        "environment": {"type": "object", "additionalProperties": {"type": "string", "pattern": "^env:[A-Z][A-Z0-9_]*$"}},
+        "state": {"enum": ["native", "stateless"]}, "policy": {"enum": ["configurable", "locked"]}
       }
-    }
+    }}
   }
 }

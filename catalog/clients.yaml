@@ -1,0 +1,22 @@
+version: 1
+clients:
+  - id: codex
+    instructions: ~/.codex/AGENTS.md
+    skills: ~/.agents/skills
+    mcp: ~/.codex/config.toml
+  - id: claude-code
+    instructions: ~/.claude/CLAUDE.md
+    skills: ~/.claude/skills
+    mcp: ~/.claude.json
+  - id: claude-desktop
+    instructions: limited
+    skills: extensions/plugins
+    mcp: claude_desktop_config.json
+  - id: opencode
+    instructions: AGENTS.md
+    skills: ~/.agents/skills
+    mcp: opencode.json
+  - id: cline
+    instructions: AGENTS.md and Cline Rules
+    skills: client-dependent
+    mcp: cline_mcp_settings.json
