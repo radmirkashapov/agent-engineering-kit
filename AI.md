@@ -1,81 +1,83 @@
-# Agent Engineering Kit — machine entry point
+# Agent Engineering Kit — точка входа для AI-агента
 
-Этот repository — глобальный, versioned и универсальный источник правил для AI coding agents на одной машине. Он определяет **как** работать, но не хранит данные конкретного проекта.
+Этот репозиторий — единый версионируемый источник правил для AI-агентов разработки на одной машине. Он определяет порядок работы, но не хранит данные отдельных проектов.
 
-## Session bootstrap
+## Начало сеанса
 
-1. При старте новой session запусти `agent-kit resync`; текущая Git revision и effective snapshot записываются в local state.
-2. Не меняй revision kit посреди активной task.
-3. Найди logical project по ближайшему вверх `.ai-team/project.yaml`.
-4. Если manifest отсутствует, предложи `agent-kit project init`, не приравнивай Git repository к project автоматически.
-5. Запусти `agent-kit project status` и `agent-kit config explain`.
-6. Открой project documentation из `documentation.index`, обычно `docs/INDEX.md`.
-7. Загрузи обязательные global rules и только релевантные skills/agents/MCP.
+1. Запусти `agent-kit resync`. Команда зафиксирует текущую ревизию Git и снимок действующего окружения в локальном состоянии машины.
+2. Не меняй ревизию набора посреди активной задачи.
+3. Найди логический проект по ближайшему родительскому файлу `.ai-team/project.yaml`.
+4. Если манифест отсутствует, предложи `agent-kit project init`. Не считай отдельный Git-репозиторий логическим проектом автоматически.
+5. Выполни `agent-kit project status` и `agent-kit config explain`.
+6. Открой индекс документации из `documentation.index`, обычно `docs/INDEX.md`.
+7. Загрузи обязательные глобальные правила и только те skills, роли агентов и MCP, которые нужны текущей задаче.
 
-## Version и paths
+## Версия и расположение файлов
 
-Версия kit находится в `app.version`, точная deployed revision — в Git `HEAD`, session revision — в `<data>/state/session-revision.json`.
+Версия набора записана в `app.version`, развёрнутая ревизия — в Git `HEAD`, а ревизия текущего сеанса — в `<data>/state/session-revision.json`.
 
-Canonical path resolver реализован в `agent_engineering_kit.paths`. На Unix data root: `$XDG_DATA_HOME/agent-engineering-kit` или `~/.local/share/agent-engineering-kit`; на Windows: `%LOCALAPPDATA%\agent-engineering-kit`. `AGENT_KIT_DATA_HOME` и `AGENT_KIT_REPOSITORY` — явные deployment overrides.
+Единый механизм разрешения путей реализован в `agent_engineering_kit.paths`. В Unix корень данных находится в `$XDG_DATA_HOME/agent-engineering-kit` или `~/.local/share/agent-engineering-kit`; в Windows — в `%LOCALAPPDATA%\agent-engineering-kit`. Переменные `AGENT_KIT_DATA_HOME` и `AGENT_KIT_REPOSITORY` позволяют явно переопределить эти пути.
 
-Всегда сохраняй границу:
+Всегда сохраняй границы между областями данных:
 
 ```text
-repository != installations != control-plane state != project memory != MCP-native state != client-native state
+репозиторий != установки != состояние управления != память проекта != нативное состояние MCP != нативное состояние клиента
 ```
 
-## Logical project
+## Логический проект
 
-Project identity задаёт `<logical-project-root>/.ai-team/project.yaml`. `id` стабилен и используется как memory namespace. `repositories` поддерживает single-repo, monorepo и multi-repo workspace; `components` может ссылаться на вложенные части. Для произвольно расположенных repositories logical root должен быть общим workspace с относительными paths.
+Идентичность проекта задаёт `<logical-project-root>/.ai-team/project.yaml`. Поле `id` должно быть стабильным: оно используется как пространство имён памяти. Поле `repositories` поддерживает один репозиторий, монорепозиторий и рабочее пространство из нескольких репозиториев, а `components` описывает вложенные части. Для нескольких независимо расположенных репозиториев выбери общий корень рабочего пространства и укажи относительные пути.
 
-Local memory находится в `<data>/projects/<project-id>/` и содержит `state/`, `sessions/`, `summaries/`, `checkpoints/`, `integrations/`. Collision одинакового `project.id` для разных roots блокируется. Эта память не authoritative; canonical knowledge — source, tests и project docs.
+Локальная память находится в `<data>/projects/<project-id>/` и содержит каталоги `state/`, `sessions/`, `summaries/`, `checkpoints/` и `integrations/`. Совпадение одного `project.id` у разных корней блокируется. Эта память не является авторитетным источником: достоверные знания находятся в исходном коде, тестах и документации проекта.
 
-## Обязательные rules
+## Обязательные правила
 
 Всегда применяй:
 
-- `rules/engineering.md`
-- `rules/git.md`
-- `rules/testing.md`
-- `rules/review.md`
-- `rules/documentation.md`
-- `rules/security.md`
-- `rules/context.md`
-- `rules/models.md`
-- `rules/external-tools.md`
+- `rules/engineering.md`;
+- `rules/git.md`;
+- `rules/testing.md`;
+- `rules/review.md`;
+- `rules/documentation.md`;
+- `rules/security.md`;
+- `rules/context.md`;
+- `rules/models.md`;
+- `rules/external-tools.md`.
 
-Project committed instructions могут уточнять global rules, но не ослаблять enforced security, model policy и mandatory validation.
+Закоммиченные инструкции проекта могут уточнять глобальные правила, но не могут ослаблять обязательные требования безопасности, политику моделей и проверки.
 
-## Skills и agents
+## Skills и роли агентов
 
-First-party skills находятся в `skills/first-party/*/SKILL.md`. External skills разрешаются через `catalog/skills.yaml` + lock в machine-local installation; Git checkout никогда не содержит их тела. Используй только `ACTIVE` effective exposure.
+Собственные skills находятся в `skills/first-party/*/SKILL.md`. Сторонние skills описываются в `catalog/skills.yaml`, закрепляются lock-файлом и устанавливаются в локальное хранилище машины. Их исходный код не попадает в этот Git-репозиторий. Используй только skills со статусом `ACTIVE`.
 
-Agent roles находятся в `agents/*.md`. Role выбирается по задаче: `scout` для discovery, `implementer` для изменения, `reviewer` для review, `verify` для проверки, `auditor` для границ/policy. `policy: enforced` нельзя отключить local override.
+Роли агентов находятся в `agents/*.md`: `scout` исследует код, `implementer` вносит изменения, `reviewer` проверяет изменения, `verify` подтверждает результат, `auditor` контролирует архитектурные и политические границы. Обязательную политику `enforced` нельзя отключить локальным переопределением.
 
 ## MCP
 
-Источник configuration intent — `mcp/registry.yaml`, version intent — `locks/mcp.lock.yaml`. Core MCP обязательны; conditional MCP выбираются по project signals. Secrets читаются только из environment/native OAuth. Базы/cache MCP остаются в native storage.
+Желаемая конфигурация находится в `mcp/registry.yaml`, а версии — в `locks/mcp.lock.yaml`. Обязательные MCP включены всегда; условные выбираются по признакам логического проекта. Секреты читаются только из переменных окружения или через нативный OAuth. Базы и кэши каждого MCP остаются в его собственном хранилище.
 
-## Model policy
+Выбирай MCP по задаче: Codebase Memory — для графа и анализа влияния, Serena — для символов и ссылок, Context7 — для внешней документации. Не запускай широкий поиск одновременно через CBM и Serena без конкретной причины.
 
-Если `models/corporate.yaml` содержит модели, committed definitions валидируются **только** по corporate allowlist. `models/user.local.yaml` может расширить local runtime, но никогда Git baseline. Если corporate list пуст, local runtime может использовать user-local models; committed definitions всё равно не должны скрытно требовать machine-specific model. Skills по возможности объявляют `requires.model_capabilities`.
+## Политика моделей
 
-## Overrides и precedence
+Если `models/corporate.yaml` содержит модели, закоммиченные определения проверяются только по корпоративному списку разрешённых моделей. Локальный файл `models/user.local.yaml` может расширять модели рабочего окружения, но не базовую конфигурацию Git. Если корпоративный список пуст, локальные модели разрешены во время выполнения, однако закоммиченные определения не должны скрыто зависеть от конкретной машины. По возможности skills объявляют `requires.model_capabilities`, а не точный ID модели.
 
-Local overrides находятся вне repository: `<data>/overrides/global/` и `<data>/overrides/projects/<project-id>/`. Режимы: `extend`, `replace`, `disable`; collision всегда явный.
+## Локальные переопределения и приоритет
 
-Порядок merge:
+Локальные переопределения находятся вне репозитория: `<data>/overrides/global/` и `<data>/overrides/projects/<project-id>/`. Поддерживаются режимы `extend`, `replace` и `disable`; конфликт всегда должен быть явным.
+
+Порядок применения от низшего приоритета к высшему:
 
 ```text
-upstream < kit global < project committed < user global < user project
+исходный поставщик < глобальный набор < проект < глобальные настройки пользователя < настройки пользователя для проекта
 ```
 
-Ни один overlay не может ослабить `enforced`/`locked` value, разрешить user-only model для committed definition, отключить validation или внедрить secret в Git.
+Ни одно переопределение не может ослабить значение `enforced` или `locked`, разрешить локальную модель для закоммиченного определения, отключить обязательную проверку или поместить секрет в Git.
 
-## Multi-repo и monorepo
+## Монорепозитории и несколько репозиториев
 
-Работай от logical root. Определи component текущего файла через `repositories[].path` и `components[].path`; оцени impact по всем связанным components, даже если у них разные `.git`. Git operations выполняй отдельно в каждом repository. Documentation index может содержать roots из нескольких repositories.
+Работай от корня логического проекта. Определи компонент текущего файла через `repositories[].path` и `components[].path`; оцени влияние на все связанные компоненты, даже если у них разные каталоги `.git`. Git-команды выполняй отдельно для каждого репозитория. Индекс документации может ссылаться на документы из нескольких репозиториев.
 
-## Завершение task
+## Завершение задачи
 
-Запусти релевантные tests и `agent-kit validate`. Для проверки corporate baseline используй `agent-kit validate --ci`. Обновляй durable project docs, когда изменился contract или архитектура; session notes оставляй в local memory. Не коммить generated client config, local models, overrides, runtime, indexes или secrets.
+Запусти относящиеся к изменению тесты и `agent-kit validate`. Для проверки переносимой корпоративной основы используй `agent-kit validate --ci`. Если изменился контракт или архитектура, обнови долговечную документацию проекта. Временные заметки сохраняй в локальной памяти. Не коммить сгенерированные настройки клиентов, локальные модели, переопределения, файлы среды выполнения, индексы или секреты.

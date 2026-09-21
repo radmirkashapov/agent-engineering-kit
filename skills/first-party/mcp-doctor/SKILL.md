@@ -1,7 +1,7 @@
 ---
 version: 1
 name: mcp-doctor
-description: Диагностировать MCP registration, transport, permissions и native state
+description: Диагностировать регистрацию, транспорт, разрешения и нативное состояние MCP
 policy: enforced
 requires:
   model_capabilities:
@@ -9,6 +9,6 @@ requires:
     - tool_use
 ---
 
-# MCP doctor
+# Диагностика MCP
 
-Сверь registry и effective client config, доступность command/endpoint и только наличие нужных environment variables — никогда не печатай значения. Native MCP state не перемещай в project memory.
+Сверь реестр и итоговую конфигурацию клиента, доступность команды или конечной точки и только наличие нужных переменных окружения — никогда не печатай их значения. Нативное состояние MCP не перемещай в память проекта.

@@ -1,7 +1,7 @@
 ---
 version: 1
 name: verification
-description: Доказать выполнение acceptance criteria воспроизводимыми проверками
+description: Доказать выполнение критериев приёмки воспроизводимыми проверками
 policy: enforced
 requires:
   model_capabilities:
@@ -10,6 +10,6 @@ requires:
     - tool_use
 ---
 
-# Verification
+# Проверка результата
 
-Запусти targeted tests, затем repository validation и негативные cases. Запиши точные команды, exit codes и ограничения окружения. Mandatory validation нельзя отключить local override.
+Запусти целевые тесты, затем проверку репозитория и негативные сценарии. Запиши точные команды, коды завершения и ограничения окружения. Обязательную проверку нельзя отключить локальным переопределением.

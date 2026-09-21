@@ -1,7 +1,7 @@
 ---
 version: 1
 name: code-review
-description: Проверить diff на defects, regressions, security и test gaps
+description: Проверить изменения на дефекты, регрессии, проблемы безопасности и пробелы в тестах
 policy: configurable
 requires:
   model_capabilities:
@@ -10,6 +10,6 @@ requires:
     - tool_use
 ---
 
-# Code review
+# Проверка кода
 
-Начни с изменённого contract и проследи его consumers. Findings должны иметь severity, location, reproduction/impact и предлагаемое исправление. Не перечисляй stylistic preferences без project rule.
+Начни с изменённого контракта и проследи его потребителей. Замечания должны содержать серьёзность, место, способ воспроизведения или влияние и предлагаемое исправление. Не перечисляй стилистические предпочтения без соответствующего правила проекта.

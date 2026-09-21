@@ -1,23 +1,23 @@
-# MCP registry
+# Реестр MCP
 
-`registry.yaml` хранит configuration intent, source, install method, conditional activation и policy; `locks/mcp.lock.yaml` фиксирует approved revisions. Secrets задаются только как `env:VARIABLE` или native OAuth.
+`registry.yaml` хранит назначение конфигурации, источник, способ установки, условия активации и политику; `locks/mcp.lock.yaml` фиксирует одобренные ревизии. Секреты задаются только ссылкой `env:VARIABLE` или через нативный OAuth.
 
-Native state остаётся во storage самого MCP. В частности, базы codebase-memory, Serena memory и client sessions не переносятся в project memory. Kit хранит только mapping logical project → integrations в локальной директории `projects/<project-id>/integrations/`.
+Нативное состояние остаётся в хранилище самого MCP. В частности, базы codebase-memory, память Serena и сеансы клиентов не переносятся в память проекта. Набор хранит только связь логического проекта с интеграциями в локальном каталоге `projects/<project-id>/integrations/`.
 
-Core: Codebase Memory отвечает за graph/impact, Serena — symbols/refactoring, Context7 — актуальную документацию; они не взаимозаменяемы. Conditional GitHub/GitLab/SonarQube/Playwright/Atlassian активируются project signals, причём multi-repo может включить несколько SCM одновременно.
+Ядро: Codebase Memory отвечает за граф кода и анализ влияния, Serena — за символы и рефакторинг, Context7 — за актуальную документацию. Эти инструменты не взаимозаменяемы. Условные GitHub, GitLab, SonarQube, Playwright и Atlassian активируются по признакам проекта; проект из нескольких репозиториев может одновременно включить несколько систем управления исходным кодом.
 
-## Границы и routing
+## Границы и маршрутизация
 
 | MCP | Единственная основная роль | Когда не вызывать |
 |---|---|---|
-| Codebase Memory | architecture graph, callers/callees, cross-repo impact | для точечного чтения уже известного symbol |
-| Serena | symbol lookup, references, semantic editing/refactoring | для общей dependency map всего workspace |
-| Context7 | актуальная внешняя документация library/framework/API | для анализа локального source |
-| GitHub / GitLab | provider-specific repository, issue и PR operations | если provider не обнаружен в logical project |
-| SonarQube | существующие server-side quality findings | вместо локальных tests или review |
-| Playwright | browser interaction и web verification | для non-web project |
-| Atlassian | Jira/Confluence collaboration context | без настроенного tenant/OAuth |
+| Codebase Memory | граф архитектуры, вызывающие и вызываемые функции, влияние между репозиториями | для точечного чтения уже известного символа |
+| Serena | поиск символов и ссылок, семантическое редактирование и рефакторинг | для общей карты зависимостей всего рабочего пространства |
+| Context7 | актуальная внешняя документация библиотеки, фреймворка или API | для анализа локального исходного кода |
+| GitHub / GitLab | операции с репозиториями, задачами и PR конкретного провайдера | если провайдер не обнаружен в логическом проекте |
+| SonarQube | существующие серверные замечания по качеству | вместо локальных тестов или проверки кода |
+| Playwright | взаимодействие с браузером и проверка веб-интерфейса | для проекта без веб-интерфейса |
+| Atlassian | контекст совместной работы в Jira и Confluence | без настроенного пространства или OAuth |
 
-Сначала выбирается один MCP по требуемому виду evidence. CBM и Serena разрешено сочетать последовательно: graph определяет область impact, затем Serena уточняет symbols и references. Параллельный широкий поиск обоими инструментами без конкретной причины считается избыточным. Каждый MCP сохраняет native state отдельно и регистрируется namespaced именем `agent-kit-<id>`, поэтому команды, databases и caches не пересекаются.
+Сначала выбирается один MCP по требуемому виду подтверждений. CBM и Serena разрешено сочетать последовательно: граф определяет область влияния, затем Serena уточняет символы и ссылки. Параллельный широкий поиск обоими инструментами без конкретной причины считается избыточным. Каждый MCP хранит нативное состояние отдельно и регистрируется именем `agent-kit-<id>` в собственном пространстве имён, поэтому команды, базы данных и кэши не пересекаются.
 
-CBM ставится pinned release installer из exact source revision с explicit release URL и обязательной SHA-256 verification; `curl | bash` не используется. Это соответствует v0.11, где `update` только направляет к локальному installer script.
+CBM устанавливается закреплённым установщиком выпуска из точной ревизии источника, с явным URL выпуска и обязательной проверкой SHA-256; `curl | bash` не используется. Это соответствует версии 0.11, где `update` лишь направляет к локальному скрипту установки.

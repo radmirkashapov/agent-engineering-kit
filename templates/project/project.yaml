@@ -1,13 +1,17 @@
+# Шаблон manifest описывает logical project, а не отдельный Git repository.
 version: 1
 id: example-project
-name: Example Project
+name: Пример проекта
 repositories:
+  # В single-repo проекте корневой repository обозначается относительным путём '.'.
   - id: root
     path: .
 components: []
 documentation:
+  # INDEX.md остаётся канонической картой durable documentation проекта.
   index: docs/INDEX.md
   roots:
     - docs
 memory:
+  # Namespace связывает project с изолированной machine-local memory.
   namespace: example-project

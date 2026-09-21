@@ -1,7 +1,7 @@
 ---
 version: 1
 name: codebase-analysis
-description: Исследовать структуру и data/control flow с приоритетом code graph
+description: Исследовать структуру и потоки данных и управления с приоритетом графа кода
 policy: configurable
 requires:
   model_capabilities:
@@ -10,6 +10,6 @@ requires:
     - tool_use
 ---
 
-# Codebase analysis
+# Анализ кодовой базы
 
-Используй доступный code graph для definitions, calls и impact; text search — для literals/config или при неполном index. Сохраняй reusable выводы в project docs, временные observations — в local memory.
+Используй доступный граф кода для определений, вызовов и анализа влияния; текстовый поиск — для строковых литералов, конфигурации или при неполном индексе. Сохраняй повторно используемые выводы в документации проекта, а временные наблюдения — в локальной памяти.

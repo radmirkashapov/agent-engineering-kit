@@ -1,5 +1,5 @@
-# ADR 0008: Thin client adapters
+# ADR 0008: тонкие клиентские адаптеры
 
 Статус: принято.
 
-Adapters указывают на `AI.md`, effective skills и MCP intent, не копируя policy. Native discovery предпочтителен; generated bridges machine-local и пересоздаются resync.
+Адаптеры указывают на `AI.md`, итоговый набор skills и назначение MCP, не копируя политики. Предпочтительны нативные механизмы обнаружения; сгенерированные мосты локальны для машины и пересоздаются командой `resync`.

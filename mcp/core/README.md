@@ -1,3 +1,3 @@
-# Core MCP
+# Основные MCP
 
-Presets и notes для codebase/project context MCP. Configuration intent остаётся в `../registry.yaml`, native state — у MCP.
+Предустановки и пояснения для MCP, работающих с кодовой базой и контекстом проекта. Назначение конфигурации остаётся в `../registry.yaml`, а нативное состояние — у соответствующего MCP.

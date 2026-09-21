@@ -1,3 +1,3 @@
-# Collaboration MCP
+# MCP для совместной работы
 
-Presets для issue/chat/document collaboration. External mutations требуют явной user authorization.
+Предустановки для совместной работы с задачами, чатами и документами. Изменения во внешних системах требуют явного разрешения пользователя.

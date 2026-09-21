@@ -10,30 +10,30 @@ permissions: {elevated: false}
 network: {install: required, runtime: false}
 ---
 # Назначение
-Ищет секреты в candidate и содержимом Git.
+Ищет секреты в кандидате и содержимом Git.
 # Почему используется
-Предотвращает активацию и commit утёкших credentials.
-# Threat model
-Токены, ключи, пароли и credentials с высокой entropy; не проверяет действительность секрета.
+Предотвращает активацию и коммит утёкших учётных данных.
+# Модель угроз
+Токены, ключи, пароли и учётные данные с высокой энтропией; не проверяет действительность секрета.
 # Источник
-Официальный `gitleaks/gitleaks`, MIT, точный release commit в lock.
+Официальный `gitleaks/gitleaks`, MIT, точный коммит выпуска в lock-файле.
 # Поддерживаемые платформы
 macOS, Linux, Windows.
 # Установка
-`go install github.com/zricethezav/gitleaks/v8@<version>` в isolated `GOBIN`: repository переименован в `gitleaks/gitleaks`, но upstream `go.mod` сохраняет legacy module path.
+`go install github.com/zricethezav/gitleaks/v8@<version>` в изолированный `GOBIN`: репозиторий переименован в `gitleaks/gitleaks`, но внешний `go.mod` сохраняет прежний путь модуля.
 # Проверка
-Вызывается security pipeline и Git hygiene.
+Вызывается конвейером безопасности и проверкой чистоты Git.
 # Обновление
-Изменить lock после валидации candidate.
-# Rollback
-Вернуть предыдущую версию module.
+Изменить lock-файл после проверки кандидата.
+# Откат
+Вернуть предыдущую версию модуля.
 # Удаление
-Удалить root управляемого binary.
-# Permissions
-Без elevated privileges; доступ к repository и candidate только на чтение.
-# Network access
+Удалить корневой каталог управляемого исполняемого файла.
+# Разрешения
+Повышенные привилегии не нужны; доступ к репозиторию и кандидату только на чтение.
+# Доступ к сети
 Только при установке.
 # Интеграция с agent-kit
-Блокирующий scanner для external skills и tracked/staged state.
+Блокирующий сканер для внешних skills, отслеживаемого и подготовленного к коммиту состояния.
 # Ограничения
-Ложные срабатывания требуют review правила; секреты нельзя печатать в diagnostics.
+Ложные срабатывания требуют проверки правила; секреты нельзя печатать в диагностике.

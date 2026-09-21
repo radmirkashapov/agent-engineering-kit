@@ -1,12 +1,12 @@
-# Model policy
+# Политика моделей
 
-`corporate.yaml` — единственный authoritative allowlist для definitions, которые попадают в Git. При непустом `models` все explicit model references в `agents/`, `skills/`, `rules/`, `clients/`, `mcp/` и `templates/` проверяются только по нему.
+`corporate.yaml` — единственный авторитетный список разрешённых моделей для определений, попадающих в Git. Если список `models` непуст, все явные ссылки на модели в `agents/`, `skills/`, `rules/`, `clients/`, `mcp/` и `templates/` проверяются только по нему.
 
-Локальные модели задаются в `models/user.local.yaml`. Файл исключён из Git и предназначен только для конкретной машины. Если corporate list пуст, локальный runtime может использовать этот файл, но committed definitions не должны предполагать, что он существует на другой машине. CI всегда запускает `agent-kit validate --ci` и не читает local policy.
+Локальные модели задаются в `models/user.local.yaml`. Файл исключён из Git и предназначен только для конкретной машины. Если корпоративный список пуст, локальная среда выполнения может использовать этот файл, но закоммиченные определения не должны предполагать, что он существует на другой машине. CI всегда запускает `agent-kit validate --ci` и не читает локальную политику.
 
-Предпочтительный контракт skill — `requires.model_capabilities`; concrete model выбирает resolver. Explicit `model.preferred` и `model.allowed` разрешены для agent, когда нужна воспроизводимость.
+Предпочтительный контракт skill — `requires.model_capabilities`; конкретную модель выбирает механизм разрешения. Явные поля `model.preferred` и `model.allowed` разрешены для роли агента, когда нужна воспроизводимость.
 
-Пример local-only файла:
+Пример файла только для локального использования:
 
 ```yaml
 version: 1

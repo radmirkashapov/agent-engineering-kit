@@ -1,7 +1,9 @@
+# Resolver объединяет first-party skills и внешний catalog без vendoring.
 version: 1
 source: catalog/skills.yaml
 first_party_root: skills/first-party
 external_installation_root: installations/skills
 policy:
+  # Сторонний source остаётся вне Git и активируется только после validation gate.
   vendor_external_source: false
   activation_requires_validation: true

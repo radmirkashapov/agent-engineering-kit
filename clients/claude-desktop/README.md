@@ -1,3 +1,3 @@
 # Claude Desktop
 
-Claude Desktop не считается эквивалентом Claude Code. Contract охватывает MCP/Desktop Extensions и native `claude_desktop_config.json`; discovery filesystem/project instructions ограничен и остаётся client-owned. Global rules не копируются в Desktop configuration.
+Claude Desktop не считается эквивалентом Claude Code. Контракт охватывает MCP, Desktop Extensions и нативный файл `claude_desktop_config.json`. Возможность находить инструкции файловой системы и проекта ограничена и остаётся под управлением клиента. Глобальные правила не копируются в конфигурацию Desktop.

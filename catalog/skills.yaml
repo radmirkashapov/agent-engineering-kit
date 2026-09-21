@@ -1,5 +1,7 @@
+# Реестр сторонних skills хранит metadata, но никогда не содержит их исходный код.
 version: 1
 skills:
+  # Superpowers — обязательный внешний baseline с точным security review.
   - id: superpowers
     source:
       type: git
@@ -31,6 +33,6 @@ skills:
         - rule: generic-api-key
           path: tests/brainstorm-server/ws-protocol.test.js
           line: 53
-      review_note: Upstream documentation legitimately describes agent configuration, skill discovery, debugging, Git cleanup, push and skill authoring; enforced kit policy still governs execution and user authorization.
+      review_note: Upstream-документация обоснованно описывает настройку agents, поиск skills, отладку, очистку Git, push и создание skills; выполнение и пользовательские разрешения по-прежнему регулируются обязательной политикой kit.
     activation:
       default: enabled

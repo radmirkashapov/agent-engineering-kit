@@ -1,3 +1,3 @@
 # Автоматическая установка
 
-`agent-kit security install` использует `uv tool install` или `go install` в user-local data directory. Команда никогда не выполняет `curl | bash`, не требует elevated permissions и идемпотентна относительно lock state. `update` переустанавливает тот же approved lock; изменение upstream требует review и commit lock-файла.
+`agent-kit security install` использует `uv tool install` или `go install` в локальном каталоге пользовательских данных. Команда никогда не выполняет `curl | bash`, не требует повышенных разрешений и идемпотентна относительно состояния lock-файла. `update` переустанавливает ту же одобренную ревизию; изменение исходного поставщика требует проверки и коммита lock-файла.

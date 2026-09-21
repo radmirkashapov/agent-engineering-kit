@@ -33,7 +33,22 @@ def validate_security(repository: Path) -> ValidationResult:
         result.extend(validate_instance(metadata, repository / "schemas" / "security-tool.schema.json", str(path.relative_to(repository))))
         found.add(str(metadata.get("id")))
         body = path.read_text(encoding="utf-8")
-        for heading in ("Назначение", "Почему используется", "Threat model", "Источник", "Поддерживаемые платформы", "Установка", "Проверка", "Обновление", "Rollback", "Удаление", "Permissions", "Network access", "Интеграция с agent-kit", "Ограничения"):
+        for heading in (
+            "Назначение",
+            "Почему используется",
+            "Модель угроз",
+            "Источник",
+            "Поддерживаемые платформы",
+            "Установка",
+            "Проверка",
+            "Обновление",
+            "Откат",
+            "Удаление",
+            "Разрешения",
+            "Доступ к сети",
+            "Интеграция с agent-kit",
+            "Ограничения",
+        ):
             if f"# {heading}" not in body:
                 result.error("security", f"{path.relative_to(repository)}: отсутствует раздел {heading}")
     if found != expected:

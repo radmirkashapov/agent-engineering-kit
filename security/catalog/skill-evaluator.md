@@ -12,28 +12,28 @@ network: {install: required, runtime: optional}
 # Назначение
 Оркестрирует статическую оценку Agent Skills и выдаёт структурированный отчёт.
 # Почему используется
-Даёт единый блокирующий gate поверх специализированных scanners.
-# Threat model
-Ищет опасные instructions, code patterns, утечки секретов и instruction collisions; экспериментальный инструмент не является sandbox.
+Даёт единый блокирующий барьер поверх специализированных сканеров.
+# Модель угроз
+Ищет опасные инструкции, шаблоны кода, утечки секретов и конфликты инструкций; экспериментальный инструмент не является песочницей.
 # Источник
-Официальный `NVIDIA/SkillEvaluator`, Apache-2.0, commit закреплён в lock.
+Официальный `NVIDIA/SkillEvaluator`, Apache-2.0; коммит закреплён в lock-файле.
 # Поддерживаемые платформы
 Python 3.12/3.13 на macOS, Linux и Windows.
 # Установка
-`uv tool install` из закреплённой Git revision в machine-local storage.
+`uv tool install` из закреплённой ревизии Git в локальное хранилище машины.
 # Проверка
-`skillevaluator validate <skills> --type skill --checks security,pii,license,code-integrity,unicode,dependency --no-dedup -r cli`. Специфичные для публикации проверки schema/quality/lint не блокируют использование чужого Agent Skills dialect; names и capabilities отдельно проверяет kit.
+`skillevaluator validate <skills> --type skill --checks security,pii,license,code-integrity,unicode,dependency --no-dedup -r cli`. Специфичные для публикации проверки схемы, качества и оформления не блокируют использование чужого диалекта Agent Skills; имена и необходимые способности отдельно проверяет набор.
 # Обновление
-Только через review нового lock после сканирования candidate.
-# Rollback
-Вернуть предыдущий lock и выполнить `security update`.
+Только после проверки нового lock-файла и сканирования кандидата.
+# Откат
+Вернуть предыдущий lock-файл и выполнить `security update`.
 # Удаление
-Удалить управляемый root инструмента и state; Git не затрагивается.
-# Permissions
-Elevated privileges не нужны; доступ к candidate только на чтение.
-# Network access
-Нужен при установке; отдельные функции evaluator могут использовать provider API, базовый gate работает offline.
+Удалить управляемый корневой каталог инструмента и его состояние; Git не затрагивается.
+# Разрешения
+Повышенные привилегии не нужны; доступ к кандидату только на чтение.
+# Доступ к сети
+Сеть нужна при установке; отдельные функции оценщика могут использовать API провайдера, базовый барьер работает без сети.
 # Интеграция с agent-kit
-Блокирующий orchestrator перед `ACTIVE`.
+Блокирующий координатор перед переходом в `ACTIVE`.
 # Ограничения
-Upstream помечает продукт как экспериментальный; результат дополняет, а не заменяет review.
+Автор проекта помечает продукт как экспериментальный; результат дополняет, а не заменяет ручную проверку.

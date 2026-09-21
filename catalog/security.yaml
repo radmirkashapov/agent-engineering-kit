@@ -1,5 +1,7 @@
+# Security tools устанавливаются во внешнее machine-local хранилище по lock-файлу.
 version: 1
 security:
+  # Обязательные scanners образуют gate перед активацией стороннего skill.
   - id: skill-evaluator
     name: NVIDIA SkillEvaluator
     required: true
@@ -49,9 +51,10 @@ security:
       repository: https://github.com/gitleaks/gitleaks.git
     installation:
       type: go-install
-      # Upstream repository was renamed, but go.mod intentionally retains the legacy module path.
+      # Upstream repository переименован, но go.mod намеренно сохраняет прежний module path.
       module: github.com/zricethezav/gitleaks/v8@{version}
 
+  # Bumblebee необязателен: он инвентаризирует окружение, но не блокирует activation.
   - id: bumblebee
     name: Perplexity Bumblebee
     required: false

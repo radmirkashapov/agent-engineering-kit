@@ -1,5 +1,7 @@
+# Desired state MCP: core servers включены всегда, остальные — по сигналам проекта.
 version: 1
 servers:
+  # Core: code graph и анализ архитектурного impact.
   - id: codebase-memory
     category: core
     required: true
@@ -18,6 +20,7 @@ servers:
     state: native
     policy: locked
 
+  # Core: поиск symbols, references и semantic refactoring.
   - id: serena
     category: core
     required: true
@@ -35,6 +38,7 @@ servers:
     state: native
     policy: locked
 
+  # Core: актуальная внешняя документация через remote OAuth endpoint.
   - id: context7
     category: core
     required: true
@@ -50,6 +54,7 @@ servers:
     state: stateless
     policy: locked
 
+  # Conditional SCM integrations активируются по remotes logical project.
   - id: github
     category: scm
     required: false
@@ -84,6 +89,7 @@ servers:
     state: native
     policy: configurable
 
+  # Conditional quality integrations включаются только при соответствующем project signal.
   - id: sonarqube
     category: quality
     required: false
@@ -119,6 +125,7 @@ servers:
     state: native
     policy: configurable
 
+  # Collaboration integration требует настроенного Atlassian tenant и OAuth.
   - id: atlassian
     category: collaboration
     required: false

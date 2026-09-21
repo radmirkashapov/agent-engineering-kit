@@ -1,3 +1,3 @@
 # Claude Code
 
-Thin global instructions размещаются в `~/.claude/CLAUDE.md`; personal skills подключаются через `~/.claude/skills`, а personal MCP configuration остаётся client-owned в `~/.claude.json`. Adapter ссылается на `AI.md`, не копируя rules. Источник: [Claude Code directory](https://code.claude.com/docs/en/claude-directory).
+Краткие глобальные инструкции размещаются в `~/.claude/CLAUDE.md`; пользовательские skills подключаются через `~/.claude/skills`, а личная конфигурация MCP остаётся под управлением клиента в `~/.claude.json`. Адаптер ссылается на `AI.md`, не копируя правила. Источник: [каталоги Claude Code](https://code.claude.com/docs/en/claude-directory).

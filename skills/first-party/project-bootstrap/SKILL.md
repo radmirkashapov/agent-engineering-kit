@@ -1,7 +1,7 @@
 ---
 version: 1
 name: project-bootstrap
-description: Инициализировать logical project без копирования глобальных rules
+description: Инициализировать логический проект без копирования глобальных правил
 policy: configurable
 requires:
   model_capabilities:
@@ -9,11 +9,11 @@ requires:
     - tool_use
 ---
 
-# Project bootstrap
+# Инициализация проекта
 
 1. Запусти `agent-kit project init <workspace>`.
-2. Проверь найденные repositories и components в `.ai-team/project.yaml`.
-3. Заполни `docs/INDEX.md` ссылками на существующие durable docs.
+2. Проверь найденные репозитории и компоненты в `.ai-team/project.yaml`.
+3. Заполни `docs/INDEX.md` ссылками на существующую долговечную документацию.
 4. Запусти `agent-kit project status`.
 
-Не размещай local memory, indexes или client sessions в project repository.
+Не размещай локальную память, индексы или сеансы клиентов в репозитории проекта.

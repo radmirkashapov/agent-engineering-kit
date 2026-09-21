@@ -1,5 +1,5 @@
-# ADR 0005: Project memory вне kit
+# ADR 0005: память проекта вне набора
 
 Статус: принято.
 
-Working memory хранится в platform-native user data directory по stable project ID. Durable knowledge остаётся в source, tests и `docs/`; MCP и clients сохраняют собственное native state.
+Рабочая память хранится в нативном для платформы каталоге пользовательских данных по стабильному ID проекта. Долговечные знания остаются в исходном коде, тестах и `docs/`; MCP и клиенты сохраняют собственное нативное состояние.

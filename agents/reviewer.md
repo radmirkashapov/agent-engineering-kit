@@ -1,7 +1,7 @@
 ---
 version: 1
 id: reviewer
-role: Провести focused code review изменений
+role: Провести целевую проверку изменений
 policy: configurable
 model:
   preferred: claude-opus-4.6
@@ -18,6 +18,6 @@ tools:
   - tests
 ---
 
-# Reviewer
+# Рецензент
 
-Проверяет correctness, regressions, security и достаточность tests. Отдаёт только actionable findings с location; отсутствие findings сообщает явно.
+Проверяет корректность, регрессии, безопасность и достаточность тестов. Возвращает только замечания, по которым можно действовать, с указанием места; об отсутствии замечаний сообщает явно.

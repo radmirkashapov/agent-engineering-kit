@@ -1,5 +1,5 @@
-# Security toolchain
+# Инструменты безопасности
 
-Security tools объявляются в `catalog/security.yaml`, фиксируются в `locks/security.lock.yaml`, устанавливаются вне Git и описываются contracts из `security/catalog/`. External skill достигает `ACTIVE` только после проверки source и security.
+Инструменты безопасности объявляются в `catalog/security.yaml`, фиксируются в `locks/security.lock.yaml`, устанавливаются вне Git и описываются контрактами из `security/catalog/`. Внешний skill достигает состояния `ACTIVE` только после проверки источника и безопасности.
 
-`SkillEvaluator` оркестрирует проверки; `SkillSpector`, `Semgrep` и `Gitleaks` являются blocking scanners. `Bumblebee` проверяет machine inventory/exposure и никогда не получает `PASS` на неподдерживаемой platform.
+`SkillEvaluator` управляет проверками; `SkillSpector`, `Semgrep` и `Gitleaks` являются блокирующими сканерами. `Bumblebee` проверяет состав и открытые поверхности машины и никогда не получает состояние `PASS` на неподдерживаемой платформе.

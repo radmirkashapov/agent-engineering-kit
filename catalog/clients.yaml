@@ -1,5 +1,7 @@
+# Желаемые способы подключения kit к каждому поддерживаемому AI-клиенту.
 version: 1
 clients:
+  # Каждый блок фиксирует нативные точки инструкций, skills и MCP клиента.
   - id: codex
     instructions: ~/.codex/AGENTS.md
     skills: ~/.agents/skills
@@ -9,7 +11,7 @@ clients:
     skills: ~/.claude/skills
     mcp: ~/.claude.json
   - id: claude-desktop
-    instructions: limited
+    instructions: ограничены-возможностями-клиента
     skills: extensions/plugins
     mcp: claude_desktop_config.json
   - id: opencode
@@ -17,6 +19,6 @@ clients:
     skills: ~/.agents/skills
     mcp: opencode.json
   - id: cline
-    instructions: AGENTS.md and Cline Rules
-    skills: client-dependent
+    instructions: AGENTS.md и Cline Rules
+    skills: зависят-от-клиента
     mcp: cline_mcp_settings.json

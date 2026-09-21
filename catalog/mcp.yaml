@@ -1,2 +1,3 @@
+# Catalog делегирует полный desired state MCP каноническому registry.
 version: 1
 registry: mcp/registry.yaml

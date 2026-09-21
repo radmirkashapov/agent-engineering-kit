@@ -1,5 +1,7 @@
+# Approved версии и immutable revisions всех MCP contracts.
 version: 1
 components:
+  # Для каждого MCP catalog ID должна существовать ровно одна lock-запись.
   - id: codebase-memory
     version: v0.11.0
     revision: 8972ea69c6ad94b1ef1d4ffbf0a92d78d2db1798

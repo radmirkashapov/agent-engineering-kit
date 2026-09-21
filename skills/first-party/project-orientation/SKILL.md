@@ -1,7 +1,7 @@
 ---
 version: 1
 name: project-orientation
-description: Определить logical project, компоненты, документацию и effective configuration
+description: Определить логический проект, компоненты, документацию и итоговую конфигурацию
 policy: configurable
 requires:
   model_capabilities:
@@ -9,6 +9,6 @@ requires:
     - tool_use
 ---
 
-# Project orientation
+# Ориентация в проекте
 
-Найди ближайший `.ai-team/project.yaml`, проверь `project.id`, repositories и components. Прочитай documentation index и затем `agent-kit config explain`. Git root не подменяет logical project root.
+Найди ближайший `.ai-team/project.yaml`, проверь `project.id`, репозитории и компоненты. Прочитай индекс документации, затем выполни `agent-kit config explain`. Корень Git не подменяет корень логического проекта.

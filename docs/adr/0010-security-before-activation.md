@@ -1,5 +1,5 @@
-# ADR 0010: Security before activation
+# ADR 0010: проверка безопасности до активации
 
 Статус: принято.
 
-External candidate проходит source verification, SkillEvaluator, SkillSpector, Gitleaks, применимый Semgrep, instruction/model/compatibility checks до `ACTIVE`. Failure даёт `BLOCKED` и не заменяет предыдущую revision.
+До перехода в состояние `ACTIVE` внешний кандидат проходит проверку источника, SkillEvaluator, SkillSpector, Gitleaks, применимые правила Semgrep, а также проверки инструкций, моделей и совместимости. Ошибка переводит кандидата в состояние `BLOCKED` и не заменяет предыдущую ревизию.

@@ -1,13 +1,13 @@
 ---
 version: 1
 name: docs-index
-description: Поддерживать docs/INDEX.md как карту canonical durable knowledge
+description: Поддерживать docs/INDEX.md как карту канонических долговечных знаний
 policy: configurable
 requires:
   model_capabilities:
     - reasoning
 ---
 
-# Docs index
+# Индекс документации
 
-Обновляй индекс при появлении ADR, architecture docs и runbooks. Ссылки должны быть относительными и проверяемыми. Mutable session summaries не считаются authoritative documentation.
+Обновляй индекс при появлении ADR, архитектурной документации и эксплуатационных инструкций. Ссылки должны быть относительными и проверяемыми. Изменяемые сводки сеанса не считаются авторитетной документацией.

@@ -1,7 +1,7 @@
 ---
 version: 1
 name: change-impact
-description: Оценить inbound/outbound impact изменения до реализации
+description: Оценить входящее и исходящее влияние изменения до реализации
 policy: configurable
 requires:
   model_capabilities:
@@ -10,6 +10,6 @@ requires:
     - tool_use
 ---
 
-# Change impact
+# Анализ влияния
 
-Определи public contracts, callers, consumers, persistence и tests. Для multi-repo project пройди все components из manifest. Результат должен разделять confirmed impact и hypotheses.
+Определи публичные контракты, вызывающие функции, потребителей, слой хранения и тесты. Для проекта из нескольких репозиториев пройди все компоненты из манифеста. В результате отдели подтверждённое влияние от гипотез.

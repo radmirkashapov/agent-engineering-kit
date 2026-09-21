@@ -1,5 +1,5 @@
-# ADR 0003: Не vendor third-party skills
+# ADR 0003: не включать сторонние skills в репозиторий
 
 Статус: принято.
 
-В Git хранятся только source metadata, lock и installation/security contracts. Third-party source устанавливается в user-local data storage. Submodules, subtree, copied forks и `vendor/` запрещены.
+В Git хранятся только метаданные источника, lock-файл и контракты установки и безопасности. Сторонний исходный код устанавливается в локальное пользовательское хранилище данных. Подмодули, subtree, скопированные форки и каталог `vendor/` запрещены.

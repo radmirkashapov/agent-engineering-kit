@@ -1,5 +1,7 @@
+# Проверенные версии security tools; обновление выполняется только через review.
 version: 1
 components:
+  # Полная Git revision связывает установленный binary с проверенным upstream source.
   - id: skill-evaluator
     version: v0.3.0
     revision: ac0a04905100acdafc6c95829311a9739c340ff6

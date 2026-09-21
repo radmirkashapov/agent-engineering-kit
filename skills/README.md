@@ -1,5 +1,5 @@
 # Skills
 
-Собственные skills находятся в `first-party/` и разрабатываются вместе с kit. Сторонние skills никогда не копируются сюда: `registry.yaml` указывает на desired-state catalog, а `agent-kit resync` устанавливает pinned revision во внешний machine-local storage.
+Собственные skills находятся в `first-party/` и разрабатываются вместе с набором. Сторонние skills никогда не копируются сюда: `registry.yaml` указывает на каталог желаемого состояния, а `agent-kit resync` устанавливает закреплённую ревизию во внешнее локальное хранилище машины.
 
-Для Superpowers source of truth — `catalog/skills.yaml`, immutable revision — `locks/skills.lock.yaml`, active checkout — `<data>/installations/skills/superpowers/revisions/<revision>/`. Только candidate, прошедший source, SkillEvaluator, SkillSpector, Gitleaks, Semgrep, model-policy и compatibility checks, получает состояние `ACTIVE`.
+Для Superpowers источником истины служит `catalog/skills.yaml`, неизменяемая ревизия записана в `locks/skills.lock.yaml`, а активная рабочая копия находится в `<data>/installations/skills/superpowers/revisions/<revision>/`. Только кандидат, прошедший проверку источника, SkillEvaluator, SkillSpector, Gitleaks, Semgrep, политику моделей и совместимость, получает состояние `ACTIVE`.

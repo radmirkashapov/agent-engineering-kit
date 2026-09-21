@@ -1,3 +1,4 @@
+# CI проверяет корпоративную конфигурацию и тесты на поддерживаемых версиях Python.
 name: validate
 
 on:
@@ -10,6 +11,7 @@ permissions:
   contents: read
 
 jobs:
+  # Единственная job воспроизводит обязательные проверки перед merge.
   test:
     runs-on: ubuntu-latest
     env:
