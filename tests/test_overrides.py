@@ -52,6 +52,13 @@ def test_disable_enforced_skill_fails(kit: tuple[Path, Path]) -> None:
     assert not validate_overrides(repository, overrides).ok
 
 
+def test_validation_succeeds_without_mcp_registry(kit: tuple[Path, Path]) -> None:
+    repository, overrides = kit
+    (repository / "mcp/registry.yaml").unlink()
+
+    assert validate_overrides(repository, overrides).ok
+
+
 def test_required_external_skill_cannot_be_disabled(tmp_path: Path) -> None:
     repository = Path(__file__).resolve().parents[1]
     overrides = tmp_path / "overrides"

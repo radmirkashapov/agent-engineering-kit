@@ -52,3 +52,21 @@ def test_unknown_and_conflicting_ids_fail_validation(tmp_path: Path) -> None:
     assert not result.ok
     assert "неизвестные ID" in messages
     assert "одновременно" in messages
+
+
+def test_scalar_access_list_is_reported_without_raising(tmp_path: Path) -> None:
+    write_yaml(tmp_path / "global/access.yaml", {"version": 1, "mcp": {"allow": 1, "block": []}})
+
+    result = validate_access({"mcp": {"github"}, "skills": set()}, tmp_path)
+
+    assert not result.ok
+    assert any("is not of type 'array'" in item.message for item in result.diagnostics)
+
+
+def test_resolution_ignores_string_access_lists(tmp_path: Path) -> None:
+    write_yaml(tmp_path / "global/access.yaml", {"version": 1, "mcp": {"allow": "g", "block": "g"}})
+
+    decision = resolve_access({"github"}, tmp_path, "mcp")["github"]
+
+    assert decision.enabled is True
+    assert decision.reason == "allowed:catalog"

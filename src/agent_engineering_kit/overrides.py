@@ -65,7 +65,10 @@ def apply_local_overrides(
 
 def _core_ids(repository: Path, kind: str) -> dict[str, bool]:
     if kind == "mcp":
-        registry = load_yaml(repository / "mcp" / "registry.yaml")
+        registry_path = repository / "mcp" / "registry.yaml"
+        if not registry_path.is_file():
+            return {}
+        registry = load_yaml(registry_path)
         return {item["id"]: item.get("policy") == "locked" for item in registry.get("servers", [])}
     root = repository / kind
     found: dict[str, bool] = {}

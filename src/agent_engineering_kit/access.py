@@ -36,6 +36,19 @@ def _layers(override_root: Path, project_id: str | None) -> list[tuple[str, Path
     return layers
 
 
+def _access_lists(document: dict[object, object], kind: str) -> tuple[set[str], set[str]]:
+    """Вернуть списки доступа только из структурно корректного раздела."""
+    section = document.get(kind, {})
+    if not isinstance(section, dict):
+        return set(), set()
+    allow = section.get("allow", [])
+    block = section.get("block", [])
+    return (
+        set(allow) if isinstance(allow, list) and all(isinstance(item, str) for item in allow) else set(),
+        set(block) if isinstance(block, list) and all(isinstance(item, str) for item in block) else set(),
+    )
+
+
 def resolve_access(
     identifiers: set[str],
     override_root: Path,
@@ -51,9 +64,7 @@ def resolve_access(
     for layer, path in _layers(override_root, project_id):
         if not path.is_file():
             continue
-        section = load_yaml(path).get(kind, {})
-        allow = set(section.get("allow", []))
-        block = set(section.get("block", []))
+        allow, block = _access_lists(load_yaml(path), kind)
         for identifier, current in list(decisions.items()):
             if not current.enabled:
                 continue
@@ -80,11 +91,7 @@ def validate_access(
         document = load_yaml(path)
         result.extend(validate_instance(document, _SCHEMA_PATH, str(path)))
         for kind in ACCESS_KINDS:
-            section = document.get(kind, {})
-            if not isinstance(section, dict):
-                continue
-            allow = set(section.get("allow", []))
-            block = set(section.get("block", []))
+            allow, block = _access_lists(document, kind)
             known = identifiers_by_kind.get(kind, set())
             unknown = sorted((allow | block) - known)
             if unknown:
