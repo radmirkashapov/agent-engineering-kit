@@ -30,7 +30,7 @@ def test_sync_generates_thin_runtime_adapters(tmp_path: Path) -> None:
         f"kit_repository: {repository}\n"
         f"entrypoint: {repository / 'AI.md'}\n"
         f"effective_policy: {data / 'installations/clients/shared/effective-policy.json'}\n"
-        f"skills: {repository / 'skills'}\n"
+        f"skills: {data / 'installations/clients/shared/skills'}\n"
         f"mcp_registry: {repository / 'mcp' / 'registry.yaml'}\n"
     )
     assert content == expected
@@ -59,6 +59,69 @@ def test_core_mcp_registration_is_namespaced_and_oauth_safe(tmp_path: Path, monk
     assert sum("https://mcp.context7.com/mcp/oauth" in args for args in additions) == 2
     registrations = json.loads(state_path.read_text(encoding="utf-8"))["registrations"]
     assert sum(item.get("mcp") == "context7" and item["status"] == "AUTH_REQUIRED" for item in registrations) == 2
+
+
+def test_blocked_mcp_is_removed_from_previously_registered_native_clients(tmp_path: Path, monkeypatch) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    data = tmp_path / "data"
+    paths = KitPaths(repository, data, data / "runtime", data / "projects", data / "overrides")
+    monkeypatch.setattr("agent_engineering_kit.clients.shutil.which", lambda name: f"/usr/bin/{name}" if name in {"codex", "claude"} else None)
+    client_state = {
+        "codex": {"user-owned"},
+        "claude-code": {"user-owned"},
+    }
+
+    def runner(args, **kwargs):
+        client = "codex" if Path(args[0]).name == "codex" else "claude-code"
+        if args[2] == "get":
+            name = args[3]
+            if name not in client_state[client]:
+                return CommandResult(tuple(args), 1, "", "не найден")
+            output = (
+                json.dumps({"transport": {"url": "https://mcp.context7.com/mcp/oauth"}})
+                if client == "codex"
+                else "https://mcp.context7.com/mcp/oauth"
+            )
+            return CommandResult(tuple(args), 0, output, "")
+        if args[2] == "add":
+            name = args[3] if client == "codex" else args[-2]
+            client_state[client].add(name)
+            return CommandResult(tuple(args), 0, "", "")
+        if args[2] == "remove":
+            client_state[client].discard(args[3])
+            return CommandResult(tuple(args), 0, "", "")
+        return CommandResult(tuple(args), 1, "", "неподдерживаемая команда")
+
+    register_native_mcp(repository, paths, runner=runner)
+    assert all("agent-kit-context7" in registrations for registrations in client_state.values())
+
+    write_yaml(paths.overrides / "global/access.yaml", {"version": 1, "mcp": {"allow": [], "block": ["context7"]}})
+    state_path = register_native_mcp(repository, paths, runner=runner)
+
+    assert all("agent-kit-context7" not in registrations for registrations in client_state.values())
+    assert all("user-owned" in registrations for registrations in client_state.values())
+    rows = json.loads(state_path.read_text(encoding="utf-8"))["registrations"]
+    disabled = [row for row in rows if row.get("mcp") == "context7" and row["status"] == "DISABLED"]
+    assert {row["client"] for row in disabled} == {"codex", "claude-code"}
+
+
+def test_missing_cli_preserves_managed_registration_for_later_cleanup(tmp_path: Path, monkeypatch) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    data = tmp_path / "data"
+    paths = KitPaths(repository, data, data / "runtime", data / "projects", data / "overrides")
+    state_path = paths.state / "client-mcp-registrations.json"
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text(
+        json.dumps({"version": 1, "registrations": [{"client": "codex", "mcp": "context7", "status": "AUTH_REQUIRED"}]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("agent_engineering_kit.clients.shutil.which", lambda _: None)
+
+    register_native_mcp(repository, paths)
+
+    rows = json.loads(state_path.read_text(encoding="utf-8"))["registrations"]
+    preserved = next(row for row in rows if row.get("client") == "codex" and row.get("mcp") == "context7")
+    assert preserved["status"] == "NOT_SUPPORTED"
 
 
 def test_instruction_bridge_preserves_user_text_and_is_idempotent(tmp_path: Path) -> None:
@@ -169,7 +232,11 @@ def test_disabled_skill_is_removed_from_shared_discovery(tmp_path: Path) -> None
 
     sync_clients(repository, paths)
 
-    assert not (paths.installations / "clients/shared/skills/verification").exists()
+    shared = paths.installations / "clients/shared/skills"
+    assert not (shared / "verification").exists()
+    compatibility = (paths.runtime / "clients/codex/adapter.yaml").read_text(encoding="utf-8")
+    assert f"skills: {shared}" in compatibility
+    assert f"skills: {repository / 'skills'}" not in compatibility
 
 
 def test_explain_reports_access_policy_layer_and_reason(tmp_path: Path) -> None:

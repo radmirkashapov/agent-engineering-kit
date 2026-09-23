@@ -111,8 +111,7 @@ def sync_clients(repository: Path, paths: KitPaths, *, project_id: str | None = 
         )
         atomic_write(target, content)
         # Compatibility location для прежнего `agent-kit sync`; canonical state остаётся в installations/.
-        compatibility_content = content.replace(f"skills: {shared}", f"skills: {repository / 'skills'}")
-        atomic_write(paths.runtime / "clients" / client / "adapter.yaml", compatibility_content)
+        atomic_write(paths.runtime / "clients" / client / "adapter.yaml", content)
         generated.append(target)
     return generated
 
@@ -221,13 +220,54 @@ def register_native_mcp(repository: Path, paths: KitPaths, *, project=None, runn
     from .mcp_manager import McpManager
 
     manager = McpManager(repository, paths, runner=runner)
+    available = {item["id"]: item for item in manager.available(project)}
     desired = {item["id"]: item for item, _ in manager.desired(project) if manager.is_enabled(item, project)}
+    target = paths.state / "client-mcp-registrations.json"
+    previous_rows: list[dict] = []
+    if target.is_file():
+        try:
+            previous_rows = json.loads(target.read_text(encoding="utf-8")).get("registrations", [])
+        except (OSError, json.JSONDecodeError):
+            previous_rows = []
+    previous_by_client: dict[str, set[str]] = {}
+    for row in previous_rows:
+        if row.get("client") and row.get("mcp"):
+            previous_by_client.setdefault(row["client"], set()).add(row["mcp"])
+
     rows: list[dict] = []
     clients = (("codex", shutil.which("codex")), ("claude-code", shutil.which("claude")))
     for client, executable in clients:
+        previous_ids = previous_by_client.get(client, set())
         if not executable:
-            rows.append({"client": client, "status": "NOT_SUPPORTED", "reason": "CLI не найден"})
+            preserved_ids = sorted(previous_ids)
+            rows.extend(
+                {"client": client, "mcp": identifier, "status": "NOT_SUPPORTED", "reason": "CLI не найден; синхронизация managed registration отложена"}
+                for identifier in preserved_ids
+            )
+            if not preserved_ids:
+                rows.append({"client": client, "status": "NOT_SUPPORTED", "reason": "CLI не найден"})
             continue
+        managed_ids = set(available) | previous_ids
+        for identifier in sorted(managed_ids - set(desired)):
+            name = f"agent-kit-{identifier}"
+            probe = runner(
+                [executable, "mcp", "get", name, "--json"] if client == "codex" else [executable, "mcp", "get", name],
+                cwd=paths.state,
+            )
+            item = available.get(identifier)
+            status = "DISABLED" if not item or not item["enabled"] else "inactive"
+            reason = item["access_reason"] if item else "removed:catalog"
+            if not probe.ok:
+                rows.append({"client": client, "mcp": identifier, "status": status, "changed": False, "desired_verified": True, "reason": reason})
+                continue
+            remove = [executable, "mcp", "remove", name]
+            if client == "claude-code":
+                remove.extend(["--scope", "user"])
+            removed = runner(remove, cwd=paths.state)
+            if not removed.ok:
+                rows.append({"client": client, "mcp": identifier, "status": "ERROR", "changed": False, "desired_verified": False, "reason": "не удалось удалить запрещённую managed registration"})
+                continue
+            rows.append({"client": client, "mcp": identifier, "status": status, "changed": True, "desired_verified": True, "reason": reason})
         for identifier, item in desired.items():
             name = f"agent-kit-{identifier}"
             # Некоторые clients запускают stdio-server во время probe. Изолируем
@@ -292,6 +332,5 @@ def register_native_mcp(repository: Path, paths: KitPaths, *, project=None, runn
                 "status": "CONFIG_REQUIRED",
                 "contract": f"clients/{client}/README.md",
             })
-    target = paths.state / "client-mcp-registrations.json"
     atomic_write(target, json.dumps({"version": 1, "registrations": rows}, ensure_ascii=False, indent=2) + "\n")
     return target
