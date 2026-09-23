@@ -18,6 +18,7 @@ def kit(tmp_path: Path) -> tuple[Path, Path]:
     overrides = tmp_path / "data/overrides"
     (repository / "schemas").mkdir(parents=True)
     shutil.copy(Path(__file__).resolve().parents[1] / "schemas/override.schema.json", repository / "schemas/override.schema.json")
+    shutil.copy(Path(__file__).resolve().parents[1] / "schemas/mcp.schema.json", repository / "schemas/mcp.schema.json")
     skill = repository / "skills/code-review/SKILL.md"
     skill.parent.mkdir(parents=True)
     skill.write_text(
@@ -28,6 +29,7 @@ def kit(tmp_path: Path) -> tuple[Path, Path]:
     enforced.write_text(
         "---\nid: verification\npolicy: enforced\n---\n# Skill\n", encoding="utf-8"
     )
+    write_yaml(repository / "mcp/registry.yaml", {"servers": []})
     return repository, overrides
 
 

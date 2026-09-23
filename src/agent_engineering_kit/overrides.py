@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from .access import validate_access
 from .io import load_yaml, markdown_frontmatter
 from .result import ValidationResult
 from .schema import validate_instance
@@ -122,6 +123,16 @@ def validate_overrides(repository: Path, override_root: Path, project_id: str | 
                     result.error("overrides", f"{path}: нельзя применить {mode} к enforced {kind[:-1]} {target!r}")
                 elif core[target] and isinstance(override.get("value"), dict) and ENFORCED_FIELDS & set(override["value"]):
                     result.error("overrides", f"{path}: enforced fields нельзя ослаблять: {sorted(ENFORCED_FIELDS & set(override['value']))}")
+    result.extend(
+        validate_access(
+            {
+                "mcp": set(_core_ids(repository, "mcp")),
+                "skills": set(_core_ids(repository, "skills")),
+            },
+            override_root,
+            project_id,
+        )
+    )
     registry_path = repository / "mcp" / "registry.yaml"
     if registry_path.is_file():
         registry = load_yaml(registry_path)
