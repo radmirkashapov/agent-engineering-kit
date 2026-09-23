@@ -56,6 +56,10 @@ def apply_local_overrides(
             value = override.get("value", {})
             if not isinstance(value, dict):
                 continue
+            value = dict(value)
+            declared_path = value.get("path")
+            if isinstance(declared_path, str) and not Path(declared_path).is_absolute():
+                value["path"] = str((path.parent / declared_path).resolve())
             if enforced and target in enforced:
                 value = {key: item for key, item in value.items() if key not in ENFORCED_FIELDS}
             effective[target] = ({"id": target, **value} if mode == "replace" else _deep_merge(effective[target], value))
