@@ -28,10 +28,11 @@ def explain(repository: Path, paths: KitPaths, start: Path) -> str:
     lines.extend(["", "Skills:"])
     skill_manager = ExternalSkillManager(repository, paths, project_id=project.identifier if project else None)
     for state in skill_manager.list():
+        activation = "enabled" if state["enabled"] else "disabled"
         if state.get("source") == "first-party":
-            lines.append(f"- {state['id']} (source: first-party; validation: PASS)")
+            lines.append(f"- {state['id']}: {activation}; {state['status']}; access: {state['access_reason']} (source: first-party; validation: PASS)")
         else:
-            lines.append(f"- {state['id']} (source: {state['source']}; revision: {state.get('revision', state.get('desired_revision'))}; validation: {state['status']})")
+            lines.append(f"- {state['id']}: {activation}; {state['status']}; access: {state['access_reason']} (source: {state['source']}; revision: {state.get('revision', state.get('desired_revision'))})")
     lines.extend(["", "Agents:"])
     agents = []
     for agent in sorted((repository / "agents").glob("*.md")):
@@ -48,6 +49,6 @@ def explain(repository: Path, paths: KitPaths, start: Path) -> str:
     lines.extend(["", "MCP:"])
     for server in McpManager(repository, paths).list(project):
         activation = "enabled" if server["enabled"] else "disabled"
-        lines.append(f"- {server['id']}: {activation}; {server['status']}")
+        lines.append(f"- {server['id']}: {activation}; {server['status']}; access: {server['access_reason']}")
     lines.extend(["", "Memory:", str(paths.projects / project.identifier) if project else "не определена"])
     return "\n".join(lines) + "\n"

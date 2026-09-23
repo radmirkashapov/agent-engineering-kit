@@ -46,10 +46,12 @@ def test_unknown_target_fails(kit: tuple[Path, Path]) -> None:
     assert not validate_overrides(repository, overrides).ok
 
 
-def test_disable_enforced_skill_fails(kit: tuple[Path, Path]) -> None:
+def test_disable_enforced_skill_passes(kit: tuple[Path, Path]) -> None:
     repository, overrides = kit
     write_yaml(overrides / "global/skills/verification.yaml", {"target": "verification", "override": {"mode": "disable"}})
-    assert not validate_overrides(repository, overrides).ok
+    assert validate_overrides(repository, overrides).ok
+    items = [{"id": "verification", "policy": "enforced"}]
+    assert apply_local_overrides(items, overrides, "skills", enforced={"verification"}) == []
 
 
 def test_validation_succeeds_without_mcp_registry(kit: tuple[Path, Path]) -> None:
@@ -59,11 +61,11 @@ def test_validation_succeeds_without_mcp_registry(kit: tuple[Path, Path]) -> Non
     assert validate_overrides(repository, overrides).ok
 
 
-def test_required_external_skill_cannot_be_disabled(tmp_path: Path) -> None:
+def test_required_external_skill_can_be_disabled(tmp_path: Path) -> None:
     repository = Path(__file__).resolve().parents[1]
     overrides = tmp_path / "overrides"
     write_yaml(overrides / "global/skills/superpowers.yaml", {"target": "superpowers", "override": {"mode": "disable"}})
-    assert not validate_overrides(repository, overrides).ok
+    assert validate_overrides(repository, overrides).ok
 
 
 def test_project_override_wins_over_global_override(tmp_path: Path) -> None:

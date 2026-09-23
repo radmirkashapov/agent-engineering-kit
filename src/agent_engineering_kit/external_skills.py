@@ -8,6 +8,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable
 
+from .access import resolve_access
 from .catalog import LockedComponent, resolve_desired
 from .component_state import Lifecycle, read_state, write_state
 from .errors import AgentKitError
@@ -38,13 +39,43 @@ class ExternalSkillManager:
         self.project_id = project_id
         self.validator = validator or SecurityToolManager(repository, paths, runner=runner).validate_skill
 
-    def desired(self) -> list[tuple[dict[str, Any], LockedComponent]]:
+    def _first_party_items(self) -> list[dict[str, Any]]:
+        items: list[dict[str, Any]] = []
+        for skill in sorted((self.repository / "skills" / "first-party").glob("*/SKILL.md")):
+            metadata = markdown_frontmatter(skill)
+            items.append({**metadata, "id": metadata.get("name") or metadata.get("id") or skill.parent.name, "path": str(skill.parent)})
+        return items
+
+    def available(self) -> list[dict[str, Any]]:
+        """Вернуть все first-party и внешние skills с итоговым решением о доступе."""
         resolved = resolve_desired(self.repository, "skills")
-        locks = {item["id"]: lock for item, lock in resolved}
-        items = [item for item, _ in resolved]
-        enforced = {item["id"] for item in items if item.get("required")}
+        external_items = [item for item, _ in resolved]
+        first_party_items = self._first_party_items()
+        items = [*first_party_items, *external_items]
+        first_party_ids = {item["id"] for item in first_party_items}
+        enforced = {item["id"] for item in items if item.get("required") or item.get("policy") == "enforced"}
         effective = apply_local_overrides(items, self.paths.overrides, "skills", self.project_id, enforced=enforced)
-        return [(item, locks[item["id"]]) for item in effective]
+        effective_by_id = {item["id"]: item for item in effective}
+        decisions = resolve_access({item["id"] for item in items}, self.paths.overrides, "skills", self.project_id)
+        available: list[dict[str, Any]] = []
+        for catalog_item in items:
+            identifier = catalog_item["id"]
+            item = effective_by_id.get(identifier, catalog_item)
+            decision = decisions[identifier]
+            disabled_by_override = identifier not in effective_by_id
+            row = {
+                **item,
+                "enabled": decision.enabled and not disabled_by_override,
+                "access_reason": "disabled:override" if disabled_by_override else decision.reason,
+            }
+            if identifier in first_party_ids:
+                row["source"] = "first-party"
+            available.append(row)
+        return available
+
+    def desired(self) -> list[tuple[dict[str, Any], LockedComponent]]:
+        locks = {item["id"]: lock for item, lock in resolve_desired(self.repository, "skills")}
+        return [(item, locks[item["id"]]) for item in self.available() if item["id"] in locks and item["enabled"]]
 
     def component_root(self, identifier: str) -> Path:
         return self.paths.installations / "skills" / identifier
@@ -56,24 +87,21 @@ class ExternalSkillManager:
 
     def list(self) -> list[dict[str, Any]]:
         values: list[dict[str, Any]] = []
-        first_party_root = self.repository / "skills" / "first-party"
-        first_party_items: list[dict[str, Any]] = []
-        for skill in sorted(first_party_root.glob("*/SKILL.md")):
-            metadata = markdown_frontmatter(skill)
-            first_party_items.append({**metadata, "id": metadata.get("name") or metadata.get("id") or skill.parent.name, "path": str(skill.parent)})
-        enforced = {item["id"] for item in first_party_items if item.get("policy") == "enforced"}
-        for item in apply_local_overrides(first_party_items, self.paths.overrides, "skills", self.project_id, enforced=enforced):
-            values.append({**item, "source": "first-party", "status": Lifecycle.ACTIVE.value})
-        for item, lock in self.desired():
+        locks = {item["id"]: lock for item, lock in resolve_desired(self.repository, "skills")}
+        for item in self.available():
+            if item["source"] == "first-party":
+                values.append({**item, "status": Lifecycle.ACTIVE.value if item["enabled"] else "DISABLED"})
+                continue
+            lock = locks[item["id"]]
             state = read_state(self.paths, "skills", item["id"])
-            status = state.get("status", Lifecycle.NOT_INSTALLED.value)
-            if status == Lifecycle.ACTIVE.value:
+            status = "DISABLED" if not item["enabled"] else state.get("status", Lifecycle.NOT_INSTALLED.value)
+            if item["enabled"] and status == Lifecycle.ACTIVE.value:
                 installation_path = state.get("installation_path")
                 if not installation_path or not Path(installation_path).is_dir():
                     status = Lifecycle.NOT_INSTALLED.value
                 elif state.get("revision") != lock.revision:
                     status = Lifecycle.OUTDATED.value
-            values.append({**state, "id": item["id"], "source": item["source"]["repository"], "status": status, "desired_revision": lock.revision, "version": lock.version})
+            values.append({**state, "id": item["id"], "source": item["source"]["repository"], "enabled": item["enabled"], "access_reason": item["access_reason"], "status": status, "desired_revision": lock.revision, "version": lock.version})
         return values
 
     def _validate_source(self, candidate: Path, item: dict[str, Any], lock: LockedComponent) -> list[str]:
@@ -206,12 +234,13 @@ class ExternalSkillManager:
         return {**state, "changed": True}
 
     def resync(self, *, force: bool = False) -> list[dict[str, Any]]:
-        results = [self.install_one(item, lock, force=force) for item, lock in self.desired()]
-        desired_ids = {item["id"] for item, _ in self.desired()}
+        desired = self.desired()
+        results = [self.install_one(item, lock, force=force) for item, lock in desired]
+        managed_ids = {item["id"] for item, _ in resolve_desired(self.repository, "skills")}
         state_root = self.paths.state / "components" / "skills"
         if state_root.exists():
             for path in state_root.glob("*.json"):
-                if path.stem not in desired_ids:
+                if path.stem not in managed_ids:
                     write_state(self.paths, "skills", path.stem, Lifecycle.BLOCKED, reason="stale managed dependency удалена из catalog")
         return results
 

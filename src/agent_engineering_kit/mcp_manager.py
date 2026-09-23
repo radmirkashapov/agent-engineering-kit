@@ -9,6 +9,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable
 
+from .access import resolve_access
 from .catalog import LockedComponent, resolve_desired
 from .component_state import Lifecycle, read_state, write_state
 from .errors import AgentKitError
@@ -26,12 +27,13 @@ class McpManager:
         self.paths = paths
         self.runner = runner
 
-    def desired(self, project: LogicalProject | None = None) -> list[tuple[dict[str, Any], LockedComponent]]:
+    def available(self, project: LogicalProject | None = None) -> list[dict[str, Any]]:
+        """Вернуть полный каталог MCP с итоговым решением о доступе."""
         resolved = resolve_desired(self.repository, "mcp")
-        locks = {item["id"]: lock for item, lock in resolved}
         items = [item for item, _ in resolved]
         enforced = {item["id"] for item in items if item.get("policy") == "locked" or item.get("required")}
         effective = apply_local_overrides(items, self.paths.overrides, "mcp", project.identifier if project else None, enforced=enforced)
+        effective_by_id = {item["id"]: item for item in effective}
         validation = validate_instance(
             {"version": 1, "servers": effective},
             self.repository / "schemas" / "mcp.schema.json",
@@ -40,7 +42,25 @@ class McpManager:
         if not validation.ok:
             errors = "; ".join(item.message for item in validation.diagnostics if item.severity == "ERROR")
             raise AgentKitError(f"Некорректный effective MCP override: {errors}")
-        return [(item, locks[item["id"]]) for item in effective]
+        decisions = resolve_access(set(effective_by_id) | {item["id"] for item in items}, self.paths.overrides, "mcp", project.identifier if project else None)
+        available: list[dict[str, Any]] = []
+        for catalog_item in items:
+            identifier = catalog_item["id"]
+            item = effective_by_id.get(identifier, catalog_item)
+            decision = decisions[identifier]
+            disabled_by_override = identifier not in effective_by_id
+            available.append(
+                {
+                    **item,
+                    "enabled": decision.enabled and not disabled_by_override,
+                    "access_reason": "disabled:override" if disabled_by_override else decision.reason,
+                }
+            )
+        return available
+
+    def desired(self, project: LogicalProject | None = None) -> list[tuple[dict[str, Any], LockedComponent]]:
+        locks = {item["id"]: lock for item, lock in resolve_desired(self.repository, "mcp")}
+        return [(item, locks[item["id"]]) for item in self.available(project) if item["enabled"]]
 
     def component_root(self, identifier: str) -> Path:
         return self.paths.installations / "mcp" / identifier
@@ -178,30 +198,39 @@ class McpManager:
 
     def list(self, project: LogicalProject | None = None) -> list[dict[str, Any]]:
         values = []
-        for item, lock in self.desired(project):
+        locks = {item["id"]: lock for item, lock in resolve_desired(self.repository, "mcp")}
+        for item in self.available(project):
+            lock = locks[item["id"]]
             state = read_state(self.paths, "mcp", item["id"])
-            enabled = self.is_enabled(item, project)
+            access_enabled = bool(item["enabled"])
+            activation_enabled = access_enabled and self.is_enabled(item, project)
             installation = item["installation"]
             executable = self.executable(item)
             available = bool(installation.get("endpoint")) if installation["type"] == "remote" else bool(executable)
-            if enabled and installation["type"] == "external-command" and installation.get("image") and executable:
+            if activation_enabled and installation["type"] == "external-command" and installation.get("image") and executable:
                 available = self.runner([str(executable), "image", "inspect", installation["image"]]).ok
             status = state.get("status", Lifecycle.NOT_INSTALLED.value)
-            if enabled and available and status == Lifecycle.NOT_INSTALLED.value:
+            if not access_enabled:
+                status = "DISABLED"
+            elif not activation_enabled:
+                status = "inactive"
+            elif available and status == Lifecycle.NOT_INSTALLED.value:
                 status = Lifecycle.INSTALLED.value
-            elif enabled and not available and status == Lifecycle.ACTIVE.value:
+            elif not available and status == Lifecycle.ACTIVE.value:
                 status = Lifecycle.NOT_INSTALLED.value
-            if state.get("revision") and state.get("revision") != lock.revision:
+            if activation_enabled and state.get("revision") and state.get("revision") != lock.revision:
                 status = Lifecycle.OUTDATED.value
-            values.append({**state, "id": item["id"], "category": item["category"], "enabled": enabled, "available": available, "status": status, "desired_revision": lock.revision, "source": item["source"]["repository"]})
+            values.append({**state, "id": item["id"], "category": item["category"], "enabled": activation_enabled, "access_reason": item["access_reason"], "available": available, "status": status, "desired_revision": lock.revision, "source": item["source"]["repository"]})
         return values
 
     def doctor(self, project: LogicalProject | None = None) -> ValidationResult:
         result = ValidationResult()
         desired_by_id = {item["id"]: item for item, _ in self.desired(project)}
         for state in self.list(project):
-            if not state["enabled"]:
-                result.info("mcp-doctor", f"{state['id']}: disabled by activation policy")
+            if state["status"] == "DISABLED":
+                result.info("mcp-doctor", f"{state['id']}: отключён пользователем ({state['access_reason']})")
+            elif state["status"] == "inactive":
+                result.info("mcp-doctor", f"{state['id']}: не активирован признаками проекта")
             elif state["available"]:
                 result.info("mcp-doctor", f"{state['id']}: {state['status']}")
             elif desired_by_id[state["id"]].get("required"):

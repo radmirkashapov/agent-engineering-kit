@@ -9,6 +9,8 @@ from agent_engineering_kit.clients import CLIENTS, expose_native_instructions, e
 from agent_engineering_kit.paths import KitPaths
 from agent_engineering_kit.errors import AgentKitError
 from agent_engineering_kit.process import CommandResult
+from agent_engineering_kit.explain import explain
+from conftest import write_yaml
 
 
 def test_client_adapters_validate() -> None:
@@ -157,3 +159,26 @@ def test_agent_and_rule_overrides_are_materialized_into_effective_policy(tmp_pat
     policy = json.loads((paths.installations / "clients/shared/effective-policy.json").read_text(encoding="utf-8"))
     assert next(item for item in policy["agents"] if item["id"] == "reviewer")["local_note"] == "strict"
     assert next(item for item in policy["rules"] if item["id"] == "review")["local_note"] == "project"
+
+
+def test_disabled_skill_is_removed_from_shared_discovery(tmp_path: Path) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    data = tmp_path / "data"
+    paths = KitPaths(repository, data, data / "runtime", data / "projects", data / "overrides")
+    write_yaml(paths.overrides / "global/access.yaml", {"version": 1, "skills": {"allow": [], "block": ["verification"]}})
+
+    sync_clients(repository, paths)
+
+    assert not (paths.installations / "clients/shared/skills/verification").exists()
+
+
+def test_explain_reports_access_policy_layer_and_reason(tmp_path: Path) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    data = tmp_path / "data"
+    paths = KitPaths(repository, data, data / "runtime", data / "projects", data / "overrides")
+    write_yaml(paths.overrides / "global/access.yaml", {"version": 1, "mcp": {"allow": [], "block": ["context7"]}, "skills": {"allow": [], "block": ["verification"]}})
+
+    output = explain(repository, paths, tmp_path)
+
+    assert "verification: disabled; DISABLED; access: blocked:global" in output
+    assert "context7: disabled; DISABLED; access: blocked:global" in output

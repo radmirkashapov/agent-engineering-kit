@@ -51,8 +51,7 @@ def apply_local_overrides(
             if target not in effective or mode not in MODES:
                 continue
             if mode == "disable":
-                if not enforced or target not in enforced:
-                    effective.pop(target, None)
+                effective.pop(target, None)
                 continue
             value = override.get("value", {})
             if not isinstance(value, dict):
@@ -122,7 +121,7 @@ def validate_overrides(repository: Path, override_root: Path, project_id: str | 
                     continue
                 if target not in core:
                     result.error("overrides", f"{path}: неизвестный target {target!r} для {kind}")
-                elif core[target] and mode in {"disable", "replace"}:
+                elif core[target] and mode == "replace":
                     result.error("overrides", f"{path}: нельзя применить {mode} к enforced {kind[:-1]} {target!r}")
                 elif core[target] and isinstance(override.get("value"), dict) and ENFORCED_FIELDS & set(override["value"]):
                     result.error("overrides", f"{path}: enforced fields нельзя ослаблять: {sorted(ENFORCED_FIELDS & set(override['value']))}")

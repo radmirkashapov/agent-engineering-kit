@@ -8,6 +8,7 @@ import yaml
 from agent_engineering_kit.component_state import Lifecycle
 from agent_engineering_kit.external_skills import ExternalSkillManager
 from agent_engineering_kit.paths import KitPaths
+from conftest import write_yaml
 
 
 def _git(root: Path, *args: str) -> str:
@@ -129,7 +130,38 @@ def test_project_skill_override_changes_effective_status_list(tmp_path: Path) ->
 
     rows = ExternalSkillManager(repository, paths, project_id="demo").list()
 
-    assert "change-impact" not in {item["id"] for item in rows}
+    change_impact = next(item for item in rows if item["id"] == "change-impact")
+    assert change_impact["enabled"] is False
+    assert change_impact["access_reason"] == "disabled:override"
+    assert change_impact["status"] == "DISABLED"
+
+
+def test_access_policy_can_disable_enforced_skill(tmp_path: Path) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    data = tmp_path / "data"
+    paths = KitPaths(repository, data, data / "runtime", data / "projects", data / "overrides")
+    write_yaml(paths.overrides / "global/access.yaml", {"version": 1, "skills": {"allow": [], "block": ["verification"]}})
+
+    manager = ExternalSkillManager(repository, paths)
+    verification = next(row for row in manager.available() if row["id"] == "verification")
+
+    assert verification["enabled"] is False
+    assert verification["access_reason"] == "blocked:global"
+    listed = next(row for row in manager.list() if row["id"] == "verification")
+    assert listed["status"] == "DISABLED"
+
+
+def test_access_policy_filters_required_external_skill_from_desired(tmp_path: Path) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    data = tmp_path / "data"
+    paths = KitPaths(repository, data, data / "runtime", data / "projects", data / "overrides")
+    write_yaml(paths.overrides / "global/access.yaml", {"version": 1, "skills": {"allow": [], "block": ["superpowers"]}})
+
+    manager = ExternalSkillManager(repository, paths)
+
+    assert "superpowers" not in {item["id"] for item, _ in manager.desired()}
+    superpowers = next(row for row in manager.list() if row["id"] == "superpowers")
+    assert superpowers["status"] == "DISABLED"
 
 
 def test_rollback_restores_previous_locked_revision(tmp_path: Path) -> None:

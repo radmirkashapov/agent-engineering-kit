@@ -7,6 +7,7 @@ from agent_engineering_kit.component_state import Lifecycle, write_state
 from agent_engineering_kit.paths import KitPaths
 from agent_engineering_kit.process import CommandResult
 from agent_engineering_kit.projects import LogicalProject
+from conftest import write_yaml
 
 
 def test_managed_mcp_does_not_fall_back_to_unmanaged_path(tmp_path: Path, monkeypatch) -> None:
@@ -40,6 +41,46 @@ def test_core_and_conditional_multi_provider_activation(tmp_path: Path) -> None:
     assert enabled["codebase-memory"] and enabled["serena"] and enabled["context7"]
     assert enabled["github"] and enabled["gitlab"]
     assert not enabled["sonarqube"] and not enabled["atlassian"]
+
+
+def test_access_policy_can_disable_required_mcp(tmp_path: Path) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    data = tmp_path / "data"
+    paths = KitPaths(repository, data, data / "runtime", data / "projects", data / "overrides")
+    write_yaml(paths.overrides / "global/access.yaml", {"version": 1, "mcp": {"allow": [], "block": ["context7"]}})
+
+    manager = McpManager(repository, paths)
+    context7 = next(row for row in manager.available() if row["id"] == "context7")
+
+    assert context7["enabled"] is False
+    assert context7["access_reason"] == "blocked:global"
+    assert "context7" not in {item["id"] for item, _ in manager.desired()}
+    listed = next(row for row in manager.list() if row["id"] == "context7")
+    assert listed["status"] == "DISABLED"
+
+
+def test_legacy_override_can_disable_locked_mcp(tmp_path: Path) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    data = tmp_path / "data"
+    paths = KitPaths(repository, data, data / "runtime", data / "projects", data / "overrides")
+    write_yaml(paths.overrides / "global/mcp/context7.yaml", {"target": "context7", "override": {"mode": "disable"}})
+
+    context7 = next(row for row in McpManager(repository, paths).available() if row["id"] == "context7")
+
+    assert context7["enabled"] is False
+    assert context7["access_reason"] == "disabled:override"
+
+
+def test_unmatched_activation_signal_is_inactive_but_allowed(tmp_path: Path) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    data = tmp_path / "data"
+    paths = KitPaths(repository, data, data / "runtime", data / "projects", data / "overrides")
+
+    github = next(row for row in McpManager(repository, paths).list() if row["id"] == "github")
+
+    assert github["enabled"] is False
+    assert github["access_reason"] == "allowed:catalog"
+    assert github["status"] == "inactive"
 
 
 def test_missing_pinned_container_image_is_pulled_before_fast_path(tmp_path: Path, monkeypatch) -> None:

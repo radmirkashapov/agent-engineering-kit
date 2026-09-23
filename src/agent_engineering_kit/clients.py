@@ -51,13 +51,8 @@ def sync_clients(repository: Path, paths: KitPaths, *, project_id: str | None = 
     generated: list[Path] = []
     skill_manager = ExternalSkillManager(repository, paths, project_id=project_id)
     skill_sources: dict[str, Path] = {}
-    first_party_items: list[dict] = []
-    for skill in sorted((repository / "skills" / "first-party").glob("*/SKILL.md")):
-        metadata = markdown_frontmatter(skill)
-        first_party_items.append({"id": skill.parent.name, "path": str(skill.parent), "policy": metadata.get("policy", "configurable")})
-    enforced = {item["id"] for item in first_party_items if item["policy"] == "enforced"}
-    for item in apply_local_overrides(first_party_items, paths.overrides, "skills", project_id, enforced=enforced):
-        if item.get("path"):
+    for item in skill_manager.available():
+        if item["enabled"] and item["source"] == "first-party" and item.get("path"):
             skill_sources[item["id"]] = Path(item["path"])
     for item, _ in skill_manager.desired():
         active = skill_manager.active_path(item["id"])
