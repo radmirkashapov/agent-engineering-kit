@@ -37,18 +37,42 @@ class OverrideScope:
     project_id: str | None
 
 
+def _reject_symlinked_destination_parents(destination: Path, root: Path) -> None:
+    relative = destination.relative_to(root)
+    parents = [root, *(root.joinpath(*relative.parts[:index]) for index in range(1, len(relative.parts)))]
+    for parent in parents:
+        try:
+            parent.lstat()
+        except FileNotFoundError:
+            continue
+        if parent.is_symlink():
+            raise AgentKitError(f"Каталог назначения не должен быть символической ссылкой: {parent}")
+
+
+def _create_missing_file(destination: Path, content: str) -> bool:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        descriptor = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
+    except FileExistsError:
+        return False
+    with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as stream:
+        stream.write(content)
+    return True
+
+
 def initialize_override_workspace(repository: Path, paths: KitPaths) -> list[Path]:
     """Создать отсутствующие нейтральные локальные переопределения из шаблонов."""
     template_root = repository / "templates" / "overrides"
     created: list[Path] = []
     for template in sorted(template_root.rglob("*")):
-        if not template.is_file() or "__pycache__" in template.relative_to(template_root).parts:
+        if template.is_symlink() or not template.is_file() or "__pycache__" in template.relative_to(template_root).parts:
             continue
         destination = paths.overrides / template.relative_to(template_root)
+        _reject_symlinked_destination_parents(destination, paths.overrides)
         if destination.exists() or destination.is_symlink():
             continue
-        atomic_write(destination, template.read_text(encoding="utf-8"))
-        created.append(destination)
+        if _create_missing_file(destination, template.read_text(encoding="utf-8")):
+            created.append(destination)
     return created
 
 
