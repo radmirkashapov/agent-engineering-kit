@@ -269,6 +269,24 @@ def test_invalid_mcp_replace_preserves_existing_definition(tmp_path: Path) -> No
     assert not (tmp_path / "overrides/backups").exists()
 
 
+def test_mcp_replace_cannot_override_target_identifier(tmp_path: Path) -> None:
+    scope = OverrideScope("global", tmp_path / "overrides/global", None)
+    target = write_yaml(
+        scope.root / "mcp/github.yaml",
+        {"target": "github", "override": {"mode": "extend", "value": {"transport": "http"}}},
+    )
+    original = target.read_bytes()
+    value = valid_mcp_value()
+    value["id"] = "../../victim"
+    source = write_yaml(tmp_path / "conflicting-id.yaml", {"mode": "replace", "value": value})
+
+    with pytest.raises(AgentKitError, match="не должно содержать id"):
+        install_mcp_override(scope, "github", source)
+
+    assert target.read_bytes() == original
+    assert not (tmp_path / "overrides/backups").exists()
+
+
 def test_access_replacement_keeps_durable_backup(tmp_path: Path) -> None:
     scope = OverrideScope("global", tmp_path / "overrides/global", None)
     target = write_yaml(

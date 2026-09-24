@@ -254,6 +254,8 @@ def install_mcp_override(scope: OverrideScope, identifier: str, source: Path) ->
     value = document.get("value", {})
     if not isinstance(value, dict):
         raise AgentKitError("Поле value переопределения MCP должно быть объектом")
+    if "id" in value:
+        raise AgentKitError("Поле value переопределения MCP не должно содержать id; используйте target команды")
     environment = value.get("environment", {})
     if not isinstance(environment, dict):
         raise AgentKitError("Поле environment переопределения MCP должно быть объектом")
