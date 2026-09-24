@@ -110,7 +110,7 @@ def test_initializer_preserves_file_created_during_copy(monkeypatch, tmp_path: P
     paths = _paths(repository, tmp_path)
     target = paths.overrides / "README.md"
     original_open = os.open
-    original_atomic_write = override_service.atomic_write
+    original_link = os.link
 
     def write_user_file() -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -118,18 +118,12 @@ def test_initializer_preserves_file_created_during_copy(monkeypatch, tmp_path: P
         with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
             stream.write("user-owned\n")
 
-    def create_user_file(path: str | bytes | os.PathLike[str] | os.PathLike[bytes], flags: int, mode: int = 0o777) -> int:
-        if Path(path) == target and not target.exists():
+    def create_user_file(source: str | bytes | os.PathLike[str] | os.PathLike[bytes], destination: str | bytes | os.PathLike[str] | os.PathLike[bytes], *args, **kwargs) -> None:
+        if Path(destination) == target and not target.exists():
             write_user_file()
-        return original_open(path, flags, mode)
+        original_link(source, destination, *args, **kwargs)
 
-    def create_collision_before_legacy_replace(path: Path, content: str) -> None:
-        if path == target and not target.exists():
-            write_user_file()
-        original_atomic_write(path, content)
-
-    monkeypatch.setattr(override_service.os, "open", create_user_file)
-    monkeypatch.setattr(override_service, "atomic_write", create_collision_before_legacy_replace)
+    monkeypatch.setattr(override_service.os, "link", create_user_file)
 
     created = initialize_override_workspace(repository, paths)
 
@@ -142,6 +136,7 @@ def test_initializer_removes_its_partial_file_after_close_error(monkeypatch, tmp
     paths = _paths(repository, tmp_path)
     target = paths.overrides / "README.md"
     original_fdopen = os.fdopen
+    final_visible: list[bool] = []
 
     class FailingClose:
         def __init__(self, descriptor: int, *args, **kwargs) -> None:
@@ -152,6 +147,7 @@ def test_initializer_removes_its_partial_file_after_close_error(monkeypatch, tmp
             return self
 
         def write(self, content: str) -> int:
+            final_visible.append(target.exists())
             return self.stream.write(content[:8])
 
         def __exit__(self, *args) -> None:
@@ -164,11 +160,30 @@ def test_initializer_removes_its_partial_file_after_close_error(monkeypatch, tmp
             initialize_override_workspace(repository, paths)
 
     assert not target.exists()
+    assert not list(target.parent.glob(f".{target.name}.*"))
+    assert final_visible == [False]
 
     created = initialize_override_workspace(repository, paths)
 
     assert target in created
     assert target.read_text(encoding="utf-8") == (repository / "templates/overrides/README.md").read_text(encoding="utf-8")
+
+
+def test_initializer_removes_temp_after_publish_error(monkeypatch, tmp_path: Path) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    paths = _paths(repository, tmp_path)
+    target = paths.overrides / "README.md"
+
+    def fail_publish(*_args, **_kwargs) -> None:
+        raise OSError("publish failed")
+
+    monkeypatch.setattr(override_service.os, "link", fail_publish)
+
+    with pytest.raises(OSError, match="publish failed"):
+        initialize_override_workspace(repository, paths)
+
+    assert not target.exists()
+    assert not list(target.parent.glob(f".{target.name}.*"))
 
 
 def test_initializer_keeps_concurrent_replacement_after_close_error(monkeypatch, tmp_path: Path) -> None:

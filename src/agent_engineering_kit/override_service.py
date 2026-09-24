@@ -51,22 +51,18 @@ def _reject_symlinked_destination_parents(destination: Path, root: Path) -> None
 
 def _create_missing_file(destination: Path, content: str) -> bool:
     destination.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        descriptor = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
-    except FileExistsError:
-        return False
-    created = os.fstat(descriptor)
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{destination.name}.", dir=destination.parent, text=True)
+    temporary = Path(temporary_name)
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as stream:
             stream.write(content)
-    except BaseException:
         try:
-            if os.path.samestat(destination.lstat(), created):
-                destination.unlink()
-        except FileNotFoundError:
-            pass
-        raise
-    return True
+            os.link(temporary, destination)
+        except FileExistsError:
+            return False
+        return True
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def initialize_override_workspace(repository: Path, paths: KitPaths) -> list[Path]:
