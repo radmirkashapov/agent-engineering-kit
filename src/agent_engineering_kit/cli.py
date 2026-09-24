@@ -6,15 +6,23 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Literal
 
 from .doctor import doctor
 from .errors import AgentKitError
 from .explain import explain
 from .external_skills import ExternalSkillManager
 from .mcp_manager import McpManager
-from .paths import resolve_paths
-from .projects import detect_project, find_project, init_project, register_memory, validate_project
-from .resync import resync
+from .override_service import (
+    install_mcp_override,
+    install_skill_override,
+    reset_component_override,
+    resolve_scope,
+    set_component_access,
+)
+from .paths import KitPaths, resolve_paths
+from .projects import LogicalProject, detect_project, find_project, init_project, register_memory, validate_project
+from .resync import ResyncReport, resync
 from .security_tools import SecurityToolManager
 from .sync import record_sync, update_repository
 from .validation import VALIDATORS, validate
@@ -33,18 +41,48 @@ def _parser() -> argparse.ArgumentParser:
         command.add_argument("--no-update", action="store_true")
         command.add_argument("--force", action="store_true")
 
-    skills = subs.add_parser("skills").add_subparsers(dest="skills_command", required=True)
-    skills.add_parser("list")
-    skills.add_parser("status")
-    skill_explain = skills.add_parser("explain")
+    skills = subs.add_parser("skills", help="Управлять skills").add_subparsers(dest="skills_command", required=True)
+    skills.add_parser("list", help="Показать состояние skills")
+    skills.add_parser("status", help="Показать состояние skills")
+    skills.add_parser("available", help="Показать полный доступный каталог skills")
+    for name, help_text in (
+        ("enable", "Разрешить skill"),
+        ("disable", "Отключить skill"),
+        ("reset", "Сбросить локальные настройки skill"),
+    ):
+        command = skills.add_parser(name, help=help_text)
+        command.add_argument("id", help="ID skill")
+        command.add_argument("--scope", choices=["global", "project"], required=True, help="Область изменения")
+        command.add_argument("--resync", action="store_true", help="Выполнить resync после успешного изменения")
+    skill_override = skills.add_parser("override", help="Установить локальную реализацию skill")
+    skill_override.add_argument("id", help="ID skill")
+    skill_override.add_argument("--from", dest="source", required=True, help="Каталог с SKILL.md")
+    skill_override.add_argument("--scope", choices=["global", "project"], required=True, help="Область изменения")
+    skill_override.add_argument("--resync", action="store_true", help="Выполнить resync после успешного изменения")
+    skill_explain = skills.add_parser("explain", help="Объяснить итоговое состояние skill")
     skill_explain.add_argument("id")
-    skill_rollback = skills.add_parser("rollback")
+    skill_rollback = skills.add_parser("rollback", help="Вернуть предыдущую установленную ревизию skill")
     skill_rollback.add_argument("id")
 
-    mcp = subs.add_parser("mcp").add_subparsers(dest="mcp_command", required=True)
-    mcp.add_parser("list")
-    mcp.add_parser("status")
-    mcp_explain = mcp.add_parser("explain")
+    mcp = subs.add_parser("mcp", help="Управлять MCP").add_subparsers(dest="mcp_command", required=True)
+    mcp.add_parser("list", help="Показать состояние MCP")
+    mcp.add_parser("status", help="Показать состояние MCP")
+    mcp.add_parser("available", help="Показать полный доступный каталог MCP")
+    for name, help_text in (
+        ("enable", "Разрешить MCP"),
+        ("disable", "Отключить MCP"),
+        ("reset", "Сбросить локальные настройки MCP"),
+    ):
+        command = mcp.add_parser(name, help=help_text)
+        command.add_argument("id", help="ID MCP")
+        command.add_argument("--scope", choices=["global", "project"], required=True, help="Область изменения")
+        command.add_argument("--resync", action="store_true", help="Выполнить resync после успешного изменения")
+    mcp_override = mcp.add_parser("override", help="Установить локальную конфигурацию MCP")
+    mcp_override.add_argument("id", help="ID MCP")
+    mcp_override.add_argument("--from", dest="source", required=True, help="YAML-файл переопределения")
+    mcp_override.add_argument("--scope", choices=["global", "project"], required=True, help="Область изменения")
+    mcp_override.add_argument("--resync", action="store_true", help="Выполнить resync после успешного изменения")
+    mcp_explain = mcp.add_parser("explain", help="Объяснить итоговое состояние MCP")
     mcp_explain.add_argument("id")
 
     security = subs.add_parser("security").add_subparsers(dest="security_command", required=True)
@@ -79,6 +117,75 @@ def _print_rows(rows: list[dict]) -> None:
         print(f"{row['id']}: {row.get('status', 'UNKNOWN')} ({row.get('source', row.get('category', 'managed'))})")
 
 
+def _print_resync_report(report: ResyncReport) -> None:
+    """Вывести единообразный итог resync."""
+    outcome = "Resync завершён с ограничениями" if report.incomplete else "Resync завершён"
+    print(f"{outcome}: revision {report.revision}; changed={str(report.changed).lower()}")
+    print(f"Skills: {len(report.skills)}; MCP: {len(report.mcp)}; clients: {len(report.clients)}")
+    for limitation in report.incomplete:
+        print(f"CONFIG_REQUIRED: {limitation}")
+
+
+def _available_resources(
+    kind: Literal["skills", "mcp"],
+    repository: Path,
+    paths: KitPaths,
+    project: LogicalProject | None,
+) -> list[dict]:
+    """Получить полный каталог ресурса с итоговыми решениями доступа."""
+    if kind == "skills":
+        return ExternalSkillManager(
+            repository,
+            paths,
+            project_id=project.identifier if project else None,
+        ).available()
+    return McpManager(repository, paths).available(project)
+
+
+def _mutate_resource(
+    kind: Literal["skills", "mcp"],
+    args: argparse.Namespace,
+    repository: Path,
+    paths: KitPaths,
+    project: LogicalProject | None,
+) -> int:
+    """Выполнить проверенную мутацию через сервис локальных переопределений."""
+    label = "Skill" if kind == "skills" else "MCP"
+    available = _available_resources(kind, repository, paths, project)
+    if not any(row["id"] == args.id for row in available):
+        raise AgentKitError(f"{label} не найден: {args.id}")
+
+    scope = resolve_scope(paths, args.scope, Path.cwd())
+    command = getattr(args, f"{kind}_command")
+    if command == "enable":
+        changed = [set_component_access(scope, kind, args.id, enabled=True)]
+    elif command == "disable":
+        changed = [set_component_access(scope, kind, args.id, enabled=False)]
+    elif command == "override":
+        source = Path(args.source)
+        changed = [
+            install_skill_override(scope, args.id, source)
+            if kind == "skills"
+            else install_mcp_override(scope, args.id, source)
+        ]
+    else:
+        changed = reset_component_override(scope, kind, args.id, paths.overrides / "backups")
+
+    if changed:
+        for path in changed:
+            print(f"Изменённый путь: {path}")
+    else:
+        print("Изменения не требовались.")
+    effective = next(row for row in _available_resources(kind, repository, paths, project) if row["id"] == args.id)
+    print("Итоговое решение:")
+    print(json.dumps(effective, ensure_ascii=False, indent=2))
+
+    if args.resync:
+        report = resync(repository, paths, project=project, update_kit=False, force=False)
+        _print_resync_report(report)
+    return 0
+
+
 def run(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     paths = resolve_paths()
@@ -91,11 +198,7 @@ def run(argv: list[str] | None = None) -> int:
         if args.command in {"install", "resync"}:
             project = find_project(Path.cwd())
             report = resync(repository, paths, project=project, update_kit=args.command == "resync" and not getattr(args, "no_update", False), force=getattr(args, "force", False))
-            outcome = "Resync завершён с ограничениями" if report.incomplete else "Resync завершён"
-            print(f"{outcome}: revision {report.revision}; changed={str(report.changed).lower()}")
-            print(f"Skills: {len(report.skills)}; MCP: {len(report.mcp)}; clients: {len(report.clients)}")
-            for limitation in report.incomplete:
-                print(f"CONFIG_REQUIRED: {limitation}")
+            _print_resync_report(report)
             return 0
         if args.command == "sync":
             if not args.no_update:
@@ -109,26 +212,36 @@ def run(argv: list[str] | None = None) -> int:
         if args.command == "skills":
             project = find_project(Path.cwd())
             manager = ExternalSkillManager(repository, paths, project_id=project.identifier if project else None)
-            rows = manager.list()
             if args.skills_command in {"list", "status"}:
-                _print_rows(rows)
+                _print_rows(manager.list())
+            elif args.skills_command == "available":
+                print(json.dumps(manager.available(), ensure_ascii=False, indent=2))
             elif args.skills_command == "explain":
+                rows = manager.list()
                 selected = [row for row in rows if row["id"] == args.id]
                 if not selected:
                     raise AgentKitError(f"Skill не найден: {args.id}")
                 print(json.dumps(selected[0], ensure_ascii=False, indent=2))
-            else:
+            elif args.skills_command == "rollback":
                 print(json.dumps(manager.rollback(args.id), ensure_ascii=False, indent=2))
+            else:
+                return _mutate_resource("skills", args, repository, paths, project)
             return 0
         if args.command == "mcp":
-            rows = McpManager(repository, paths).list(find_project(Path.cwd()))
+            project = find_project(Path.cwd())
+            manager = McpManager(repository, paths)
             if args.mcp_command in {"list", "status"}:
-                _print_rows(rows)
-            else:
+                _print_rows(manager.list(project))
+            elif args.mcp_command == "available":
+                print(json.dumps(manager.available(project), ensure_ascii=False, indent=2))
+            elif args.mcp_command == "explain":
+                rows = manager.list(project)
                 selected = [row for row in rows if row["id"] == args.id]
                 if not selected:
                     raise AgentKitError(f"MCP не найден: {args.id}")
                 print(json.dumps(selected[0], ensure_ascii=False, indent=2))
+            else:
+                return _mutate_resource("mcp", args, repository, paths, project)
             return 0
         if args.command == "security":
             manager = SecurityToolManager(repository, paths)
