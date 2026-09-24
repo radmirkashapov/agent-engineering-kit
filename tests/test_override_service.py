@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import os
 
 import pytest
 import yaml
@@ -34,6 +35,55 @@ def write_yaml(path: Path, value: object) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(yaml.safe_dump(value, allow_unicode=True, sort_keys=False), encoding="utf-8")
     return path
+
+
+def write_skill(path: Path, name: str, heading: str) -> Path:
+    path.mkdir(parents=True)
+    (path / "SKILL.md").write_text(
+        "---\nversion: 1\n"
+        f"name: {name}\ndescription: Пример\n"
+        "policy: configurable\nrequires:\n  model_capabilities: [reasoning]\n"
+        f"---\n# {heading}\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def valid_mcp_value() -> dict[str, object]:
+    return {
+        "category": "scm",
+        "required": False,
+        "transport": "http",
+        "activation": "always",
+        "source": {},
+        "installation": {},
+        "state": "stateless",
+        "policy": "configurable",
+    }
+
+
+@pytest.mark.parametrize("operation", ["access", "skill", "mcp", "reset"])
+def test_component_identifier_cannot_escape_scope(
+    tmp_path: Path,
+    operation: str,
+) -> None:
+    scope = OverrideScope("global", tmp_path / "overrides/global", None)
+    identifier = "../../../../victim"
+    skill_source = write_skill(tmp_path / "skill", "greeting", "Новый")
+    mcp_source = write_yaml(tmp_path / "mcp.yaml", {"mode": "extend", "value": {}})
+
+    with pytest.raises(AgentKitError, match="ID компонента"):
+        if operation == "access":
+            set_component_access(scope, "skills", identifier, enabled=False)
+        elif operation == "skill":
+            install_skill_override(scope, identifier, skill_source)
+        elif operation == "mcp":
+            install_mcp_override(scope, identifier, mcp_source)
+        else:
+            reset_component_override(scope, "skills", identifier, tmp_path / "backups")
+
+    assert not scope.root.exists()
+    assert not (tmp_path / "victim.yaml").exists()
 
 
 def test_disable_and_enable_edit_the_same_yaml_source(tmp_path: Path) -> None:
@@ -113,13 +163,7 @@ def test_project_scope_uses_discovered_project_identifier(tmp_path: Path) -> Non
 
 
 def test_skill_override_is_copied_and_uses_relative_path(tmp_path: Path) -> None:
-    source = tmp_path / "custom"
-    source.mkdir()
-    (source / "SKILL.md").write_text(
-        "---\nversion: 1\nname: greeting\ndescription: Пример\n"
-        "policy: configurable\nrequires:\n  model_capabilities: [reasoning]\n---\n# Приветствие\n",
-        encoding="utf-8",
-    )
+    source = write_skill(tmp_path / "custom", "greeting", "Приветствие")
     scope = OverrideScope("global", tmp_path / "global", None)
 
     target = install_skill_override(scope, "greeting", source)
@@ -129,6 +173,37 @@ def test_skill_override_is_copied_and_uses_relative_path(tmp_path: Path) -> None
     relative = document["override"]["value"]["path"]
     assert not Path(relative).is_absolute()
     assert (target.parent / relative).resolve().is_dir()
+
+
+def test_skill_directory_is_restored_when_second_replace_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scope = OverrideScope("global", tmp_path / "overrides/global", None)
+    installed = write_skill(scope.root / "sources/skills/greeting", "greeting", "Старый")
+    definition = write_yaml(
+        scope.root / "skills/greeting.yaml",
+        {"target": "greeting", "override": {"mode": "replace", "value": {"path": "../sources/skills/greeting"}}},
+    )
+    original_definition = definition.read_bytes()
+    replacement = write_skill(tmp_path / "replacement", "greeting", "Новый")
+    real_replace = os.replace
+    calls = 0
+
+    def fail_second_replace(source: str | os.PathLike[str], target: str | os.PathLike[str]) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("controlled second replace failure")
+        real_replace(source, target)
+
+    monkeypatch.setattr(os, "replace", fail_second_replace)
+
+    with pytest.raises(OSError, match="controlled second replace failure"):
+        install_skill_override(scope, "greeting", replacement)
+
+    assert "# Старый" in (installed / "SKILL.md").read_text(encoding="utf-8")
+    assert definition.read_bytes() == original_definition
 
 
 def test_relative_override_path_is_resolved_from_declaring_yaml(tmp_path: Path) -> None:
@@ -178,6 +253,85 @@ def test_mcp_override_accepts_environment_reference(tmp_path: Path) -> None:
     }
 
 
+def test_invalid_mcp_replace_preserves_existing_definition(tmp_path: Path) -> None:
+    scope = OverrideScope("global", tmp_path / "overrides/global", None)
+    target = write_yaml(
+        scope.root / "mcp/github.yaml",
+        {"target": "github", "override": {"mode": "extend", "value": {"transport": "http"}}},
+    )
+    original = target.read_bytes()
+    source = write_yaml(tmp_path / "invalid.yaml", {"mode": "replace", "value": {}})
+
+    with pytest.raises(AgentKitError, match="итоговый MCP"):
+        install_mcp_override(scope, "github", source)
+
+    assert target.read_bytes() == original
+    assert not (tmp_path / "overrides/backups").exists()
+
+
+def test_access_replacement_keeps_durable_backup(tmp_path: Path) -> None:
+    scope = OverrideScope("global", tmp_path / "overrides/global", None)
+    target = write_yaml(
+        scope.root / "access.yaml",
+        {
+            "version": 1,
+            "mcp": {"allow": [], "block": ["github"]},
+            "skills": {"allow": [], "block": []},
+        },
+    )
+    original = target.read_bytes()
+
+    set_component_access(scope, "mcp", "context7", enabled=False)
+
+    snapshots = list((tmp_path / "overrides/backups").glob("*/access.yaml"))
+    assert len(snapshots) == 1
+    assert snapshots[0].read_bytes() == original
+
+
+def test_mcp_replacement_keeps_durable_backup(tmp_path: Path) -> None:
+    scope = OverrideScope("global", tmp_path / "overrides/global", None)
+    target = write_yaml(
+        scope.root / "mcp/github.yaml",
+        {"target": "github", "override": {"mode": "extend", "value": {"transport": "stdio"}}},
+    )
+    original = target.read_bytes()
+    source = write_yaml(tmp_path / "valid.yaml", {"mode": "replace", "value": valid_mcp_value()})
+
+    install_mcp_override(scope, "github", source)
+
+    snapshots = list((tmp_path / "overrides/backups").glob("*/mcp/github.yaml"))
+    assert len(snapshots) == 1
+    assert snapshots[0].read_bytes() == original
+
+
+def test_first_mcp_install_does_not_create_backup(tmp_path: Path) -> None:
+    scope = OverrideScope("global", tmp_path / "overrides/global", None)
+    source = write_yaml(tmp_path / "valid.yaml", {"mode": "replace", "value": valid_mcp_value()})
+
+    install_mcp_override(scope, "github", source)
+
+    assert not (tmp_path / "overrides/backups").exists()
+
+
+def test_skill_replacement_keeps_definition_and_source_backup(tmp_path: Path) -> None:
+    scope = OverrideScope("global", tmp_path / "overrides/global", None)
+    definition = write_yaml(
+        scope.root / "skills/greeting.yaml",
+        {"target": "greeting", "override": {"mode": "replace", "value": {"path": "../sources/skills/greeting"}}},
+    )
+    original_definition = definition.read_bytes()
+    old_source = write_skill(scope.root / "sources/skills/greeting", "greeting", "Старый")
+    replacement = write_skill(tmp_path / "replacement", "greeting", "Новый")
+
+    install_skill_override(scope, "greeting", replacement)
+
+    snapshots = list((tmp_path / "overrides/backups").glob("*"))
+    assert len(snapshots) == 1
+    assert (snapshots[0] / "skills/greeting.yaml").read_bytes() == original_definition
+    assert "# Старый" in (snapshots[0] / "sources/skills/greeting/SKILL.md").read_text(encoding="utf-8")
+    assert "# Новый" in (old_source / "SKILL.md").read_text(encoding="utf-8")
+
+
 def test_reset_moves_definition_and_source_to_timestamped_backup(tmp_path: Path) -> None:
     scope = OverrideScope("global", tmp_path / "global", None)
     active = write_yaml(
@@ -203,5 +357,43 @@ def test_reset_moves_definition_and_source_to_timestamped_backup(tmp_path: Path)
     assert not local_source.exists()
     assert any(path.name == "greeting.yaml" and path.exists() for path in moved)
     assert any(path.name == "greeting" and path.is_dir() for path in moved)
+    access_backups = [path for path in moved if path.name == "access.yaml"]
+    assert len(access_backups) == 1
+    assert load_yaml(access_backups[0])["skills"]["allow"] == ["greeting", "other"]
     assert load_yaml(scope.root / "access.yaml")["skills"]["allow"] == ["other"]
     assert len({path.relative_to(backup_root).parts[0] for path in moved}) == 1
+
+
+def test_reset_restores_components_and_access_when_access_write_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scope = OverrideScope("global", tmp_path / "global", None)
+    definition = write_yaml(
+        scope.root / "skills/greeting.yaml",
+        {"target": "greeting", "override": {"mode": "disable"}},
+    )
+    local_source = scope.root / "sources/skills/greeting"
+    local_source.mkdir(parents=True)
+    (local_source / "SKILL.md").write_text("старое содержимое", encoding="utf-8")
+    access = write_yaml(
+        scope.root / "access.yaml",
+        {
+            "version": 1,
+            "mcp": {"allow": [], "block": []},
+            "skills": {"allow": [], "block": ["greeting"]},
+        },
+    )
+    original_access = access.read_bytes()
+
+    def fail_access_replace(source: str | os.PathLike[str], target: str | os.PathLike[str]) -> None:
+        raise OSError("controlled access replace failure")
+
+    monkeypatch.setattr(os, "replace", fail_access_replace)
+
+    with pytest.raises(OSError, match="controlled access replace failure"):
+        reset_component_override(scope, "skills", "greeting", tmp_path / "backups")
+
+    assert definition.is_file()
+    assert local_source.is_dir()
+    assert access.read_bytes() == original_access
