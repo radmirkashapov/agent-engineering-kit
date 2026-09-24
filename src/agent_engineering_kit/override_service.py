@@ -55,8 +55,17 @@ def _create_missing_file(destination: Path, content: str) -> bool:
         descriptor = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
     except FileExistsError:
         return False
-    with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as stream:
-        stream.write(content)
+    created = os.fstat(descriptor)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as stream:
+            stream.write(content)
+    except BaseException:
+        try:
+            if os.path.samestat(destination.lstat(), created):
+                destination.unlink()
+        except FileNotFoundError:
+            pass
+        raise
     return True
 
 

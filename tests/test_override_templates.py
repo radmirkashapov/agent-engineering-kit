@@ -137,6 +137,72 @@ def test_initializer_preserves_file_created_during_copy(monkeypatch, tmp_path: P
     assert target not in created
 
 
+def test_initializer_removes_its_partial_file_after_close_error(monkeypatch, tmp_path: Path) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    paths = _paths(repository, tmp_path)
+    target = paths.overrides / "README.md"
+    original_fdopen = os.fdopen
+
+    class FailingClose:
+        def __init__(self, descriptor: int, *args, **kwargs) -> None:
+            self.stream = original_fdopen(descriptor, *args, **kwargs)
+
+        def __enter__(self) -> "FailingClose":
+            self.stream.__enter__()
+            return self
+
+        def write(self, content: str) -> int:
+            return self.stream.write(content[:8])
+
+        def __exit__(self, *args) -> None:
+            self.stream.__exit__(*args)
+            raise OSError("close failed")
+
+    with monkeypatch.context() as failing_write:
+        failing_write.setattr(override_service.os, "fdopen", FailingClose)
+        with pytest.raises(OSError, match="close failed"):
+            initialize_override_workspace(repository, paths)
+
+    assert not target.exists()
+
+    created = initialize_override_workspace(repository, paths)
+
+    assert target in created
+    assert target.read_text(encoding="utf-8") == (repository / "templates/overrides/README.md").read_text(encoding="utf-8")
+
+
+def test_initializer_keeps_concurrent_replacement_after_close_error(monkeypatch, tmp_path: Path) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    paths = _paths(repository, tmp_path)
+    target = paths.overrides / "README.md"
+    replacement = tmp_path / "concurrent-file"
+    original_fdopen = os.fdopen
+
+    class ReplacingClose:
+        def __init__(self, descriptor: int, *args, **kwargs) -> None:
+            self.stream = original_fdopen(descriptor, *args, **kwargs)
+
+        def __enter__(self) -> "ReplacingClose":
+            self.stream.__enter__()
+            return self
+
+        def write(self, content: str) -> int:
+            return self.stream.write(content)
+
+        def __exit__(self, *args) -> None:
+            self.stream.__exit__(*args)
+            replacement.write_text("concurrent\n", encoding="utf-8")
+            os.replace(replacement, target)
+            raise OSError("close failed")
+
+    with monkeypatch.context() as failing_write:
+        failing_write.setattr(override_service.os, "fdopen", ReplacingClose)
+        with pytest.raises(OSError, match="close failed"):
+            initialize_override_workspace(repository, paths)
+
+    assert target.read_text(encoding="utf-8") == "concurrent\n"
+
+
 def test_greeting_example_prints_current_user(monkeypatch, capsys, tmp_path: Path) -> None:
     script = Path(__file__).resolve().parents[1] / "templates/overrides/examples/greeting/scripts/greet.py"
     copied_script = tmp_path / "greet.py"
