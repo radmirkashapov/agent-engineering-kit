@@ -180,7 +180,7 @@ def _mutate_resource(
     print("Итоговое решение:")
     print(json.dumps(effective, ensure_ascii=False, indent=2))
 
-    if args.resync:
+    if args.resync and changed:
         report = resync(repository, paths, project=project, update_kit=False, force=False)
         _print_resync_report(report)
     return 0

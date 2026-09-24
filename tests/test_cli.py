@@ -211,3 +211,29 @@ def test_resync_runs_only_after_successful_atomic_mutation(
     assert calls == []
     assert run(["mcp", "disable", "context7", "--scope", "global", "--resync"]) == 0
     assert calls == [True]
+    assert run(["mcp", "enable", "context7", "--scope", "global", "--resync"]) == 0
+    assert calls == [True, True]
+
+    source = _write_mcp_source(isolated_data / "context7.yaml")
+    assert run(
+        ["mcp", "override", "context7", "--from", str(source), "--scope", "global", "--resync"]
+    ) == 0
+    assert calls == [True, True, True]
+    assert run(["mcp", "reset", "context7", "--scope", "global", "--resync"]) == 0
+    assert calls == [True, True, True, True]
+
+
+def test_reset_without_changes_does_not_run_resync(
+    monkeypatch: pytest.MonkeyPatch,
+    isolated_data: Path,
+) -> None:
+    calls: list[object] = []
+
+    def fake_resync(*args: object, **kwargs: object) -> SimpleNamespace:
+        calls.append((args, kwargs))
+        return SimpleNamespace(incomplete=[], revision="test", changed=True, skills=[], mcp=[], clients=[])
+
+    monkeypatch.setattr(cli_module, "resync", fake_resync)
+
+    assert run(["mcp", "reset", "context7", "--scope", "global", "--resync"]) == 0
+    assert calls == []
