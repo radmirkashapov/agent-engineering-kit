@@ -13,6 +13,7 @@ from .errors import AgentKitError
 from .external_skills import ExternalSkillManager
 from .io import atomic_write
 from .mcp_manager import McpManager
+from .override_service import initialize_override_workspace
 from .paths import KitPaths, ensure_runtime
 from .projects import LogicalProject
 from .overrides import validate_overrides
@@ -45,6 +46,7 @@ def resync(
     if update_kit:
         update_repository(repository)
     ensure_runtime(paths)
+    initialize_override_workspace(repository, paths)
     current_revision = revision(repository)
     repository_validation = validate(repository, paths, "all", include_local=True)
     if not repository_validation.ok:

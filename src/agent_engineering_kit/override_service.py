@@ -37,6 +37,21 @@ class OverrideScope:
     project_id: str | None
 
 
+def initialize_override_workspace(repository: Path, paths: KitPaths) -> list[Path]:
+    """Создать отсутствующие нейтральные локальные переопределения из шаблонов."""
+    template_root = repository / "templates" / "overrides"
+    created: list[Path] = []
+    for template in sorted(template_root.rglob("*")):
+        if not template.is_file() or "__pycache__" in template.relative_to(template_root).parts:
+            continue
+        destination = paths.overrides / template.relative_to(template_root)
+        if destination.exists() or destination.is_symlink():
+            continue
+        atomic_write(destination, template.read_text(encoding="utf-8"))
+        created.append(destination)
+    return created
+
+
 def resolve_scope(paths: KitPaths, scope: str, cwd: Path) -> OverrideScope:
     """Разрешить явно выбранный уровень локальных переопределений."""
     if scope == "global":
