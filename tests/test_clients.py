@@ -4,6 +4,8 @@ from pathlib import Path
 
 import json
 import pytest
+import shutil
+import yaml
 
 from agent_engineering_kit.clients import CLIENTS, expose_native_instructions, expose_native_skills, register_native_mcp, sync_clients, validate_clients
 from agent_engineering_kit.paths import KitPaths
@@ -16,6 +18,34 @@ from conftest import write_yaml
 def test_client_adapters_validate() -> None:
     repository = Path(__file__).resolve().parents[1]
     assert validate_clients(repository).ok
+
+
+def test_duplicate_client_contract_is_rejected(tmp_path: Path) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    candidate = tmp_path / "kit"
+    shutil.copytree(repository / "clients", candidate / "clients")
+    shutil.copytree(repository / "catalog", candidate / "catalog")
+    document = yaml.safe_load((candidate / "catalog/clients.yaml").read_text(encoding="utf-8"))
+    document["clients"].append(dict(document["clients"][0]))
+    write_yaml(candidate / "catalog/clients.yaml", document)
+
+    result = validate_clients(candidate)
+
+    assert not result.ok
+    assert any("ровно один раз" in item.message for item in result.diagnostics)
+
+
+def test_config_explain_names_control_plane_and_execution_harness(tmp_path: Path) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    data = tmp_path / "data"
+    paths = KitPaths(repository, data, data / "runtime", data / "projects", data / "overrides")
+
+    output = explain(repository, paths, tmp_path)
+
+    assert "Harness:" in output
+    assert "control plane: agent-engineering-kit" in output
+    assert "execution owner: client" in output
+    assert "selected client: codex" in output
 
 
 def test_sync_generates_thin_runtime_adapters(tmp_path: Path) -> None:

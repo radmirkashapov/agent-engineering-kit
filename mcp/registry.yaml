@@ -3,6 +3,7 @@ version: 1
 servers:
   # Core: code graph и анализ архитектурного impact.
   - id: codebase-memory
+    description: Build and query a code knowledge graph for architecture and change-impact analysis
     category: core
     required: true
     transport: stdio
@@ -22,6 +23,7 @@ servers:
 
   # Core: поиск symbols, references и semantic refactoring.
   - id: serena
+    description: Navigate symbols and references with semantic code analysis and editing tools
     category: core
     required: true
     transport: stdio
@@ -40,6 +42,7 @@ servers:
 
   # Core: актуальная внешняя документация через remote OAuth endpoint.
   - id: context7
+    description: Retrieve current library, framework, and API documentation from authoritative sources
     category: core
     required: true
     transport: http
@@ -56,6 +59,7 @@ servers:
 
   # Conditional SCM integrations активируются по remotes logical project.
   - id: github
+    description: Access GitHub repositories, issues, pull requests, and related source-control workflows
     category: scm
     required: false
     transport: stdio
@@ -75,6 +79,7 @@ servers:
     policy: configurable
 
   - id: gitlab
+    description: Access GitLab projects, merge requests, issues, and related source-control workflows
     category: scm
     required: false
     transport: http
@@ -91,6 +96,7 @@ servers:
 
   # Conditional quality integrations включаются только при соответствующем project signal.
   - id: sonarqube
+    description: Inspect SonarQube findings, quality gates, and static-analysis results for the project
     category: quality
     required: false
     transport: stdio
@@ -110,6 +116,7 @@ servers:
     policy: configurable
 
   - id: playwright
+    description: Automate browser interactions and verify user-visible behavior in web applications
     category: quality
     required: false
     transport: stdio
@@ -127,6 +134,7 @@ servers:
 
   # Collaboration integration требует настроенного Atlassian tenant и OAuth.
   - id: atlassian
+    description: Access Jira and Confluence project context through the official Atlassian integration
     category: collaboration
     required: false
     transport: http

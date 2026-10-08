@@ -1,7 +1,7 @@
 ---
 version: 1
 name: greeting
-description: Поздороваться с пользователем в коротком нейтральном ответе
+description: Greet the user with a short and neutral response
 policy: configurable
 requires:
   model_capabilities:

@@ -1,7 +1,7 @@
 ---
 version: 1
 name: mcp-doctor
-description: Диагностировать регистрацию, транспорт, разрешения и нативное состояние MCP
+description: Diagnose MCP registration, transport, permissions, and client-native state
 policy: enforced
 requires:
   model_capabilities:

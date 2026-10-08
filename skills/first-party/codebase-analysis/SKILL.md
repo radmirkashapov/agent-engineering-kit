@@ -1,7 +1,7 @@
 ---
 version: 1
 name: codebase-analysis
-description: Исследовать структуру и потоки данных и управления с приоритетом графа кода
+description: Analyze codebase structure, data flow, and control flow with graph-first discovery
 policy: configurable
 requires:
   model_capabilities:

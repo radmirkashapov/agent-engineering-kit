@@ -5,9 +5,10 @@
   "properties": {
     "version": {"const": 1},
     "servers": {"type": "array", "items": {
-      "type": "object", "required": ["id", "category", "required", "transport", "activation", "source", "installation", "state", "policy"],
+      "type": "object", "required": ["id", "description", "category", "required", "transport", "activation", "source", "installation", "state", "policy"],
       "properties": {
         "id": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"},
+        "description": {"type": "string", "minLength": 20},
         "category": {"enum": ["core", "scm", "quality", "collaboration"]}, "required": {"type": "boolean"},
         "transport": {"enum": ["stdio", "http", "sse"]}, "activation": {"type": "string"}, "command": {"type": "string"},
         "args": {"type": "array", "items": {"type": "string"}}, "source": {"type": "object"}, "installation": {"type": "object"},

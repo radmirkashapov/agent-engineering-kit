@@ -1,7 +1,7 @@
 ---
 version: 1
 name: code-review
-description: Проверить изменения на дефекты, регрессии, проблемы безопасности и пробелы в тестах
+description: Review changes for defects, regressions, security risks, and missing tests
 policy: configurable
 requires:
   model_capabilities:

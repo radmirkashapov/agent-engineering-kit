@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .access import validate_access
+from .definitions import validate_skill_directory
 from .io import load_yaml, markdown_frontmatter
 from .result import ValidationResult
 from .schema import validate_instance
@@ -13,7 +14,10 @@ from .schema import validate_instance
 
 KINDS = ("skills", "agents", "mcp", "rules")
 MODES = {"extend", "replace", "disable"}
-ENFORCED_FIELDS = {"id", "required", "policy", "security", "source"}
+PROTECTED_FIELDS = {
+    "rules": frozenset({"id", "policy", "content"}),
+    "agents": frozenset({"id", "role", "policy", "model", "requires", "tools", "content"}),
+}
 
 
 def _deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
@@ -34,7 +38,7 @@ def apply_local_overrides(
     *,
     enforced: set[str] | None = None,
 ) -> list[dict[str, Any]]:
-    """Применить global, затем project overlays; catalogs остаются immutable."""
+    """Применить overlays; skills/MCP свободны, обязательные rules/agents защищены."""
     effective = {item["id"]: dict(item) for item in items}
     roots = [override_root / "global"]
     if project_id:
@@ -50,6 +54,9 @@ def apply_local_overrides(
             mode = override.get("mode")
             if target not in effective or mode not in MODES:
                 continue
+            protected = PROTECTED_FIELDS.get(kind, frozenset()) if enforced and target in enforced else frozenset()
+            if protected and mode in {"replace", "disable"}:
+                continue
             if mode == "disable":
                 effective.pop(target, None)
                 continue
@@ -60,8 +67,8 @@ def apply_local_overrides(
             declared_path = value.get("path")
             if isinstance(declared_path, str) and not Path(declared_path).is_absolute():
                 value["path"] = str((path.parent / declared_path).resolve())
-            if enforced and target in enforced:
-                value = {key: item for key, item in value.items() if key not in ENFORCED_FIELDS}
+            if protected:
+                value = {key: item for key, item in value.items() if key not in protected}
             effective[target] = ({"id": target, **value} if mode == "replace" else _deep_merge(effective[target], value))
     return list(effective.values())
 
@@ -125,10 +132,32 @@ def validate_overrides(repository: Path, override_root: Path, project_id: str | 
                     continue
                 if target not in core:
                     result.error("overrides", f"{path}: неизвестный target {target!r} для {kind}")
-                elif core[target] and mode == "replace":
-                    result.error("overrides", f"{path}: нельзя применить {mode} к enforced {kind[:-1]} {target!r}")
-                elif core[target] and isinstance(override.get("value"), dict) and ENFORCED_FIELDS & set(override["value"]):
-                    result.error("overrides", f"{path}: enforced fields нельзя ослаблять: {sorted(ENFORCED_FIELDS & set(override['value']))}")
+                    continue
+                protected = PROTECTED_FIELDS.get(kind, frozenset()) if core[target] else frozenset()
+                value = override.get("value", {}) if isinstance(override, dict) else {}
+                if protected and mode in {"replace", "disable"}:
+                    result.error("overrides", f"{path}: нельзя применить {mode} к обязательному {kind[:-1]} {target!r}")
+                elif protected and isinstance(value, dict) and protected & set(value):
+                    result.error(
+                        "overrides",
+                        f"{path}: обязательные поля нельзя ослаблять: {sorted(protected & set(value))}",
+                    )
+                if kind == "skills" and mode == "replace":
+                    declared = value.get("path") if isinstance(value, dict) else None
+                    if not isinstance(declared, str):
+                        result.error("overrides", f"{path}: skill replace требует value.path")
+                    else:
+                        local_path = Path(declared)
+                        if not local_path.is_absolute():
+                            local_path = (path.parent / local_path).resolve()
+                        result.extend(
+                            validate_skill_directory(
+                                local_path,
+                                repository / "schemas" / "skill.schema.json",
+                                str(target),
+                                str(path),
+                            )
+                        )
     result.extend(
         validate_access(
             {

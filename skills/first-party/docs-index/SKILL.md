@@ -1,7 +1,7 @@
 ---
 version: 1
 name: docs-index
-description: Поддерживать docs/INDEX.md как карту канонических долговечных знаний
+description: Maintain docs/INDEX.md as the map of canonical durable project knowledge
 policy: configurable
 requires:
   model_capabilities:

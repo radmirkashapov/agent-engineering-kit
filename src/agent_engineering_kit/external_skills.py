@@ -11,6 +11,7 @@ from typing import Any, Callable
 from .access import resolve_access
 from .catalog import LockedComponent, resolve_desired
 from .component_state import Lifecycle, read_state, write_state
+from .definitions import validate_skill_directory
 from .errors import AgentKitError
 from .io import markdown_frontmatter
 from .models import allowed_model_references, load_policy, model_references
@@ -55,6 +56,22 @@ class ExternalSkillManager:
         first_party_ids = {item["id"] for item in first_party_items}
         enforced = {item["id"] for item in items if item.get("required") or item.get("policy") == "enforced"}
         effective = apply_local_overrides(items, self.paths.overrides, "skills", self.project_id, enforced=enforced)
+        for item in effective:
+            if not item.get("path"):
+                continue
+            validation = validate_skill_directory(
+                Path(item["path"]),
+                self.repository / "schemas" / "skill.schema.json",
+                item["id"],
+                f"effective skill {item['id']!r}",
+            )
+            if not validation.ok:
+                errors = "; ".join(
+                    diagnostic.message
+                    for diagnostic in validation.diagnostics
+                    if diagnostic.severity == "ERROR"
+                )
+                raise AgentKitError(f"Некорректный local skill override: {errors}")
         effective_by_id = {item["id"]: item for item in effective}
         decisions = resolve_access({item["id"] for item in items}, self.paths.overrides, "skills", self.project_id)
         available: list[dict[str, Any]] = []
@@ -70,12 +87,18 @@ class ExternalSkillManager:
             }
             if identifier in first_party_ids:
                 row["source"] = "first-party"
+            elif item.get("path"):
+                row["source"] = "local-override"
             available.append(row)
         return available
 
     def desired(self) -> list[tuple[dict[str, Any], LockedComponent]]:
         locks = {item["id"]: lock for item, lock in resolve_desired(self.repository, "skills")}
-        return [(item, locks[item["id"]]) for item in self.available() if item["id"] in locks and item["enabled"]]
+        return [
+            (item, locks[item["id"]])
+            for item in self.available()
+            if item["id"] in locks and item["enabled"] and not item.get("path")
+        ]
 
     def component_root(self, identifier: str) -> Path:
         return self.paths.installations / "skills" / identifier
@@ -89,7 +112,7 @@ class ExternalSkillManager:
         values: list[dict[str, Any]] = []
         locks = {item["id"]: lock for item, lock in resolve_desired(self.repository, "skills")}
         for item in self.available():
-            if item["source"] == "first-party":
+            if item.get("source") == "first-party" or item.get("source") == "local-override":
                 values.append({**item, "status": Lifecycle.ACTIVE.value if item["enabled"] else "DISABLED"})
                 continue
             lock = locks[item["id"]]

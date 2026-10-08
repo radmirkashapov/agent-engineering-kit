@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .external_skills import ExternalSkillManager
+from .harness import resolve_harness
 from .io import markdown_frontmatter
 from .overrides import apply_local_overrides
 from .mcp_manager import McpManager
@@ -21,6 +22,19 @@ def explain(repository: Path, paths: KitPaths, start: Path) -> str:
     lines.extend(["Logical project:", project.identifier if project else "не определён", ""])
     if project:
         lines.extend(["Project root:", str(project.root), ""])
+    harness = resolve_harness(repository, project.manifest if project else None)
+    lines.extend(
+        [
+            "Harness:",
+            f"control plane: {harness['control_plane']}",
+            f"execution owner: {harness['execution_owner']}",
+            f"preferred client: {harness['preferred_client']}",
+            f"selected client: {harness['selected_client']}",
+            "managed capabilities: " + ", ".join(harness["managed_capabilities"]),
+            "delegated capabilities: " + ", ".join(harness["delegated_capabilities"]),
+            "",
+        ]
+    )
     lines.extend(["Models:", f"corporate policy: {'active' if policy.corporate_active else 'empty'}", "effective allowed models:"])
     lines.extend(f"- {item}" for item in sorted(policy.runtime_allowed_ids))
     lines.extend(["", "User-local models:"])

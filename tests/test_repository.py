@@ -4,8 +4,10 @@ from pathlib import Path
 import re
 import stat
 import subprocess
+import pytest
 
 from agent_engineering_kit.paths import KitPaths
+from agent_engineering_kit.definitions import is_english_text, validate_agents, validate_mcp, validate_skills
 from agent_engineering_kit.validation import validate
 
 
@@ -41,7 +43,7 @@ def test_all_tracked_yaml_files_have_explanatory_comments() -> None:
     assert missing == [], f"YAML без содержательного вводного комментария: {missing}"
 
 
-def test_all_markdown_files_are_written_in_russian() -> None:
+def test_user_facing_markdown_files_are_written_in_russian() -> None:
     repository = Path(__file__).resolve().parents[1]
     completed = subprocess.run(
         ["git", "ls-files", "--cached", "--others", "--exclude-standard", "--", "*.md"],
@@ -52,6 +54,8 @@ def test_all_markdown_files_are_written_in_russian() -> None:
     )
     insufficient_russian = []
     for name in completed.stdout.splitlines():
+        if name.startswith("agents/"):
+            continue
         lines = (repository / name).read_text(encoding="utf-8").splitlines()
         prose: list[str] = []
         in_frontmatter = bool(lines and lines[0] == "---")
@@ -80,3 +84,48 @@ def test_all_markdown_files_are_written_in_russian() -> None:
     assert insufficient_russian == [], (
         f"Markdown без достаточной русскоязычной прозы: {insufficient_russian}"
     )
+
+
+def test_default_agent_roles_are_complete_detailed_and_english() -> None:
+    repository = Path(__file__).resolve().parents[1]
+
+    result = validate_agents(repository)
+
+    assert result.ok, "\n".join(item.render() for item in result.diagnostics)
+    assert {path.stem for path in (repository / "agents").glob("*.md")} == {
+        "orchestrator",
+        "architect",
+        "developer",
+        "reviewer",
+        "qa-engineer",
+    }
+    for path in (repository / "agents").glob("*.md"):
+        content = path.read_text(encoding="utf-8")
+        assert len(content.splitlines()) >= 45, f"Недостаточно подробная роль: {path.name}"
+        assert not re.search(r"[А-Яа-яЁё]", content), f"Описание роли должно быть на английском: {path.name}"
+
+
+def test_default_skill_and_mcp_descriptions_are_english() -> None:
+    repository = Path(__file__).resolve().parents[1]
+
+    skills = validate_skills(repository)
+    mcp = validate_mcp(repository)
+
+    assert skills.ok, "\n".join(item.render() for item in skills.diagnostics)
+    assert mcp.ok, "\n".join(item.render() for item in mcp.diagnostics)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "1234567890 -- 0987654321",
+        "Describir capacidades y responsabilidades del sistema",
+        "Describir a usuarios sistemas seguros y confiables",
+        "Valider la configuration as service robuste et portable",
+        "Analisar a configuração e as responsabilidades principais",
+        "Validar a política e as configurações locais",
+        "説明文として十分な長さを持つ文字列です",
+    ],
+)
+def test_english_text_check_rejects_non_english_content(value: str) -> None:
+    assert not is_english_text(value)

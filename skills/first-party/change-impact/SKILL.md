@@ -1,7 +1,7 @@
 ---
 version: 1
 name: change-impact
-description: Оценить входящее и исходящее влияние изменения до реализации
+description: Assess inbound and outbound change impact before implementation begins
 policy: configurable
 requires:
   model_capabilities:

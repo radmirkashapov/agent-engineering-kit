@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -10,6 +11,7 @@ from pathlib import Path
 from .clients import expose_native_instructions, expose_native_skills, register_native_mcp, sync_clients
 from .component_state import Lifecycle
 from .errors import AgentKitError
+from .harness import resolve_harness
 from .external_skills import ExternalSkillManager
 from .io import atomic_write
 from .mcp_manager import McpManager
@@ -31,6 +33,33 @@ class ResyncReport:
     clients: list[str]
     changed: bool
     incomplete: list[str]
+
+
+def build_session_manifest(
+    *,
+    revision: str,
+    project_id: str | None,
+    security: list[dict],
+    skills: list[dict],
+    mcp: list[dict],
+    clients: list[str],
+    harness: dict[str, object],
+    effective_policy: Path,
+    recorded_at: str,
+) -> dict[str, object]:
+    """Собрать воспроизводимый снимок control plane для текущего сеанса."""
+    return {
+        "schema": "agent-engineering-kit/effective-environment/v2",
+        "revision": revision,
+        "recorded_at": recorded_at,
+        "project_id": project_id,
+        "harness": harness,
+        "effective_policy_sha256": hashlib.sha256(effective_policy.read_bytes()).hexdigest(),
+        "security": security,
+        "skills": skills,
+        "mcp": mcp,
+        "clients": clients,
+    }
 
 
 def resync(
@@ -111,16 +140,17 @@ def resync(
 
     previous_path = paths.state / "effective-environment.json"
     previous = previous_path.read_text(encoding="utf-8") if previous_path.exists() else ""
-    effective = {
-        "schema": "agent-engineering-kit/effective-environment/v1",
-        "revision": current_revision,
-        "recorded_at": datetime.now(timezone.utc).isoformat(),
-        "project_id": project.identifier if project else None,
-        "security": security_state,
-        "skills": skill_manager.list(),
-        "mcp": mcp_state,
-        "clients": [str(path) for path in generated],
-    }
+    effective = build_session_manifest(
+        revision=current_revision,
+        project_id=project.identifier if project else None,
+        security=security_state,
+        skills=skill_manager.list(),
+        mcp=mcp_state,
+        clients=[str(path) for path in generated],
+        harness=resolve_harness(repository, project.manifest if project else None),
+        effective_policy=paths.installations / "clients" / "shared" / "effective-policy.json",
+        recorded_at=datetime.now(timezone.utc).isoformat(),
+    )
     serialized = json.dumps(effective, ensure_ascii=False, indent=2) + "\n"
     comparable_previous = ""
     if previous:

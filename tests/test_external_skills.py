@@ -6,7 +6,9 @@ from pathlib import Path
 import yaml
 
 from agent_engineering_kit.component_state import Lifecycle
+from agent_engineering_kit.clients import sync_clients
 from agent_engineering_kit.external_skills import ExternalSkillManager
+from agent_engineering_kit.override_service import OverrideScope, install_skill_override
 from agent_engineering_kit.paths import KitPaths
 from conftest import write_yaml
 
@@ -162,6 +164,38 @@ def test_access_policy_filters_required_external_skill_from_desired(tmp_path: Pa
     assert "superpowers" not in {item["id"] for item, _ in manager.desired()}
     superpowers = next(row for row in manager.list() if row["id"] == "superpowers")
     assert superpowers["status"] == "DISABLED"
+
+
+def test_external_skill_can_be_replaced_by_valid_local_skill(tmp_path: Path) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    data = tmp_path / "data"
+    paths = KitPaths(repository, data, data / "runtime", data / "projects", data / "overrides")
+    source = tmp_path / "local-superpowers"
+    source.mkdir()
+    (source / "SKILL.md").write_text(
+        "---\nversion: 1\nname: superpowers\n"
+        "description: Provide a user-owned replacement for the external skill bundle\n"
+        "policy: configurable\nrequires:\n  model_capabilities: [reasoning]\n"
+        "---\n# Local replacement\n",
+        encoding="utf-8",
+    )
+    install_skill_override(
+        OverrideScope("global", paths.overrides / "global", None),
+        "superpowers",
+        source,
+    )
+
+    manager = ExternalSkillManager(repository, paths)
+    row = next(item for item in manager.list() if item["id"] == "superpowers")
+    generated = sync_clients(repository, paths)
+
+    assert row["source"] == "local-override"
+    assert row["status"] == Lifecycle.ACTIVE.value
+    assert all(item[0]["id"] != "superpowers" for item in manager.desired())
+    assert (paths.installations / "clients/shared/skills/superpowers").resolve() == (
+        paths.overrides / "global/sources/skills/superpowers"
+    ).resolve()
+    assert generated
 
 
 def test_rollback_restores_previous_locked_revision(tmp_path: Path) -> None:

@@ -272,6 +272,11 @@ def install_skill_override(scope: OverrideScope, identifier: str, source: Path) 
     if not result.ok:
         message = next(item.message for item in result.diagnostics if item.severity == "ERROR")
         raise AgentKitError(f"Некорректный SKILL.md: {message}")
+    actual_name = metadata.get("name") or metadata.get("id")
+    if actual_name != identifier:
+        raise AgentKitError(
+            f"Skill name {actual_name!r} должен совпадать с target {identifier!r}"
+        )
 
     definition = _scope_path(scope, "skills", f"{identifier}.yaml")
     copied_source = _scope_path(scope, "sources", "skills", identifier)

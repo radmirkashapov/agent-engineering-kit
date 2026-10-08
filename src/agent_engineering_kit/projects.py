@@ -12,6 +12,7 @@ from typing import Any
 import yaml
 
 from .errors import AgentKitError
+from .harness import resolve_harness
 from .io import atomic_write, load_yaml
 from .paths import KitPaths, ensure_runtime
 from .result import ValidationResult
@@ -75,6 +76,10 @@ def validate_project(project: LogicalProject, repository: Path) -> ValidationRes
             component_path.relative_to(repositories[component["repository"]])
         except ValueError:
             result.error("projects", f"Component {component['id']} выходит за repository root")
+    try:
+        resolve_harness(repository, project.manifest)
+    except AgentKitError as error:
+        result.error("projects", str(error))
     if result.ok:
         result.info("projects", f"Logical project {project.identifier} валиден")
     return result
@@ -204,6 +209,10 @@ def init_project(root: Path, repository: Path, paths: KitPaths, *, identifier: s
         "components": _probable_components(root, repositories),
         "documentation": {"index": "docs/INDEX.md", "roots": ["docs"]},
         "memory": {"namespace": project_id},
+        "harness": {
+            "preferred_client": "auto",
+            "required_capabilities": ["instructions", "skills", "mcp"],
+        },
     }
     schema_result = validate_instance(manifest, repository / "schemas" / "project.schema.json", str(manifest_path))
     if not schema_result.ok:

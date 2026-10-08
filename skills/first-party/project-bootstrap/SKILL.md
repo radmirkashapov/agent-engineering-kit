@@ -1,7 +1,7 @@
 ---
 version: 1
 name: project-bootstrap
-description: Инициализировать логический проект без копирования глобальных правил
+description: Initialize a logical project without copying global rules into its repository
 policy: configurable
 requires:
   model_capabilities:

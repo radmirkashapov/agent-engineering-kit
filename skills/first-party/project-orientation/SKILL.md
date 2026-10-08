@@ -1,7 +1,7 @@
 ---
 version: 1
 name: project-orientation
-description: Определить логический проект, компоненты, документацию и итоговую конфигурацию
+description: Identify the logical project, components, documentation, and effective configuration
 policy: configurable
 requires:
   model_capabilities:

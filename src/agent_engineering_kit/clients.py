@@ -5,10 +5,13 @@ from __future__ import annotations
 import shutil
 import json
 import os
+from collections import Counter
 from pathlib import Path
 
 from .errors import AgentKitError
+from .definitions import is_english_text
 from .external_skills import ExternalSkillManager
+from .harness import load_harness_clients
 from .io import atomic_write, load_yaml, markdown_frontmatter
 from .paths import KitPaths, ensure_runtime
 from .overrides import apply_local_overrides
@@ -29,6 +32,11 @@ def _is_within(path: Path, root: Path) -> bool:
 
 def validate_clients(repository: Path) -> ValidationResult:
     result = ValidationResult()
+    catalog = load_harness_clients(repository)
+    catalog_by_id = {item["id"]: item for item in catalog}
+    counts = Counter(item.get("id") for item in catalog)
+    if set(catalog_by_id) != set(CLIENTS) or any(counts[client] != 1 for client in CLIENTS):
+        result.error("clients", "catalog/clients.yaml должен описывать каждый поддерживаемый client adapter ровно один раз")
     for client in CLIENTS:
         directory = repository / "clients" / client
         adapter = directory / "adapter.yaml"
@@ -41,6 +49,9 @@ def validate_clients(repository: Path) -> ValidationResult:
             result.error("clients", f"clients/{client}/adapter.yaml: id должен совпадать с именем каталога")
         if document.get("entrypoint") != "AI.md":
             result.error("clients", f"Adapter {client} должен ссылаться на AI.md, а не копировать rules")
+        description = catalog_by_id.get(client, {}).get("description")
+        if not is_english_text(description):
+            result.error("clients", f"{client}: default harness description должен быть содержательным и английским")
     if result.ok:
         result.info("clients", f"Thin adapters валидны: {len(CLIENTS)}")
     return result
@@ -52,7 +63,7 @@ def sync_clients(repository: Path, paths: KitPaths, *, project_id: str | None = 
     skill_manager = ExternalSkillManager(repository, paths, project_id=project_id)
     skill_sources: dict[str, Path] = {}
     for item in skill_manager.available():
-        if item["enabled"] and item["source"] == "first-party" and item.get("path"):
+        if item["enabled"] and item.get("path"):
             skill_sources[item["id"]] = Path(item["path"])
     for item, _ in skill_manager.desired():
         active = skill_manager.active_path(item["id"])
@@ -84,7 +95,13 @@ def sync_clients(repository: Path, paths: KitPaths, *, project_id: str | None = 
         }
         for path in sorted((repository / "rules").glob("*.md"))
     ]
-    effective_agents = apply_local_overrides(agents, paths.overrides, "agents", project_id)
+    effective_agents = apply_local_overrides(
+        agents,
+        paths.overrides,
+        "agents",
+        project_id,
+        enforced={item["id"] for item in agents if item.get("policy") == "enforced"},
+    )
     effective_rules = apply_local_overrides(
         rules,
         paths.overrides,

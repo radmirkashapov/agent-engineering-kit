@@ -34,6 +34,16 @@
     "memory": {
       "type": "object", "required": ["namespace"], "additionalProperties": false,
       "properties": { "namespace": { "$ref": "#/$defs/id" } }
+    },
+    "harness": {
+      "type": "object", "required": ["preferred_client", "required_capabilities"], "additionalProperties": false,
+      "properties": {
+        "preferred_client": {"enum": ["auto", "codex", "claude-code", "claude-desktop", "opencode", "cline"]},
+        "required_capabilities": {
+          "type": "array", "uniqueItems": true,
+          "items": {"enum": ["instructions", "skills", "mcp"]}
+        }
+      }
     }
   },
   "$defs": {

@@ -1,7 +1,7 @@
 ---
 version: 1
 name: verification
-description: Доказать выполнение критериев приёмки воспроизводимыми проверками
+description: Prove acceptance criteria with reproducible verification evidence
 policy: enforced
 requires:
   model_capabilities:

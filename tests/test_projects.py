@@ -25,6 +25,10 @@ def test_single_repo_project(tmp_path: Path, kit_repository: Path) -> None:
     (root / ".git").mkdir(parents=True)
     project = init_project(root, kit_repository, paths(tmp_path, kit_repository))
     assert project.manifest["repositories"] == [{"id": "root", "path": "."}]
+    assert project.manifest["harness"] == {
+        "preferred_client": "auto",
+        "required_capabilities": ["instructions", "skills", "mcp"],
+    }
     assert (root / "docs/INDEX.md").is_file()
     assert validate_project(project, kit_repository).ok
 

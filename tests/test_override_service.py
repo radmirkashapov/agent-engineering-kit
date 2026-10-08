@@ -51,6 +51,7 @@ def write_skill(path: Path, name: str, heading: str) -> Path:
 
 def valid_mcp_value() -> dict[str, object]:
     return {
+        "description": "Provide a valid MCP fixture for local override installation tests",
         "category": "scm",
         "required": False,
         "transport": "http",
