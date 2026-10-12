@@ -5,11 +5,14 @@ from __future__ import annotations
 from pathlib import Path
 
 from .clients import validate_clients
+from .conventions import validate_conventions
 from .definitions import validate_agents, validate_locks, validate_mcp, validate_skills
 from .git_hygiene import validate_git_hygiene
 from .models import validate_models
 from .overrides import validate_overrides
 from .paths import KitPaths
+from .policy import validate_policy
+from .projects import find_project
 from .result import ValidationResult
 from .schema import validate_repository_schemas
 from .security import validate_security
@@ -23,6 +26,8 @@ VALIDATORS = {
     "mcp": lambda repository, paths, include_local: validate_mcp(repository),
     "catalogs": lambda repository, paths, include_local: validate_locks(repository),
     "clients": lambda repository, paths, include_local: validate_clients(repository),
+    "conventions": lambda repository, paths, include_local: validate_conventions(repository, find_project(Path.cwd()) if include_local else None),
+    "policy": lambda repository, paths, include_local: validate_policy(repository, paths, find_project(Path.cwd()) if include_local else None, include_local=include_local),
     "overrides": lambda repository, paths, include_local: validate_overrides(repository, paths.overrides) if include_local else ValidationResult(),
     "git-hygiene": lambda repository, paths, include_local: validate_git_hygiene(repository, paths, require_gitleaks=not include_local),
     "security": lambda repository, paths, include_local: validate_security(repository),

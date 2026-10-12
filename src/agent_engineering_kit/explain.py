@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
+from .conventions import load_conventions
 from .external_skills import ExternalSkillManager
 from .harness import resolve_harness
 from .io import markdown_frontmatter
@@ -11,13 +13,25 @@ from .overrides import apply_local_overrides
 from .mcp_manager import McpManager
 from .models import load_policy
 from .paths import KitPaths
+from .policy import effective_policy
 from .projects import LogicalProject, find_project
 from .sync import revision
 
 
-def explain(repository: Path, paths: KitPaths, start: Path) -> str:
+def explain(repository: Path, paths: KitPaths, start: Path, *, output_format: str = "text") -> str:
     policy = load_policy(repository, local_path=paths.overrides / "models.yaml")
     project = find_project(start)
+    conventions = load_conventions(repository, project)
+    resolved_policy = effective_policy(repository, paths, project)
+    if output_format == "json":
+        return json.dumps({
+            "revision": revision(repository),
+            "project_id": project.identifier if project else None,
+            "policy": resolved_policy.as_dict(),
+            "conventions": conventions,
+        }, ensure_ascii=False, indent=2) + "\n"
+    if output_format != "text":
+        raise ValueError(f"Неизвестный формат config explain: {output_format}")
     lines = ["Agent Engineering Kit", f"revision: {revision(repository)}", ""]
     lines.extend(["Logical project:", project.identifier if project else "не определён", ""])
     if project:
@@ -65,4 +79,9 @@ def explain(repository: Path, paths: KitPaths, start: Path) -> str:
         activation = "enabled" if server["enabled"] else "disabled"
         lines.append(f"- {server['id']}: {activation}; {server['status']}; access: {server['access_reason']}")
     lines.extend(["", "Memory:", str(paths.projects / project.identifier) if project else "не определена"])
+    lines.extend(["", "Effective policy:"])
+    for key, value in sorted(resolved_policy.values.items()):
+        source = resolved_policy.provenance[key][-1]["source"]
+        lines.append(f"- {key}: {value!r}; {resolved_policy.classifications[key]}; source: {source}")
+    lines.extend(f"WARNING: {warning}" for warning in resolved_policy.warnings)
     return "\n".join(lines) + "\n"

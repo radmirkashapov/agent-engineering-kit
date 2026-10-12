@@ -1,0 +1,14 @@
+# Общие соглашения определяют владельца документации и порядок её объединения.
+version: 1
+conventions:
+  - id: documentation-ownership
+    description: Keep canonical documentation under explicit ownership.
+    requirements:
+      - Declare documentation files in the task write set.
+      - Use unique change fragments when concurrent work touches canonical documents.
+      - Let the documentation integrator update README.md and docs/INDEX.md once.
+  - id: adr-history
+    description: Preserve accepted architecture decisions as immutable history.
+    requirements:
+      - Give each new ADR a date and task identifier.
+      - Supersede an accepted ADR with a new linked decision.
