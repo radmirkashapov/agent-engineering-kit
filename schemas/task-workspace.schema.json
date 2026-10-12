@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-engineering-kit.local/schemas/task-workspace.schema.json",
+  "title": "Agent Engineering Kit task workspace",
+  "type": "object",
+  "required": ["schema", "project_id", "task_id", "status", "repositories", "repository_revision_vector", "write_set"],
+  "properties": {
+    "schema": { "const": "agent-engineering-kit/task-workspace/v1" },
+    "project_id": { "type": "string", "minLength": 1 },
+    "task_id": { "type": "string", "minLength": 1 },
+    "status": { "enum": ["planned", "active", "integrating", "completed", "failed"] },
+    "repositories": { "type": "array" },
+    "repository_revision_vector": { "type": "object", "additionalProperties": { "type": "string" } },
+    "write_set": { "type": "array", "items": { "type": "string" } }
+  },
+  "additionalProperties": true
+}

@@ -8,42 +8,57 @@ clients:
     skills: ~/.agents/skills
     mcp: ~/.codex/config.toml
     harness:
+      adapter_version: 1
+      reference_runtime: true
       execution_owner: client
       managed_capabilities: [instructions, skills, mcp]
       delegated_capabilities: [agent-loop, context-window, sandbox, approvals, task-lifecycle, event-stream]
+      experimental_capabilities: [context-optimization]
   - id: claude-code
     description: Use Claude Code as the external execution harness with native instructions, skills, and MCP integration
     instructions: ~/.claude/CLAUDE.md
     skills: ~/.claude/skills
     mcp: ~/.claude.json
     harness:
+      adapter_version: 1
+      reference_runtime: false
       execution_owner: client
       managed_capabilities: [instructions, skills, mcp]
       delegated_capabilities: [agent-loop, context-window, sandbox, approvals, task-lifecycle, event-stream]
+      experimental_capabilities: [context-optimization]
   - id: claude-desktop
     description: Use Claude Desktop as an external MCP execution surface with client-managed lifecycle and permissions
     instructions: ограничены-возможностями-клиента
     skills: extensions/plugins
     mcp: claude_desktop_config.json
     harness:
+      adapter_version: 1
+      reference_runtime: false
       execution_owner: client
       managed_capabilities: [mcp]
       delegated_capabilities: [agent-loop, context-window, sandbox, approvals, task-lifecycle, event-stream]
+      experimental_capabilities: []
   - id: opencode
     description: Use OpenCode as the external execution harness with native instructions, skills, and MCP integration
     instructions: AGENTS.md
     skills: ~/.agents/skills
     mcp: opencode.json
     harness:
+      adapter_version: 1
+      reference_runtime: false
       execution_owner: client
       managed_capabilities: [instructions, skills, mcp]
       delegated_capabilities: [agent-loop, context-window, sandbox, approvals, task-lifecycle, event-stream]
+      experimental_capabilities: []
   - id: cline
     description: Use Cline as the external execution harness with managed instructions and MCP integration
     instructions: AGENTS.md и Cline Rules
     skills: зависят-от-клиента
     mcp: cline_mcp_settings.json
     harness:
+      adapter_version: 1
+      reference_runtime: false
       execution_owner: client
       managed_capabilities: [instructions, mcp]
       delegated_capabilities: [agent-loop, context-window, sandbox, approvals, task-lifecycle, event-stream]
+      experimental_capabilities: []

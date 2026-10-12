@@ -14,8 +14,10 @@
         "harness": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["execution_owner", "managed_capabilities", "delegated_capabilities"],
+          "required": ["adapter_version", "reference_runtime", "execution_owner", "managed_capabilities", "delegated_capabilities", "experimental_capabilities"],
           "properties": {
+            "adapter_version": {"type": "integer", "minimum": 1},
+            "reference_runtime": {"type": "boolean"},
             "execution_owner": {"const": "client"},
             "managed_capabilities": {
               "type": "array", "minItems": 1, "uniqueItems": true,
@@ -24,6 +26,10 @@
             "delegated_capabilities": {
               "type": "array", "minItems": 1, "uniqueItems": true,
               "items": {"enum": ["agent-loop", "context-window", "sandbox", "approvals", "task-lifecycle", "event-stream"]}
+            },
+            "experimental_capabilities": {
+              "type": "array", "uniqueItems": true,
+              "items": {"enum": ["context-optimization"]}
             }
           }
         }

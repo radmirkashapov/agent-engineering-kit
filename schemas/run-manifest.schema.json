@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-engineering-kit.local/schemas/run-manifest.schema.json",
+  "title": "Agent Engineering Kit run manifest",
+  "type": "object",
+  "required": ["schema", "phase", "run_id", "project_id"],
+  "properties": {
+    "schema": { "const": "agent-engineering-kit/run-manifest/v1" },
+    "phase": { "enum": ["request", "result"] },
+    "run_id": { "type": "string", "minLength": 1 },
+    "project_id": { "type": ["string", "null"] }
+  }
+}
