@@ -1,0 +1,58 @@
+# Корпоративные подключения дополняют существующий реестр политикой доступа и аудита.
+version: 1
+catalog_type: corporate
+tool_budget: 8
+servers:
+  # Документация доступна на чтение; endpoint не получает корпоративные записи.
+  - id: context7
+    owner: engineering-platform
+    trust: trusted
+    data_classes: [public]
+    auth:
+      method: oauth
+    boundaries:
+      allowed_hosts: [mcp.context7.com]
+      read_only: true
+      model_endpoint: approved-only
+    audit:
+      decisions: true
+      arguments: redacted
+      results: metadata-only
+    capabilities:
+      - id: documentation.read
+        mode: read
+        tool_cost: 2
+        data_classes: [public]
+
+  # У удалённого сервера нет доказанной фильтрации инструментов по режиму.
+  - id: atlassian
+    owner: collaboration-platform
+    trust: trusted
+    data_classes: [internal, confidential]
+    auth:
+      method: oauth
+    boundaries:
+      allowed_hosts: [mcp.atlassian.com]
+      read_only: false
+      model_endpoint: approved-only
+    audit:
+      decisions: true
+      arguments: redacted
+      results: metadata-only
+    capabilities:
+      - id: jira.issue.read
+        mode: read
+        tool_cost: 2
+        data_classes: [internal]
+      - id: confluence.page.read
+        mode: read
+        tool_cost: 2
+        data_classes: [internal, confidential]
+      - id: jira.issue.write
+        mode: write
+        tool_cost: 1
+        data_classes: [internal]
+      - id: jira.project.admin
+        mode: admin
+        tool_cost: 1
+        data_classes: [internal]

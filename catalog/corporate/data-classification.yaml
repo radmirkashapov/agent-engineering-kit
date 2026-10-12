@@ -1,0 +1,15 @@
+# Классы данных ограничивают передачу результатов MCP модели и журналам.
+version: 1
+classes:
+  - id: public
+    model_access: approved-only
+    logging: metadata-only
+  - id: internal
+    model_access: approved-only
+    logging: redacted
+  - id: confidential
+    model_access: approved-only
+    logging: metadata-only
+  - id: restricted
+    model_access: denied
+    logging: metadata-only

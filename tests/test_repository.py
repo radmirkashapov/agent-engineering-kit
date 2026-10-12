@@ -115,6 +115,111 @@ def test_default_skill_and_mcp_descriptions_are_english() -> None:
     assert mcp.ok, "\n".join(item.render() for item in mcp.diagnostics)
 
 
+@pytest.mark.parametrize("field", ["source", "installation"])
+def test_mcp_validation_rejects_url_credentials(tmp_path: Path, field: str) -> None:
+    from shutil import copytree
+    from agent_engineering_kit.io import load_yaml
+    from conftest import write_yaml
+
+    repository = Path(__file__).resolve().parents[1]
+    copytree(repository / "mcp", tmp_path / "mcp")
+    copytree(repository / "schemas", tmp_path / "schemas")
+    (tmp_path / ".env.example").write_text((repository / ".env.example").read_text(encoding="utf-8"), encoding="utf-8")
+    registry = load_yaml(tmp_path / "mcp" / "registry.yaml")
+    target = registry["servers"][0][field]
+    target["repository" if field == "source" else "endpoint"] = "https://operator:credential@example.com/mcp"
+    write_yaml(tmp_path / "mcp" / "registry.yaml", registry)
+
+    result = validate_mcp(tmp_path)
+
+    assert not result.ok
+    assert any("credentials" in diagnostic.message for diagnostic in result.diagnostics)
+
+
+def test_mcp_validation_rejects_unknown_access_profile_mode(tmp_path: Path) -> None:
+    from shutil import copytree
+    from agent_engineering_kit.io import load_yaml
+    from conftest import write_yaml
+
+    repository = Path(__file__).resolve().parents[1]
+    copytree(repository / "mcp", tmp_path / "mcp")
+    copytree(repository / "schemas", tmp_path / "schemas")
+    copytree(repository / "catalog" / "corporate", tmp_path / "catalog" / "corporate")
+    (tmp_path / ".env.example").write_text((repository / ".env.example").read_text(encoding="utf-8"), encoding="utf-8")
+    path = tmp_path / "catalog" / "corporate" / "access-profiles.yaml"
+    profiles = load_yaml(path)
+    profiles["profiles"][0]["allowed_modes"] = ["destroy"]
+    write_yaml(path, profiles)
+
+    result = validate_mcp(tmp_path)
+
+    assert not result.ok
+    assert any("access profile" in diagnostic.message for diagnostic in result.diagnostics)
+
+
+def test_mcp_validation_rejects_endpoint_outside_boundary(tmp_path: Path) -> None:
+    from shutil import copytree
+    from agent_engineering_kit.io import load_yaml
+    from conftest import write_yaml
+
+    repository = Path(__file__).resolve().parents[1]
+    copytree(repository / "mcp", tmp_path / "mcp")
+    copytree(repository / "schemas", tmp_path / "schemas")
+    copytree(repository / "catalog" / "corporate", tmp_path / "catalog" / "corporate")
+    (tmp_path / ".env.example").write_text((repository / ".env.example").read_text(encoding="utf-8"), encoding="utf-8")
+    path = tmp_path / "catalog" / "corporate" / "mcp.yaml"
+    catalog = load_yaml(path)
+    catalog["servers"][0]["boundaries"]["allowed_hosts"] = ["unrelated.example"]
+    write_yaml(path, catalog)
+
+    result = validate_mcp(tmp_path)
+
+    assert not result.ok
+    assert any("allowed_hosts" in diagnostic.message for diagnostic in result.diagnostics)
+
+
+def test_mcp_validation_rejects_write_on_read_only_server(tmp_path: Path) -> None:
+    from shutil import copytree
+    from agent_engineering_kit.io import load_yaml
+    from conftest import write_yaml
+
+    repository = Path(__file__).resolve().parents[1]
+    copytree(repository / "mcp", tmp_path / "mcp")
+    copytree(repository / "schemas", tmp_path / "schemas")
+    copytree(repository / "catalog" / "corporate", tmp_path / "catalog" / "corporate")
+    (tmp_path / ".env.example").write_text((repository / ".env.example").read_text(encoding="utf-8"), encoding="utf-8")
+    path = tmp_path / "catalog" / "corporate" / "mcp.yaml"
+    catalog = load_yaml(path)
+    catalog["servers"][0]["capabilities"][0]["mode"] = "write"
+    write_yaml(path, catalog)
+
+    result = validate_mcp(tmp_path)
+
+    assert not result.ok
+    assert any("read_only" in diagnostic.message for diagnostic in result.diagnostics)
+
+
+def test_mcp_validation_rejects_raw_corporate_logging(tmp_path: Path) -> None:
+    from shutil import copytree
+    from agent_engineering_kit.io import load_yaml
+    from conftest import write_yaml
+
+    repository = Path(__file__).resolve().parents[1]
+    copytree(repository / "mcp", tmp_path / "mcp")
+    copytree(repository / "schemas", tmp_path / "schemas")
+    copytree(repository / "catalog" / "corporate", tmp_path / "catalog" / "corporate")
+    (tmp_path / ".env.example").write_text((repository / ".env.example").read_text(encoding="utf-8"), encoding="utf-8")
+    path = tmp_path / "catalog" / "corporate" / "data-classification.yaml"
+    classes = load_yaml(path)
+    classes["classes"][0]["logging"] = "raw"
+    write_yaml(path, classes)
+
+    result = validate_mcp(tmp_path)
+
+    assert not result.ok
+    assert any("logging" in diagnostic.message for diagnostic in result.diagnostics)
+
+
 @pytest.mark.parametrize(
     "value",
     [

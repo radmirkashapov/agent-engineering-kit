@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import re
+from urllib.parse import parse_qsl, urlsplit
 import unicodedata
 
 from .io import load_yaml, markdown_frontmatter
@@ -33,6 +34,19 @@ def is_english_text(value: object) -> bool:
     marker_count = sum(word in _ENGLISH_MARKERS for word in words)
     starts_with_action = bool(words) and words[0] in _ENGLISH_ACTION_VERBS
     return len(words) >= 4 and (marker_count >= 2 or starts_with_action and marker_count >= 1)
+
+
+def url_contains_credentials(url: str) -> bool:
+    """Обнаружить credential material в userinfo или query URL."""
+    parsed = urlsplit(url)
+    return bool(
+        parsed.username
+        or parsed.password
+        or any(
+            re.search(r"(?i)(token|secret|password|key|credential|auth)", key)
+            for key, _ in parse_qsl(parsed.query, keep_blank_values=True)
+        )
+    )
 
 
 def _validate_english_description(result: ValidationResult, section: str, identifier: object, value: object) -> None:
@@ -128,6 +142,74 @@ def validate_mcp(repository: Path) -> ValidationResult:
         image = (server.get("installation") or {}).get("image")
         if image and not re.search(r"@sha256:[0-9a-f]{64}$", image):
             result.error("mcp", f"MCP {identifier}: container image должен быть закреплён immutable digest")
+        for field, url in (
+            ("source.repository", (server.get("source") or {}).get("repository")),
+            ("installation.endpoint", (server.get("installation") or {}).get("endpoint")),
+        ):
+            if not isinstance(url, str):
+                continue
+            if url_contains_credentials(url):
+                result.error("mcp", f"MCP {identifier}: credentials запрещены в {field} URL")
+    corporate_path = repository / "catalog" / "corporate" / "mcp.yaml"
+    if corporate_path.is_file():
+        corporate = load_yaml(corporate_path)
+        result.extend(validate_instance(corporate, repository / "schemas" / "mcp.schema.json", str(corporate_path)))
+        classes_path = corporate_path.with_name("data-classification.yaml")
+        profiles_path = corporate_path.with_name("access-profiles.yaml")
+        classes = load_yaml(classes_path) if classes_path.is_file() else {}
+        profiles = load_yaml(profiles_path) if profiles_path.is_file() else {}
+        known_classes = {entry.get("id") for entry in classes.get("classes", [])}
+        if classes.get("version") != 1 or known_classes != {"public", "internal", "confidential", "restricted"}:
+            result.error("mcp", "Corporate data classification неполна или имеет неверную версию")
+        for data_class in classes.get("classes", []):
+            if data_class.get("logging") not in {"redacted", "metadata-only"}:
+                result.error("mcp", f"Corporate data class {data_class.get('id')}: logging должен быть redacted или metadata-only")
+            if data_class.get("model_access") not in {"approved-only", "local-only", "denied"}:
+                result.error("mcp", f"Corporate data class {data_class.get('id')}: неверный model_access")
+            if data_class.get("id") == "restricted" and data_class.get("model_access") != "denied":
+                result.error("mcp", "Corporate data class restricted: доступ модели должен быть denied")
+        profile_ids: set[str] = set()
+        for profile in profiles.get("profiles", []):
+            profile_id = profile.get("id")
+            modes = profile.get("allowed_modes")
+            invalid_modes = (
+                not isinstance(modes, list)
+                or not modes
+                or any(not isinstance(mode, str) or mode not in {"read", "write", "admin"} for mode in modes)
+            )
+            if profile_id in profile_ids or invalid_modes or (profile_id == "readonly" and modes != ["read"]):
+                result.error("mcp", f"Corporate access profile {profile_id}: некорректные режимы или повторяющийся ID")
+            profile_ids.add(profile_id)
+        if profiles.get("version") != 1 or "readonly" not in profile_ids:
+            result.error("mcp", "Corporate access profile readonly отсутствует или имеет неверную версию")
+        registry_by_id = {entry.get("id"): entry for entry in document.get("servers", [])}
+        seen_capabilities: set[str] = set()
+        for entry in corporate.get("servers", []):
+            identifier = entry.get("id")
+            if identifier not in identifiers:
+                result.error("mcp", f"Corporate MCP {identifier}: отсутствует в registry")
+            endpoint = (registry_by_id.get(identifier, {}).get("installation") or {}).get("endpoint")
+            if endpoint and urlsplit(endpoint).hostname not in (entry.get("boundaries") or {}).get("allowed_hosts", []):
+                result.error("mcp", f"Corporate MCP {identifier}: endpoint host отсутствует в allowed_hosts")
+            if not set(entry.get("data_classes", [])) <= known_classes:
+                result.error("mcp", f"Corporate MCP {identifier}: неизвестный класс данных")
+            capabilities = entry.get("capabilities", [])
+            if (entry.get("boundaries") or {}).get("read_only") and any(
+                capability.get("mode") != "read" for capability in capabilities
+            ):
+                result.error("mcp", f"Corporate MCP {identifier}: read_only несовместим с write/admin capability")
+            for capability in capabilities:
+                name = capability.get("id")
+                if name in seen_capabilities:
+                    result.error("mcp", f"Повторяющаяся corporate capability: {name}")
+                seen_capabilities.add(name)
+                if not set(capability.get("data_classes", [])) <= set(entry.get("data_classes", [])):
+                    result.error("mcp", f"Corporate capability {name}: data class выходит за границы MCP")
+        for entry in corporate.get("servers", []):
+            for capability in entry.get("capabilities", []):
+                for conflict in capability.get("conflicts_with", []):
+                    if conflict not in seen_capabilities:
+                        result.error("mcp", f"Corporate capability {capability.get('id')}: неизвестный конфликт {conflict}")
     if result.ok:
         result.info("mcp", f"MCP registry валиден: {len(identifiers)}")
     return result

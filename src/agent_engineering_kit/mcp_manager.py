@@ -8,11 +8,14 @@ import shutil
 import uuid
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import urlsplit
 
 from .access import resolve_access
 from .catalog import LockedComponent, resolve_desired
 from .component_state import Lifecycle, read_state, write_state
+from .definitions import url_contains_credentials
 from .errors import AgentKitError
+from .io import load_yaml
 from .paths import KitPaths, ensure_runtime
 from .overrides import apply_local_overrides
 from .process import CommandResult, run_command
@@ -21,13 +24,45 @@ from .result import ValidationResult
 from .schema import validate_instance
 
 
+def select_capabilities(
+    capabilities: list[dict[str, Any]],
+    *,
+    tool_budget: int,
+    allowed_modes: set[str] | None = None,
+    client_enforces_capabilities: bool = False,
+) -> list[str]:
+    """Выбрать непересекающиеся возможности в пределах бюджета инструментов."""
+    modes = allowed_modes if allowed_modes is not None else {"read"}
+    selected: list[dict[str, Any]] = []
+    remaining = tool_budget
+    for capability in capabilities:
+        mode = capability["mode"]
+        if mode not in modes or (mode in {"write", "admin"} and not client_enforces_capabilities):
+            continue
+        cost = capability.get("tool_cost", 1)
+        if cost > remaining:
+            continue
+        if any(
+            capability["id"] in previous.get("conflicts_with", [])
+            or previous["id"] in capability.get("conflicts_with", [])
+            for previous in selected
+        ):
+            continue
+        selected.append(capability)
+        remaining -= cost
+    return [capability["id"] for capability in selected]
+
+
 class McpManager:
     def __init__(self, repository: Path, paths: KitPaths, *, runner: Callable[..., CommandResult] = run_command) -> None:
         self.repository = repository
         self.paths = paths
         self.runner = runner
 
-    def available(self, project: LogicalProject | None = None) -> list[dict[str, Any]]:
+    def available(
+        self, project: LogicalProject | None = None, *, access_profile: str = "readonly",
+        client_enforces_capabilities: bool = False,
+    ) -> list[dict[str, Any]]:
         """Вернуть полный каталог MCP с итоговым решением о доступе."""
         resolved = resolve_desired(self.repository, "mcp")
         items = [item for item, _ in resolved]
@@ -42,6 +77,13 @@ class McpManager:
         if not validation.ok:
             errors = "; ".join(item.message for item in validation.diagnostics if item.severity == "ERROR")
             raise AgentKitError(f"Некорректный effective MCP override: {errors}")
+        for item in effective:
+            for url in (
+                item.get("source", {}).get("repository"),
+                item.get("installation", {}).get("endpoint"),
+            ):
+                if isinstance(url, str) and url_contains_credentials(url):
+                    raise AgentKitError(f"MCP {item['id']}: credentials запрещены в URL")
         decisions = resolve_access(set(effective_by_id) | {item["id"] for item in items}, self.paths.overrides, "mcp", project.identifier if project else None)
         available: list[dict[str, Any]] = []
         for catalog_item in items:
@@ -56,6 +98,49 @@ class McpManager:
                     "access_reason": "disabled:override" if disabled_by_override else decision.reason,
                 }
             )
+        corporate_path = self.repository / "catalog" / "corporate" / "mcp.yaml"
+        if not corporate_path.is_file():
+            return available
+        corporate = load_yaml(corporate_path)
+        profiles = load_yaml(self.repository / "catalog" / "corporate" / "access-profiles.yaml")
+        profile = next((entry for entry in profiles["profiles"] if entry["id"] == access_profile), None)
+        if profile is None:
+            raise AgentKitError(f"Неизвестный corporate MCP access profile: {access_profile}")
+        metadata = {entry["id"]: entry for entry in corporate["servers"]}
+        candidates: list[dict[str, Any]] = []
+        for item in available:
+            policy = metadata.get(item["id"])
+            if policy and item["enabled"]:
+                boundary = policy["boundaries"]
+                endpoint = item.get("installation", {}).get("endpoint")
+                host_allowed = not endpoint or urlsplit(endpoint).hostname in boundary["allowed_hosts"]
+                if host_allowed and (boundary["read_only"] or client_enforces_capabilities):
+                    candidates.extend(policy["capabilities"])
+        selected = set(
+            select_capabilities(
+                candidates,
+                tool_budget=corporate["tool_budget"],
+                allowed_modes=set(profile["allowed_modes"]),
+                client_enforces_capabilities=client_enforces_capabilities,
+            )
+        )
+        for item in available:
+            policy = metadata.get(item["id"])
+            if not policy:
+                continue
+            item.update({key: value for key, value in policy.items() if key != "id"})
+            item["enabled_capabilities"] = [
+                capability["id"] for capability in policy["capabilities"] if capability["id"] in selected
+            ]
+            if item["enabled"] and not item["enabled_capabilities"]:
+                item["enabled"] = False
+                endpoint = item.get("installation", {}).get("endpoint")
+                if endpoint and urlsplit(endpoint).hostname not in policy["boundaries"]["allowed_hosts"]:
+                    item["access_reason"] = "corporate:host-not-allowed"
+                elif not policy["boundaries"]["read_only"] and not client_enforces_capabilities:
+                    item["access_reason"] = "corporate:read-only-boundary-unverified"
+                else:
+                    item["access_reason"] = "corporate:no-enabled-capabilities"
         return available
 
     def desired(self, project: LogicalProject | None = None) -> list[tuple[dict[str, Any], LockedComponent]]:
@@ -220,7 +305,12 @@ class McpManager:
                 status = Lifecycle.NOT_INSTALLED.value
             if activation_enabled and state.get("revision") and state.get("revision") != lock.revision:
                 status = Lifecycle.OUTDATED.value
-            values.append({**state, "id": item["id"], "category": item["category"], "enabled": activation_enabled, "access_reason": item["access_reason"], "available": available, "status": status, "desired_revision": lock.revision, "source": item["source"]["repository"]})
+            corporate_metadata = {
+                key: item[key]
+                for key in ("owner", "trust", "data_classes", "auth", "boundaries", "audit", "capabilities", "enabled_capabilities")
+                if key in item
+            }
+            values.append({**state, **corporate_metadata, "id": item["id"], "category": item["category"], "enabled": activation_enabled, "access_reason": item["access_reason"], "available": available, "status": status, "desired_revision": lock.revision, "source": item["source"]["repository"]})
         return values
 
     def doctor(self, project: LogicalProject | None = None) -> ValidationResult:
