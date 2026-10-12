@@ -206,7 +206,8 @@ def init_project(root: Path, repository: Path, paths: KitPaths, *, identifier: s
         "id": project_id,
         "name": root.name,
         "repositories": repositories,
-        "components": _probable_components(root, repositories),
+        "components": [],
+        "discovery": {"enabled": True, "exclude_paths": []},
         "documentation": {"index": "docs/INDEX.md", "roots": ["docs"]},
         "memory": {"namespace": project_id},
         "harness": {
@@ -217,7 +218,7 @@ def init_project(root: Path, repository: Path, paths: KitPaths, *, identifier: s
     schema_result = validate_instance(manifest, repository / "schemas" / "project.schema.json", str(manifest_path))
     if not schema_result.ok:
         raise AgentKitError("Не удалось создать валидный project manifest")
-    atomic_write(manifest_path, yaml.safe_dump(manifest, allow_unicode=True, sort_keys=False))
+    atomic_write(manifest_path, "# Логический проект: компоненты обнаруживаются и сохраняются локально.\n" + yaml.safe_dump(manifest, allow_unicode=True, sort_keys=False))
     docs_index = root / "docs" / "INDEX.md"
     if not docs_index.exists():
         atomic_write(

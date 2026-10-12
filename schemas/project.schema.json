@@ -20,7 +20,9 @@
         "properties": {
           "id": { "$ref": "#/$defs/id" },
           "repository": { "$ref": "#/$defs/id" },
-          "path": { "$ref": "#/$defs/relativePath" }
+          "path": { "$ref": "#/$defs/relativePath" },
+          "owner": { "type": "string", "minLength": 1 },
+          "criticality": { "enum": ["low", "medium", "high", "critical"] }
         }
       }
     },
@@ -34,6 +36,13 @@
     "memory": {
       "type": "object", "required": ["namespace"], "additionalProperties": false,
       "properties": { "namespace": { "$ref": "#/$defs/id" } }
+    },
+    "discovery": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "exclude_paths": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/relativePath" } }
+      }
     },
     "harness": {
       "type": "object", "required": ["preferred_client", "required_capabilities"], "additionalProperties": false,
@@ -51,7 +60,12 @@
     "relativePath": { "type": "string", "minLength": 1, "not": { "pattern": "^(?:/|[A-Za-z]:[\\\\/]|\\.\\.(?:[\\\\/]|$))" } },
     "pathEntry": {
       "type": "object", "required": ["id", "path"], "additionalProperties": false,
-      "properties": { "id": { "$ref": "#/$defs/id" }, "path": { "$ref": "#/$defs/relativePath" } }
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "path": { "$ref": "#/$defs/relativePath" },
+        "required": { "type": "boolean" },
+        "remote": { "type": "string", "minLength": 1, "not": { "pattern": "://[^/]*@" } }
+      }
     }
   }
 }

@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 from typing import Literal
 
+from .bindings import attach_project, bind_repository, load_attached_project, project_readiness, reconcile_project
 from .doctor import doctor
 from .errors import AgentKitError
 from .explain import explain
@@ -21,7 +22,7 @@ from .override_service import (
     set_component_access,
 )
 from .paths import KitPaths, resolve_paths
-from .projects import LogicalProject, detect_project, find_project, init_project, register_memory, validate_project
+from .projects import LogicalProject, detect_project, find_project, init_project
 from .resync import ResyncReport, resync
 from .security_tools import SecurityToolManager
 from .sync import record_sync, update_repository
@@ -98,6 +99,16 @@ def _parser() -> argparse.ArgumentParser:
     for name in ("detect", "status"):
         command = project.add_parser(name)
         command.add_argument("path", nargs="?", default=".")
+    project_attach = project.add_parser("attach", help="Создать machine-local descriptor без изменения repository")
+    project_attach.add_argument("path")
+    project_attach.add_argument("--id", dest="identifier")
+    project_bind = project.add_parser("bind", help="Связать объявленный repository ID с локальным путём")
+    project_bind.add_argument("project")
+    project_bind.add_argument("repository_id")
+    project_bind.add_argument("path")
+    project_reconcile = project.add_parser("reconcile", help="Показать structural diff inventory")
+    project_reconcile.add_argument("project")
+    project_reconcile.add_argument("--apply", action="store_true", help="Сохранить inventory в machine-local state")
 
     config = subs.add_parser("config").add_subparsers(dest="config_command", required=True)
     config_explain = config.add_parser("explain")
@@ -115,6 +126,15 @@ def _render_result(result) -> int:
 def _print_rows(rows: list[dict]) -> None:
     for row in rows:
         print(f"{row['id']}: {row.get('status', 'UNKNOWN')} ({row.get('source', row.get('category', 'managed'))})")
+
+
+def _project_reference(value: str, paths: KitPaths) -> LogicalProject:
+    project = find_project(Path(value))
+    if project is None:
+        project = load_attached_project(value, paths)
+    if project is None:
+        raise AgentKitError(f"Logical project не найден: {value}")
+    return project
 
 
 def _print_resync_report(report: ResyncReport) -> None:
@@ -263,14 +283,24 @@ def run(argv: list[str] | None = None) -> int:
             print(json.dumps(detect_project(Path(args.path)), ensure_ascii=False, indent=2))
             return 0
         if args.command == "project" and args.project_command == "status":
-            project = find_project(Path(args.path))
-            if not project:
-                raise AgentKitError("Logical project не найден: ожидается .ai-team/project.yaml")
-            result = validate_project(project, repository)
-            if result.ok:
-                result.info("projects", f"Project root: {project.root}")
-                result.info("projects", f"Local memory: {register_memory(project, paths)}")
-            return _render_result(result)
+            project = _project_reference(args.path, paths)
+            status = project_readiness(project, paths)
+            print(json.dumps({"project_id": project.identifier, **status}, ensure_ascii=False, indent=2))
+            return 1 if status["status"] in {"BLOCKED", "MISMATCHED"} else 0
+        if args.command == "project" and args.project_command == "attach":
+            project = attach_project(Path(args.path), repository, paths, identifier=args.identifier)
+            print(f"Logical project подключён: {project.identifier}\nDescriptor: {project.manifest_path}")
+            return 0
+        if args.command == "project" and args.project_command == "bind":
+            project = _project_reference(args.project, paths)
+            binding = bind_repository(project, paths, args.repository_id, Path(args.path))
+            print(f"Repository binding: {binding}")
+            return 0
+        if args.command == "project" and args.project_command == "reconcile":
+            project = _project_reference(args.project, paths)
+            preview = reconcile_project(project, paths, apply=args.apply)
+            print(json.dumps(preview, ensure_ascii=False, indent=2))
+            return 1 if preview["status"] in {"BLOCKED", "MISMATCHED"} else 0
         if args.command == "config" and args.config_command == "explain":
             print(explain(repository, paths, Path(args.path)), end="")
             return 0

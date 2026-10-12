@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -237,3 +238,40 @@ def test_reset_without_changes_does_not_run_resync(
 
     assert run(["mcp", "reset", "context7", "--scope", "global", "--resync"]) == 0
     assert calls == []
+
+
+def test_project_attach_status_and_reconcile_preview(
+    isolated_data: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    root = isolated_data / "external"
+    root.mkdir()
+    (root / "pyproject.toml").write_text('[project]\nname = "external-app"\n', encoding="utf-8")
+    assert run(["project", "attach", str(root), "--id", "external-project"]) == 0
+    assert not (root / ".ai-team").exists()
+    capsys.readouterr()
+    assert run(["project", "status", "external-project"]) == 0
+    assert "READY" in capsys.readouterr().out
+    assert run(["project", "reconcile", "external-project"]) == 0
+    preview = json.loads(capsys.readouterr().out)
+    assert preview["diff"]["added"][0]["id"] == "python:external-app"
+    inventory = isolated_data / "projects/external-project/state/component-inventory.json"
+    assert not inventory.exists()
+    assert run(["project", "reconcile", "external-project", "--apply"]) == 0
+    assert inventory.exists()
+
+
+def test_project_bind_declared_repo_only(
+    isolated_data: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    root = isolated_data / "existing"
+    root.mkdir()
+    extra = isolated_data / "extra"
+    extra.mkdir()
+    assert run(["project", "attach", str(root), "--id", "existing-project"]) == 0
+    capsys.readouterr()
+    assert run(["project", "bind", "existing-project", "unknown", str(extra)]) == 1
+    assert "не объявлен" in capsys.readouterr().err
+    assert run(["project", "bind", "existing-project", "root", str(root)]) == 0
+    assert (isolated_data / "projects/existing-project/bindings.yaml").exists()

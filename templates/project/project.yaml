@@ -6,7 +6,13 @@ repositories:
   # В single-repo проекте корневой repository обозначается относительным путём '.'.
   - id: root
     path: .
+    required: true
+# Обнаруженные компоненты живут в локальном state; здесь задаются только уточнения.
 components: []
+# Исключения для автоматического обнаружения; пути остаются относительными.
+discovery:
+  enabled: true
+  exclude_paths: []
 documentation:
   # INDEX.md остаётся канонической картой durable documentation проекта.
   index: docs/INDEX.md
