@@ -8,7 +8,7 @@
 одна машина → один agent-engineering-kit → несколько логических проектов
 ```
 
-Набор является управляющим слоем. Он не хранит память проектов, учётные данные, сеансы, базы MCP или пользовательские настройки.
+Набор является управляющим слоем. Git-репозиторий Kit не хранит память проектов, учётные данные, сеансы, базы MCP или пользовательские настройки: локальное состояние размещается в каталоге данных машины и отделено от версионируемых определений.
 
 ## Связь с agent harness
 
@@ -16,7 +16,28 @@
 
 `catalog/clients.yaml` содержит проверяемый capability contract каждого адаптера. В нём отдельно перечислены возможности, которыми управляет Kit, и возможности, делегированные клиенту. `agent-kit config explain` показывает выбранный harness, а `resync` записывает контракт и хеш эффективной политики в локальный `effective-environment.json`.
 
-Будущий orchestrator для очередей задач, изолированных worktree, повторных запусков и Pull Request должен оставаться отдельным необязательным слоем над Kit и клиентским harness.
+Kit уже формирует контракты запусков, task workspace, leases и планы managed worktree. Само выполнение задач, очереди, повторные запуски и создание Pull Request остаются обязанностью внешнего harness или отдельного необязательного orchestrator.
+
+## Карта репозитория
+
+| Путь | Назначение и связи | Как переиспользовать |
+|---|---|---|
+| `agents/` | Переносимые определения ролей; ссылаются на rules, skills и модельные требования. | Выбрать роль через профиль или подключить к адаптеру клиента. |
+| `rules/` | Общие инженерные, Git-, security- и data-handling правила. | Подключать как канонический слой, не копируя в продуктовый репозиторий. |
+| `conventions/` | Необходимые соглашения о структуре, документации и рабочем процессе. | Дополнять проектными YAML из `.ai-team/project.yaml`; существующие ID не переопределяются. |
+| `profiles/` | Профили разработчика, тестировщика и рецензента с ролями и разрешениями. | Компилировать в capability contract выбранного harness. |
+| `skills/first-party/` | Skills самого Kit; сторонние skills здесь не vendoring-ятся. | Подключать через общий каталог discovery клиента. |
+| `mcp/` | Желаемое состояние MCP и инструкция по эксплуатации. | Устанавливать и регистрировать через `resync`; доступ определяет capability policy. |
+| `catalog/` | Каталоги клиентов, внешних skills, корпоративных MCP и классов данных. | Расширять декларативно с обязательной схемой, владельцем и trust metadata. |
+| `locks/` | Точные проверенные версии и ревизии внешних компонентов. | Обновлять только после проверки кандидата; использовать для воспроизводимой установки и отката. |
+| `schemas/` | JSON Schema всех переносимых и локальных контрактов. | Проверять новые manifest и generated state до активации. |
+| `clients/` | Документация и тонкие адаптеры поддерживаемых harness. | Добавлять новый клиент через capability contract и conformance tests. |
+| `src/agent_engineering_kit/` | Capability kernel, CLI, discovery, policy, run/task contracts и materialization. | Использовать публичные функции из модулей либо CLI `agent-kit`. |
+| `templates/` | Начальные файлы logical project и overrides. | Создавать через команды Kit, затем уточнять только проектный слой. |
+| `evals/` | Golden tasks и сравнительные проверки экспериментальных оптимизаций контекста. | Запускать до включения JEV или другого context optimizer. |
+| `docs/` | ADR, согласованные дизайны, планы и канонический индекс знаний. | Начинать чтение с `docs/INDEX.md`; новые решения фиксировать отдельным ADR. |
+| `tests/` | Контрактные, негативные и регрессионные проверки. | Использовать как исполняемую спецификацию CLI и форматов. |
+| `bootstrap/` | Первичная установка команды и локальной структуры данных. | Запускать один раз на машине; повторный desired state поддерживает `resync`. |
 
 ## Основные принципы
 
@@ -89,7 +110,7 @@ agent-kit doctor
 
 ## MCP из коробки
 
-Обязательное ядро:
+Каталог из коробки:
 
 - `codebase-memory` — граф кода, архитектура, связи вызовов и анализ влияния;
 - `serena` — поиск символов и ссылок, семантическое редактирование и рефакторинг;
@@ -103,7 +124,7 @@ agent-kit doctor
 - `playwright` — включается для веб-проектов;
 - `atlassian` — включается при настроенных Jira или Confluence.
 
-CBM и Serena дополняют друг друга: сначала CBM определяет область влияния, затем Serena уточняет конкретные символы и ссылки. Условные MCP не загружаются без соответствующего признака проекта.
+CBM и Serena дополняют друг друга: сначала CBM определяет область влияния, затем Serena уточняет конкретные символы и ссылки. Однако нативная регистрация выполняется только тогда, когда штатный client способен применить весь выбранный capability contract. В профиле `readonly` mixed read/write серверы (`codebase-memory`, `serena`, SCM, Playwright и Atlassian) не регистрируются целиком под видом read-only. `planned_capabilities` показывают план, а `enabled_capabilities` — только реально применённый полный surface. Локальный пользователь может выбрать более свободный профиль через override, принимая соответствующий риск.
 
 Проверить состояние:
 
@@ -117,6 +138,7 @@ agent-kit mcp explain <id>
 
 Собственные skills:
 
+- `greeting` — возвращает нейтральное приветствие и служит базой для примера локального override;
 - `project-bootstrap` — создаёт манифест логического проекта и внешнюю память;
 - `project-orientation` — определяет проект, репозитории, компоненты и документацию;
 - `docs-index` — поддерживает `docs/INDEX.md`;
@@ -153,20 +175,24 @@ agent-kit skills explain <id>
 
 ## Как работать с проектом
 
-### 1. Подготовить логический проект
+### 1. При необходимости подключить logical project
 
 Выполни команду из корня рабочего пространства:
 
 ```bash
 agent-kit project init . --id my-project
+# Если менять repository нельзя:
+agent-kit project attach /workspace/my-project --id my-project
 ```
 
-Команда найдёт Git-репозитории и вероятные компоненты, создаст `.ai-team/project.yaml`, при необходимости добавит `docs/INDEX.md` и подготовит изолированную память вне проекта.
+Project manifest необязателен для общих настроек Kit. `project init` создаёт версионируемый `.ai-team/project.yaml`; `project attach` создаёт descriptor только в локальных данных машины и не меняет исходный repository. Компоненты Maven, Gradle, Node.js, Go, Cargo, .NET, Python и Bazel обнаруживаются автоматически. Поле `components` нужно только для ownership, criticality и дополнительных логических границ.
 
 Проверь результат:
 
 ```bash
 agent-kit project status .
+agent-kit project reconcile .
+agent-kit project reconcile . --apply
 agent-kit config explain .
 ```
 
@@ -179,7 +205,19 @@ agent-kit doctor
 
 После этого открой `docs/INDEX.md`, выбери нужную роль агента и используй только MCP и skills, относящиеся к задаче. Ревизию набора не следует менять до окончания текущей задачи.
 
-### 3. Выполнить изменение
+### 3. Подготовить воспроизводимый запуск
+
+```bash
+agent-kit run prepare . --profile developer --verify pytest
+agent-kit task create my-project TASK-123 --write 'services/orders/**'
+agent-kit task lease my-project TASK-123
+agent-kit task worktree-plan my-project TASK-123 \
+  --branch-prefix feat/13-10-2026-orders
+```
+
+`run prepare` сохраняет request manifest с ревизиями, effective policy, conventions, ролями, skills, MCP и разрешениями. `task create` фиксирует revision vector всех репозиториев и declared write set. Команды ничего не меняют в primary checkout; worktree создаётся только явной командой `task worktree-create`.
+
+### 4. Выполнить изменение
 
 1. Создай ветку `<type>/dd-MM-yyyy-<description>`.
 2. Определи затронутые репозитории и компоненты через `.ai-team/project.yaml`.
@@ -187,20 +225,49 @@ agent-kit doctor
 4. Добавь или обнови тесты.
 5. Если изменился контракт или архитектура, обнови документацию проекта.
 
-### 4. Проверить результат
+### 5. Проверить и зафиксировать результат
 
 ```bash
 pytest
 agent-kit validate
 agent-kit validate --ci
 agent-kit doctor
+agent-kit run record-result <run-id> --project-id my-project --status passed \
+  --verification-json '[{"id":"pytest","status":"passed"}]'
 ```
 
 Перед коммитом убедись, что в подготовленных изменениях нет секретов, локальных моделей, переопределений или сгенерированного состояния среды выполнения.
 
-### 5. Завершить работу
+### 6. Завершить работу
+
+После интеграции коммитов явно заверши task workspace. Lease освобождается только после этого, а локальное состояние удаляется только при отсутствии активного lease и существующих managed worktree:
+
+```bash
+agent-kit task complete my-project TASK-123
+agent-kit task release my-project TASK-123
+# Сначала безопасно удали созданные Git worktree штатной командой git worktree remove.
+agent-kit task gc my-project TASK-123
+```
+
+`task gc` откажется удалять каталог с неизвестными файлами. Если задача ещё выполняется, имеет активный lease или её managed worktree существует, очистка также будет заблокирована.
 
 Используй коммит формата `<type>(<scope>): <description>`, обнови `app.version` и создай Pull Request. Прямая отправка изменений в `main` запрещена.
+
+## Параллельный вайбкодинг несколькими разработчиками
+
+Локальные leases защищают только одну машину. Между разными ПК источником координации остаётся Git: отдельные remote branches, Pull Request, CI и merge queue. Kit делает конфликт видимым раньше, но не создаёт распределённую блокировку без общего сервиса.
+
+Рекомендуемый процесс:
+
+1. Каждый разработчик обновляет базовую ветку и создаёт собственную ветку по соглашению `<type>/dd-MM-yyyy-<description>`.
+2. Для задачи фиксируется `task workspace`: project ID, task ID, revision vector репозиториев и write set. Эти данные можно приложить к задаче или PR, не включая локальные абсолютные пути.
+3. На каждом ПК используется отдельный worktree. Один writable lane владеет одним worktree; два агента не редактируют один checkout одновременно.
+4. Пересекающиеся write sets требуют сериализации или явного разделения файлов. Непересекающиеся сервисы и модули можно вести параллельно.
+5. Изменения передаются только коммитами и remote branch. Worktree между компьютерами не синхронизируются и не копируются.
+6. Перед merge разработчик обновляет ветку от актуального `main`, повторно запускает discovery, тесты и `agent-kit validate --ci`. Merge queue последовательно применяет прошедшие CI изменения.
+7. Горячие документы (`README.md`, `docs/INDEX.md`, общие ADR-списки) имеют одного integration owner. Остальные участники создают уникальные change fragments или отдельные ADR; integrator выполняет одну детерминированную сборку.
+
+Если нужного репозитория на ПК нет, `project status` возвращает `BLOCKED` для обязательного и `DEGRADED` для необязательного binding. Агент не должен молча исключать обязательный репозиторий из impact analysis. После клонирования используется `project bind`, затем `project reconcile`.
 
 ## Адаптеры клиентов
 
@@ -263,11 +330,32 @@ agent-kit security validate
 Переопределения находятся вне репозитория:
 
 ```text
-<data>/overrides/global/{rules,skills,agents,mcp}/
-<data>/overrides/projects/<project-id>/{rules,skills,agents,mcp}/
+<data>/overrides/global/{rules,skills,agents,mcp,policy}/
+<data>/overrides/projects/<project-id>/{rules,skills,agents,mcp,policy}/
 ```
 
-Приоритет: исходный поставщик < набор < закоммиченная конфигурация проекта < глобальная конфигурация пользователя < конфигурация пользователя для проекта. Поддерживаются режимы `extend`, `replace` и `disable`. Владелец машины может локально изменить или отключить любой skill и MCP, включая базовые элементы `required`, `locked` и `enforced`. Эти изменения не модифицируют корпоративную основу в Git: `agent-kit validate --ci` проверяет её без локальных входов.
+Приоритет: исходный поставщик < набор < закоммиченная конфигурация проекта < глобальная конфигурация пользователя < конфигурация пользователя для проекта. Для компонентных overrides поддерживаются режимы `extend`, `replace` и `disable`; параметры policy задаются целиком через `replace`. Владелец машины может локально изменить или отключить любой skill и MCP, включая базовые элементы `required`, `locked` и `enforced`. Эти изменения не модифицируют корпоративную основу в Git: `agent-kit validate --ci` проверяет её без локальных входов.
+
+Общий интерфейс охватывает роли, rules, модели, skills, MCP, approvals, sandbox, сеть, tools и harness:
+
+```bash
+agent-kit override list --scope global
+agent-kit override set approvals profile --mode replace \
+  --from approval.local.yaml --reason 'Изолированная локальная среда' --scope global
+agent-kit override explain approvals profile --scope global
+agent-kit override reset approvals profile --scope global
+```
+
+Чтобы осознанно разрешить полный смешанный MCP surface на локальной машине, выбери более свободный профиль; причина попадёт в provenance:
+
+```bash
+printf 'value: administrator\n' > mcp-profile.local.yaml
+agent-kit override set mcp access-profile --mode replace \
+  --from mcp-profile.local.yaml --reason 'Локальная изолированная среда' --scope global
+agent-kit mcp available
+```
+
+Локальный YAML не добавляется в Git. Бюджет инструментов и конфликты capabilities продолжают действовать; ненужные MCP можно отключить отдельным override, чтобы освободить бюджет для нужного сервера.
 
 ## Логические проекты и память
 
@@ -298,6 +386,10 @@ agent-kit skills rollback <id>
 ## OpenCodeReview
 
 Поддержка [Alibaba OpenCodeReview](https://github.com/alibaba/open-code-review) оценена, но пока не включена из коробки. Основной интерфейс `ocr` — CLI, при этом дорожная карта проекта также заявляет MCP-сервер; его фактический контракт и версия требуют отдельной проверки. Функции OpenCodeReview частично пересекаются со встроенным skill `code-review`. Безопасный вариант пилота — закрепить точную версию как внешнюю зависимость, проверить её тем же конвейером безопасности и начать с режима делегирования без отдельного ключа модели. Подробное решение и критерии включения описаны в [ADR 0011](docs/adr/0011-open-code-review-integration.md).
+
+## JEV и оптимизация контекста
+
+JEV описан как экспериментальная capability и по умолчанию выключен. Включение разрешено только локальным opt-in после сравнительного прогона golden tasks из `evals/`: качество не должно ухудшаться, экономия токенов измеряется отдельно, а ошибка оптимизатора обязана приводить к безопасному fail-through без потери исходного контекста. Kit не делает JEV обязательным для клиента и не предполагает, что каждый harness поддерживает его нативно.
 
 ## Диагностика
 

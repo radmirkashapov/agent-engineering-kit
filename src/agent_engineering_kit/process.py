@@ -1,4 +1,4 @@
-"""Запуск subprocess без shell interpolation и утечки environment."""
+"""Запуск дочерних процессов без подстановки командной оболочки и утечки окружения."""
 
 from __future__ import annotations
 

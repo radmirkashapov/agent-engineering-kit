@@ -130,3 +130,14 @@ def test_python_310_toml_fallback_reads_workspace_metadata(tmp_path: Path, monke
     rows = discover_components({"root": tmp_path})
     app = next(row for row in rows if row["id"] == "python:app")
     assert app["dependencies"] == ["python:core"]
+
+
+def test_nested_repository_is_not_scanned_through_parent_binding(tmp_path: Path) -> None:
+    backend = tmp_path / "backend"
+    _write(backend, "pyproject.toml", '[project]\nname = "backend"\n')
+
+    rows = discover_components({"root": tmp_path, "backend": backend})
+
+    assert [(row["id"], row["repository"], row["path"]) for row in rows] == [
+        ("python:backend/backend", "backend", ".")
+    ]

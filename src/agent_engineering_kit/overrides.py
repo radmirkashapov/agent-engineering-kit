@@ -1,4 +1,4 @@
-"""Validation локальных overlays с явными режимами conflict resolution."""
+"""Проверка локальных наложений с явными режимами разрешения конфликтов."""
 
 from __future__ import annotations
 
@@ -14,10 +14,7 @@ from .schema import validate_instance
 
 KINDS = ("skills", "agents", "mcp", "rules")
 MODES = {"extend", "replace", "disable"}
-PROTECTED_FIELDS = {
-    "rules": frozenset({"id", "policy", "content"}),
-    "agents": frozenset({"id", "role", "policy", "model", "requires", "tools", "content"}),
-}
+PROTECTED_FIELDS: dict[str, frozenset[str]] = {}
 
 
 def _deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
@@ -38,7 +35,7 @@ def apply_local_overrides(
     *,
     enforced: set[str] | None = None,
 ) -> list[dict[str, Any]]:
-    """Применить overlays; skills/MCP свободны, обязательные rules/agents защищены."""
+    """Применить локальные overlays; неизменяемые инварианты проверяются policy kernel."""
     effective = {item["id"]: dict(item) for item in items}
     roots = [override_root / "global"]
     if project_id:

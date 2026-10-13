@@ -1,4 +1,4 @@
-"""Effective policy classification and provenance."""
+"""Классификация итоговой политики и происхождение её значений."""
 
 from __future__ import annotations
 
@@ -17,6 +17,13 @@ from .schema import validate_instance
 
 
 CLASSIFICATIONS = {"preference", "restriction", "invariant"}
+_ENUM_DOMAINS = {
+    "client.preferred": {"auto", "codex", "claude-code", "claude-desktop", "opencode", "cline"},
+    "approvals.profile": {"readonly", "autonomous", "custom"},
+    "sandbox.mode": {"client-native", "read-only", "workspace-write", "unrestricted"},
+    "network.mode": {"deny", "allowlist", "unrestricted"},
+    "mcp.access_profile": {"readonly", "editor", "administrator"},
+}
 TECHNICAL_INVARIANTS = (
     {"key": "secrets.in_git", "value": False, "classification": "invariant"},
     {"key": "conventions.override", "value": False, "classification": "invariant"},
@@ -40,6 +47,17 @@ class PolicyResolution:
         }
 
 
+def _validate_policy_value(key: str, value: Any) -> None:
+    if key in _ENUM_DOMAINS and value not in _ENUM_DOMAINS[key]:
+        raise AgentKitError(f"Недопустимое значение политики {key}: {value!r}")
+    if key in {"models.allowed", "tools.allowed"} and (
+        not isinstance(value, list) or not all(isinstance(item, str) and item for item in value)
+    ):
+        raise AgentKitError(f"Значение политики {key} должно быть массивом непустых строк")
+    if key in {"secrets.in_git", "conventions.override", "policy.invariants_override"} and not isinstance(value, bool):
+        raise AgentKitError(f"Значение политики {key} должно быть логическим")
+
+
 def resolve_policy(
     layers: list[dict[str, Any]],
     overrides: list[dict[str, Any]] | None = None,
@@ -54,6 +72,7 @@ def resolve_policy(
             key = entry["key"]
             classification = entry["classification"]
             value = entry["value"]
+            _validate_policy_value(key, value)
             if classification not in CLASSIFICATIONS:
                 raise AgentKitError(f"Неизвестный класс политики {classification!r}: {key}")
             previous = result.classifications.get(key)
@@ -84,6 +103,7 @@ def resolve_policy(
         if classification == "invariant":
             raise AgentKitError(f"Нельзя переопределить инвариант политики: {key}")
         value = override["value"]
+        _validate_policy_value(key, value)
         decision = "override-restriction" if classification == "restriction" and value != result.values[key] else "override-preference"
         if decision == "override-restriction":
             result.warnings.append(f"Локальное переопределение restriction {key}: {reason}")
@@ -102,6 +122,7 @@ def resolve_policy(
             classification = entry["classification"]
             if classification != "invariant":
                 raise AgentKitError(f"Финальный слой допускает только инварианты: {key}")
+            _validate_policy_value(key, entry["value"])
             result.values[key] = entry["value"]
             result.classifications[key] = classification
             result.provenance.setdefault(key, []).append({
@@ -136,10 +157,17 @@ def load_policy_overrides(repository: Path, paths: KitPaths, project_id: str | N
 
 
 def effective_policy(repository: Path, paths: KitPaths, project: LogicalProject | None = None, *, include_local: bool = True) -> PolicyResolution:
-    """Build the initial capability policy from available committed inputs."""
+    """Собрать исходную политику возможностей из доступных версионируемых данных."""
     layers: list[dict[str, Any]] = [{
         "source": "kit",
-        "entries": [{"key": "client.preferred", "value": "auto", "classification": "preference"}],
+        "entries": [
+            {"key": "client.preferred", "value": "auto", "classification": "preference"},
+            {"key": "approvals.profile", "value": "readonly", "classification": "restriction"},
+            {"key": "sandbox.mode", "value": "client-native", "classification": "restriction"},
+            {"key": "network.mode", "value": "deny", "classification": "restriction"},
+            {"key": "tools.allowed", "value": ["read", "search"], "classification": "restriction"},
+            {"key": "mcp.access_profile", "value": "readonly", "classification": "restriction"},
+        ],
     }]
     corporate = load_yaml(repository / "models" / "corporate.yaml")
     allowed = [item["id"] for item in corporate.get("models", [])]

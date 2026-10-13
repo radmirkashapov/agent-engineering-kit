@@ -1,4 +1,4 @@
-"""Thin adapters: generation идёт только в local runtime."""
+"""Тонкие клиентские адаптеры, создаваемые только в локальной среде."""
 
 from __future__ import annotations
 
@@ -57,7 +57,13 @@ def validate_clients(repository: Path) -> ValidationResult:
     return result
 
 
-def sync_clients(repository: Path, paths: KitPaths, *, project_id: str | None = None) -> list[Path]:
+def sync_clients(
+    repository: Path,
+    paths: KitPaths,
+    *,
+    project_id: str | None = None,
+    capability_policy: dict | None = None,
+) -> list[Path]:
     ensure_runtime(paths)
     generated: list[Path] = []
     skill_manager = ExternalSkillManager(repository, paths, project_id=project_id)
@@ -112,7 +118,16 @@ def sync_clients(repository: Path, paths: KitPaths, *, project_id: str | None = 
     effective_policy = paths.installations / "clients" / "shared" / "effective-policy.json"
     atomic_write(
         effective_policy,
-        json.dumps({"version": 1, "agents": effective_agents, "rules": effective_rules}, ensure_ascii=False, indent=2) + "\n",
+        json.dumps(
+            {
+                "version": 2,
+                "agents": effective_agents,
+                "rules": effective_rules,
+                "capability_policy": capability_policy or {"values": {}, "provenance": {}, "warnings": []},
+            },
+            ensure_ascii=False,
+            indent=2,
+        ) + "\n",
     )
 
     for client in CLIENTS:
@@ -127,7 +142,7 @@ def sync_clients(repository: Path, paths: KitPaths, *, project_id: str | None = 
             f"mcp_registry: {repository / 'mcp' / 'registry.yaml'}\n"
         )
         atomic_write(target, content)
-        # Compatibility location для прежнего `agent-kit sync`; canonical state остаётся в installations/.
+        # Путь совместимости для прежнего `agent-kit sync`; каноническое состояние остаётся в installations/.
         atomic_write(paths.runtime / "clients" / client / "adapter.yaml", content)
         generated.append(target)
     return generated
@@ -232,13 +247,27 @@ def expose_native_instructions(repository: Path, paths: KitPaths, *, home: Path 
     return generated
 
 
-def register_native_mcp(repository: Path, paths: KitPaths, *, project=None, runner=run_command) -> Path:
+def register_native_mcp(
+    repository: Path,
+    paths: KitPaths,
+    *,
+    project=None,
+    access_profile: str = "readonly",
+    runner=run_command,
+) -> Path:
     """Добавить namespaced core MCP, не изменяя чужие client entries."""
     from .mcp_manager import McpManager
 
     manager = McpManager(repository, paths, runner=runner)
-    available = {item["id"]: item for item in manager.available(project)}
-    desired = {item["id"]: item for item, _ in manager.desired(project) if manager.is_enabled(item, project)}
+    available = {
+        item["id"]: item
+        for item in manager.available(project, access_profile=access_profile)
+    }
+    desired = {
+        item["id"]: item
+        for item, _ in manager.desired(project, access_profile=access_profile)
+        if manager.is_enabled(item, project)
+    }
     target = paths.state / "client-mcp-registrations.json"
     previous_rows: list[dict] = []
     if target.is_file():
@@ -287,8 +316,8 @@ def register_native_mcp(repository: Path, paths: KitPaths, *, project=None, runn
             rows.append({"client": client, "mcp": identifier, "status": status, "changed": True, "desired_verified": True, "reason": reason})
         for identifier, item in desired.items():
             name = f"agent-kit-{identifier}"
-            # Некоторые clients запускают stdio-server во время probe. Изолируем
-            # побочные runtime-файлы от logical project и самого kit repository.
+            # Некоторые клиенты запускают stdio-сервер во время проверки. Изолируем
+            # его временные файлы от логического проекта и репозитория Kit.
             probe = runner(
                 [executable, "mcp", "get", name, "--json"] if client == "codex" else [executable, "mcp", "get", name],
                 cwd=paths.state,

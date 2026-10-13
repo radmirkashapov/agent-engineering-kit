@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -240,6 +241,64 @@ def test_reset_without_changes_does_not_run_resync(
     assert calls == []
 
 
+def test_generic_override_requires_reason_and_explicit_scope() -> None:
+    with pytest.raises(SystemExit):
+        _parser().parse_args([
+            "override", "set", "approvals", "profile", "--mode", "replace", "--from", "value.yaml", "--scope", "global"
+        ])
+
+
+def test_generic_override_cli_round_trip(
+    isolated_data: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    source = isolated_data / "approval.yaml"
+    source.write_text("# Локальный профиль подтверждений.\nvalue: autonomous\n", encoding="utf-8")
+
+    assert run([
+        "override", "set", "approvals", "profile",
+        "--mode", "replace", "--from", str(source),
+        "--reason", "Use isolated local execution", "--scope", "global",
+    ]) == 0
+    target = isolated_data / "overrides/global/policy/approvals-profile.yaml"
+    assert target.is_file()
+    capsys.readouterr()
+
+    assert run(["override", "list", "--scope", "global"]) == 0
+    assert "approvals.profile" in capsys.readouterr().out
+
+    assert run(["override", "reset", "approvals", "profile", "--scope", "global"]) == 0
+    assert not target.exists()
+
+
+def test_local_mcp_access_profile_enables_complete_server_surface(
+    isolated_data: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    source = isolated_data / "mcp-profile.yaml"
+    source.write_text("# Локальный профиль MCP.\nvalue: administrator\n", encoding="utf-8")
+
+    assert run([
+        "override", "set", "mcp", "access-profile",
+        "--mode", "replace", "--from", str(source),
+        "--reason", "Use complete local MCP tools", "--scope", "global",
+    ]) == 0
+    capsys.readouterr()
+    assert run(["override", "explain", "mcp", "access-profile", "--scope", "global"]) == 0
+    assert "mcp.access_profile" in capsys.readouterr().out
+
+    assert run(["mcp", "available"]) == 0
+    rows = {row["id"]: row for row in json.loads(capsys.readouterr().out)}
+    assert rows["codebase-memory"]["enabled"] is True
+    assert rows["serena"]["enabled"] is True
+
+
+def test_config_explain_supports_json(isolated_data: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    assert run(["config", "explain", "--format", "json"]) == 0
+    document = __import__("json").loads(capsys.readouterr().out)
+    assert "policy" in document
+
+
 def test_project_attach_status_and_reconcile_preview(
     isolated_data: Path,
     capsys: pytest.CaptureFixture[str],
@@ -275,3 +334,115 @@ def test_project_bind_declared_repo_only(
     assert "не объявлен" in capsys.readouterr().err
     assert run(["project", "bind", "existing-project", "root", str(root)]) == 0
     assert (isolated_data / "projects/existing-project/bindings.yaml").exists()
+
+
+def test_project_id_resolution_does_not_fall_back_to_ambient_manifest(
+    isolated_data: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    external = isolated_data / "external"
+    external.mkdir()
+    assert run(["project", "attach", str(external), "--id", "external-project"]) == 0
+    capsys.readouterr()
+    ambient = isolated_data / "ambient"
+    assert run(["project", "init", str(ambient), "--id", "ambient-project"]) == 0
+    capsys.readouterr()
+    monkeypatch.chdir(ambient)
+
+    assert run(["project", "status", "external-project"]) == 0
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["project_id"] == "external-project"
+
+
+def test_project_status_rejects_invalid_manifest(
+    isolated_data: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    root = isolated_data / "invalid-project"
+    assert run(["project", "init", str(root), "--id", "invalid-project"]) == 0
+    capsys.readouterr()
+    manifest = root / ".ai-team/project.yaml"
+    document = load_yaml(manifest)
+    document["memory"]["namespace"] = "different-project"
+    manifest.write_text(__import__("yaml").safe_dump(document, allow_unicode=True), encoding="utf-8")
+
+    assert run(["project", "status", str(root)]) == 1
+
+    assert "memory.namespace" in capsys.readouterr().err
+
+
+def test_run_cli_prepares_request_and_records_result(
+    isolated_data: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    root = isolated_data / "run-project"
+    assert run(["project", "init", str(root), "--id", "run-project"]) == 0
+    capsys.readouterr()
+
+    assert run([
+        "run", "prepare", str(root), "--run-id", "cli-run", "--profile", "developer",
+        "--verify", "pytest",
+    ]) == 0
+    request_path = Path(capsys.readouterr().out.strip())
+    request = json.loads(request_path.read_text(encoding="utf-8"))
+    assert request["project_id"] == "run-project"
+    assert request["permissions"]["profile"] == "developer"
+    assert request["verification_steps"] == ["pytest"]
+
+    assert run([
+        "run", "record-result", "cli-run", "--project-id", "run-project",
+        "--status", "passed", "--details-json", '{"summary":"ok"}',
+    ]) == 0
+    result_path = Path(capsys.readouterr().out.strip())
+    assert json.loads(result_path.read_text(encoding="utf-8"))["status"] == "passed"
+
+    assert run(["run", "events", "cli-run", "--project-id", "run-project"]) == 0
+    assert json.loads(capsys.readouterr().out) == []
+
+    assert run(["run", "events", "../escape", "--project-id", "run-project"]) == 1
+    assert "Некорректный run_id" in capsys.readouterr().err
+
+
+def test_run_prepare_rejects_unknown_explicit_project(
+    isolated_data: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert run(["run", "prepare", "missing-project", "--run-id", "run-1"]) == 1
+    assert "не найден" in capsys.readouterr().err
+
+
+def test_task_cli_creates_workspace_and_controls_lease(
+    isolated_data: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    root = isolated_data / "task-project"
+    root.mkdir()
+    subprocess.run(["git", "init", "-b", "main"], cwd=root, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "tests@example.invalid"], cwd=root, check=True)
+    subprocess.run(["git", "config", "user.name", "Tests"], cwd=root, check=True)
+    (root / "README.md").write_text("# Проект\n", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-m", "docs(readme): add project"], cwd=root, check=True, capture_output=True)
+    assert run(["project", "attach", str(root), "--id", "task-project"]) == 0
+    capsys.readouterr()
+
+    assert run([
+        "task", "create", "task-project", "task-01", "--write", "src/**",
+    ]) == 0
+    task_path = Path(capsys.readouterr().out.strip())
+    assert json.loads(task_path.read_text(encoding="utf-8"))["status"] == "planned"
+
+    assert run(["task", "lease", "task-project", "task-01"]) == 0
+    lease_path = Path(capsys.readouterr().out.strip())
+    assert lease_path.exists()
+    assert run(["task", "worktree-plan", "task-project", "task-01", "--branch-prefix", "feat/13-10-2026-task-01"]) == 0
+    assert json.loads(capsys.readouterr().out)[0]["branch"].startswith("feat/13-10-2026-task-01")
+    assert run(["task", "complete", "task-project", "task-01"]) == 0
+    capsys.readouterr()
+    assert run(["task", "release", "task-project", "task-01"]) == 0
+    assert not lease_path.exists()
+    capsys.readouterr()
+    assert run(["task", "gc", "task-project", "task-01"]) == 0
+    assert not task_path.exists()

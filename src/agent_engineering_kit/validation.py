@@ -1,4 +1,4 @@
-"""Aggregating validation entry point."""
+"""Единая точка запуска всех проверок конфигурации."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from .git_hygiene import validate_git_hygiene
 from .models import validate_models
 from .overrides import validate_overrides
 from .paths import KitPaths
+from .profiles import validate_profiles
 from .policy import validate_policy
 from .projects import find_project
 from .result import ValidationResult
@@ -26,6 +27,7 @@ VALIDATORS = {
     "mcp": lambda repository, paths, include_local: validate_mcp(repository),
     "catalogs": lambda repository, paths, include_local: validate_locks(repository),
     "clients": lambda repository, paths, include_local: validate_clients(repository),
+    "profiles": lambda repository, paths, include_local: validate_profiles(repository),
     "conventions": lambda repository, paths, include_local: validate_conventions(repository, find_project(Path.cwd()) if include_local else None),
     "policy": lambda repository, paths, include_local: validate_policy(repository, paths, find_project(Path.cwd()) if include_local else None, include_local=include_local),
     "overrides": lambda repository, paths, include_local: validate_overrides(repository, paths.overrides) if include_local else ValidationResult(),

@@ -1,58 +1,125 @@
-# Корпоративные подключения дополняют существующий реестр политикой доступа и аудита.
+# Capability policy покрывает каждый MCP: без этой записи сервер не регистрируется в client.
 version: 1
 catalog_type: corporate
 tool_budget: 8
 servers:
-  # Документация доступна на чтение; endpoint не получает корпоративные записи.
+  # Локальный граф содержит read и write surface, поэтому readonly-профиль не подключает сервер целиком.
+  - id: codebase-memory
+    owner: engineering-platform
+    trust: trusted
+    data_classes: [internal, confidential]
+    auth: {method: none}
+    boundaries:
+      allowed_hosts: []
+      read_only: false
+      model_endpoint: local-only
+    audit: {decisions: true, arguments: redacted, results: metadata-only}
+    capabilities:
+      - {id: code-graph.read, mode: read, tool_cost: 2, data_classes: [internal, confidential]}
+      - {id: code-graph.write, mode: write, tool_cost: 1, data_classes: [internal]}
+
+  # Serena умеет и читать, и редактировать код; частичный allowlist штатными clients не гарантируется.
+  - id: serena
+    owner: engineering-platform
+    trust: trusted
+    data_classes: [internal, confidential]
+    auth: {method: none}
+    boundaries:
+      allowed_hosts: []
+      read_only: false
+      model_endpoint: local-only
+    audit: {decisions: true, arguments: redacted, results: metadata-only}
+    capabilities:
+      - {id: semantic-code.read, mode: read, tool_cost: 2, data_classes: [internal, confidential]}
+      - {id: semantic-code.write, mode: write, tool_cost: 1, data_classes: [internal]}
+
+  # Context7 предоставляет только публичную документацию на чтение.
   - id: context7
     owner: engineering-platform
     trust: trusted
     data_classes: [public]
-    auth:
-      method: oauth
+    auth: {method: oauth}
     boundaries:
       allowed_hosts: [mcp.context7.com]
       read_only: true
       model_endpoint: approved-only
-    audit:
-      decisions: true
-      arguments: redacted
-      results: metadata-only
+    audit: {decisions: true, arguments: redacted, results: metadata-only}
     capabilities:
-      - id: documentation.read
-        mode: read
-        tool_cost: 2
-        data_classes: [public]
+      - {id: documentation.read, mode: read, tool_cost: 2, data_classes: [public]}
 
-  # У удалённого сервера нет доказанной фильтрации инструментов по режиму.
+  # SCM-сервер целиком подключается только профилем, разрешающим весь объявленный surface.
+  - id: github
+    owner: developer-platform
+    trust: trusted
+    data_classes: [internal, confidential]
+    auth: {method: environment, reference: env:GITHUB_PERSONAL_ACCESS_TOKEN}
+    boundaries:
+      allowed_hosts: []
+      read_only: false
+      model_endpoint: approved-only
+    audit: {decisions: true, arguments: redacted, results: metadata-only}
+    capabilities:
+      - {id: github.repository.read, mode: read, tool_cost: 2, data_classes: [internal, confidential]}
+      - {id: github.repository.write, mode: write, tool_cost: 2, data_classes: [internal]}
+      - {id: github.repository.admin, mode: admin, tool_cost: 1, data_classes: [internal]}
+
+  - id: gitlab
+    owner: developer-platform
+    trust: trusted
+    data_classes: [internal, confidential]
+    auth: {method: oauth}
+    boundaries:
+      allowed_hosts: [gitlab.com]
+      read_only: false
+      model_endpoint: approved-only
+    audit: {decisions: true, arguments: redacted, results: metadata-only}
+    capabilities:
+      - {id: gitlab.project.read, mode: read, tool_cost: 2, data_classes: [internal, confidential]}
+      - {id: gitlab.project.write, mode: write, tool_cost: 2, data_classes: [internal]}
+      - {id: gitlab.project.admin, mode: admin, tool_cost: 1, data_classes: [internal]}
+
+  # SonarQube используется только для чтения результатов анализа.
+  - id: sonarqube
+    owner: quality-platform
+    trust: trusted
+    data_classes: [internal]
+    auth: {method: environment, reference: env:SONARQUBE_TOKEN}
+    boundaries:
+      allowed_hosts: []
+      read_only: true
+      model_endpoint: approved-only
+    audit: {decisions: true, arguments: redacted, results: metadata-only}
+    capabilities:
+      - {id: quality-findings.read, mode: read, tool_cost: 2, data_classes: [internal]}
+
+  # Browser automation изменяет внешнее состояние и не включается readonly-профилем.
+  - id: playwright
+    owner: quality-platform
+    trust: restricted
+    data_classes: [internal, confidential]
+    auth: {method: none}
+    boundaries:
+      allowed_hosts: []
+      read_only: false
+      model_endpoint: approved-only
+    audit: {decisions: true, arguments: redacted, results: metadata-only}
+    capabilities:
+      - {id: browser.inspect, mode: read, tool_cost: 2, data_classes: [internal, confidential]}
+      - {id: browser.execute, mode: write, tool_cost: 2, data_classes: [internal, confidential]}
+
+  # Jira и Confluence содержат корпоративный контекст; admin остаётся отдельной возможностью.
   - id: atlassian
     owner: collaboration-platform
     trust: trusted
     data_classes: [internal, confidential]
-    auth:
-      method: oauth
+    auth: {method: oauth}
     boundaries:
       allowed_hosts: [mcp.atlassian.com]
       read_only: false
       model_endpoint: approved-only
-    audit:
-      decisions: true
-      arguments: redacted
-      results: metadata-only
+    audit: {decisions: true, arguments: redacted, results: metadata-only}
     capabilities:
-      - id: jira.issue.read
-        mode: read
-        tool_cost: 2
-        data_classes: [internal]
-      - id: confluence.page.read
-        mode: read
-        tool_cost: 2
-        data_classes: [internal, confidential]
-      - id: jira.issue.write
-        mode: write
-        tool_cost: 1
-        data_classes: [internal]
-      - id: jira.project.admin
-        mode: admin
-        tool_cost: 1
-        data_classes: [internal]
+      - {id: jira.issue.read, mode: read, tool_cost: 2, data_classes: [internal]}
+      - {id: confluence.page.read, mode: read, tool_cost: 2, data_classes: [internal, confidential]}
+      - {id: jira.issue.write, mode: write, tool_cost: 1, data_classes: [internal]}
+      - {id: jira.project.admin, mode: admin, tool_cost: 1, data_classes: [internal]}

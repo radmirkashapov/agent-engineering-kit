@@ -52,3 +52,15 @@ def test_explicit_client_rejects_unsupported_managed_capability() -> None:
 
     with pytest.raises(AgentKitError, match="не поддерживает обязательные возможности"):
         resolve_harness(repository, manifest)
+
+
+def test_effective_policy_selects_local_harness_override() -> None:
+    repository = Path(__file__).resolve().parents[1]
+    contract = resolve_harness(
+        repository,
+        {"harness": {"preferred_client": "auto", "required_capabilities": ["instructions", "mcp"]}},
+        policy_values={"client.preferred": "cline", "approvals.profile": "autonomous"},
+    )
+
+    assert contract["selected_client"] == "cline"
+    assert contract["permission_policy"]["approvals.profile"] == "autonomous"

@@ -1,4 +1,4 @@
-"""Загрузка declarative catalogs и immutable locks."""
+"""Загрузка декларативных каталогов и неизменяемых lock-файлов."""
 
 from __future__ import annotations
 

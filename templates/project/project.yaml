@@ -9,6 +9,8 @@ repositories:
     required: true
 # Обнаруженные компоненты живут в локальном state; здесь задаются только уточнения.
 components: []
+# Дополнительные conventions подключаются из YAML внутри logical project.
+conventions: []
 # Исключения для автоматического обнаружения; пути остаются относительными.
 discovery:
   enabled: true

@@ -1,4 +1,4 @@
-"""Диагностика installation и runtime."""
+"""Диагностика локальной установки и среды выполнения."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from pathlib import Path
 from .models import load_policy
 from .mcp_manager import McpManager
 from .paths import KitPaths, ensure_runtime
+from .policy import effective_policy
 from .result import ValidationResult
 from .security_tools import SecurityToolManager
 
@@ -35,7 +36,8 @@ def doctor(repository: Path, paths: KitPaths) -> ValidationResult:
         result.error("doctor", f"Runtime недоступен для записи: {error}")
     policy = load_policy(repository, local_path=paths.overrides / "models.yaml")
     result.info("doctor", f"Corporate models: {len(policy.corporate)}; user-local models: {len(policy.local)}")
-    result.extend(McpManager(repository, paths).doctor())
+    access_profile = str(effective_policy(repository, paths, None).values["mcp.access_profile"])
+    result.extend(McpManager(repository, paths).doctor(access_profile=access_profile))
     registrations = paths.state / "client-mcp-registrations.json"
     if registrations.is_file():
         try:

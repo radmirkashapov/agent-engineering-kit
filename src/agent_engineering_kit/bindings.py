@@ -1,4 +1,4 @@
-"""Machine-local repository bindings and component inventory reconciliation."""
+"""Локальные привязки репозиториев и сверка состава компонентов."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from .discovery import discover_components
 from .errors import AgentKitError
 from .io import atomic_write, load_yaml
 from .paths import KitPaths
-from .projects import LogicalProject, register_memory, slugify
+from .projects import LogicalProject, register_memory, slugify, validate_project_definition
 from .schema import validate_instance
 
 
@@ -67,8 +67,11 @@ def bind_repository(project: LogicalProject, paths: KitPaths, repository_id: str
     target = path.expanduser().resolve()
     if not target.is_dir():
         raise AgentKitError(f"Repository path не существует: {target}")
-    register_memory(project, paths)
     data = _bindings(project, paths)
+    existing = next((entry for entry in data["repositories"] if entry["id"] == repository_id), None)
+    if repository_id == "root" and existing and Path(existing["path"]).resolve() != target:
+        raise AgentKitError("root binding нельзя изменить без явной миграции project identity")
+    register_memory(project, paths)
     data["repositories"] = sorted([entry for entry in data["repositories"] if entry["id"] != repository_id] + [{"id": repository_id, "path": str(target)}], key=lambda item: item["id"])
     return _save_bindings(project, paths, data)
 
@@ -106,7 +109,7 @@ def attach_project(root: Path, repository: Path, paths: KitPaths, *, identifier:
 
 def _remote_matches(root: Path, expected: str) -> bool:
     parsed = urlsplit(expected)
-    if parsed.username or parsed.password:
+    if parsed.username or parsed.password or parsed.query or parsed.fragment:
         return False
     result = subprocess.run(["git", "-C", str(root), "config", "--get", "remote.origin.url"], capture_output=True, text=True, check=False)
     actual = result.stdout.strip() if result.returncode == 0 else ""
@@ -152,6 +155,10 @@ def project_readiness(project: LogicalProject, paths: KitPaths) -> dict[str, Any
 
 
 def reconcile_project(project: LogicalProject, paths: KitPaths, *, apply: bool = False) -> dict[str, Any]:
+    definition = validate_project_definition(project, paths.repository)
+    if not definition.ok:
+        messages = "; ".join(item.message for item in definition.diagnostics if item.severity == "ERROR")
+        raise AgentKitError(f"Некорректный project manifest: {messages}")
     readiness = project_readiness(project, paths)
     locations = repository_paths(project, paths)
     available = {key: path for key, path in locations.items() if path.is_dir() and not any(issue["repository"] == key for issue in readiness["issues"])}
@@ -164,6 +171,33 @@ def reconcile_project(project: LogicalProject, paths: KitPaths, *, apply: bool =
         current.extend(item for item in previous if item["repository"] in unavailable and item["id"] not in {row["id"] for row in current})
     else:
         current = previous
+    indexed = {item["id"]: item for item in current}
+    for declared in project.manifest.get("components", []):
+        existing = indexed.get(declared["id"])
+        if existing is not None:
+            if existing["repository"] != declared["repository"] or existing["path"] != declared["path"]:
+                raise AgentKitError(
+                    f"Компонент {declared['id']} конфликтует с обнаруженным repository/path"
+                )
+            for key in ("owner", "criticality"):
+                if key in declared:
+                    existing[key] = declared[key]
+            continue
+        logical = {
+            "id": declared["id"],
+            "repository": declared["repository"],
+            "path": declared["path"],
+            "type": "logical",
+            "dependencies": [],
+            "evidence": [".ai-team/project.yaml"],
+            "confidence": "declared",
+        }
+        for key in ("owner", "criticality"):
+            if key in declared:
+                logical[key] = declared[key]
+        current.append(logical)
+        indexed[logical["id"]] = logical
+    current = sorted(current, key=lambda row: (row["repository"], row["type"], row["id"], row["path"]))
     before = {item["id"]: item for item in previous}
     after = {item["id"]: item for item in current}
     diff = {

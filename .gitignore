@@ -1,6 +1,7 @@
 # Пользовательские модели
 models/user.local.yaml
 models/*.local.yaml
+*.local.yaml
 
 # Пользовательские overrides
 overrides/

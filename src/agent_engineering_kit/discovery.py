@@ -1,4 +1,4 @@
-"""Read-only build metadata discovery for logical project components."""
+"""Обнаружение компонентов логического проекта по метаданным сборки без изменений файлов."""
 
 from __future__ import annotations
 
@@ -22,10 +22,18 @@ _SKIP = {".git", ".venv", "venv", "node_modules", "vendor", "target", "build", "
 _MANIFESTS = {"pom.xml", "settings.gradle", "settings.gradle.kts", "build.gradle", "build.gradle.kts", "package.json", "go.mod", "Cargo.toml", "pyproject.toml", "BUILD", "BUILD.bazel"}
 
 
-def _files(root: Path) -> list[Path]:
+def _files(root: Path, *, excluded_roots: set[Path] | None = None) -> list[Path]:
+    excluded = {path.resolve() for path in (excluded_roots or set())}
     found: list[Path] = []
     for directory, dirs, files in __import__("os").walk(root):
-        dirs[:] = sorted(name for name in dirs if name not in _SKIP and not name.startswith("."))
+        current = Path(directory)
+        dirs[:] = sorted(
+            name
+            for name in dirs
+            if name not in _SKIP
+            and not name.startswith(".")
+            and (current / name).resolve() not in excluded
+        )
         found.extend(Path(directory) / name for name in files if name in _MANIFESTS or name.endswith((".csproj", ".fsproj", ".sln", ".slnx")))
     return sorted(found)
 
@@ -60,7 +68,7 @@ def _toml(path: Path) -> dict[str, Any]:
             return tomllib.loads(_text(path))
         except (ValueError, UnicodeError):
             return {}
-    # Python 3.10 fallback covers the metadata fields used by discovery.
+    # Запасной путь для Python 3.10 покрывает поля метаданных, нужные обнаружению.
     data: dict[str, Any] = {}
     section: dict[str, Any] = data
     for line in _text(path).splitlines():
@@ -205,11 +213,16 @@ def _bazel(rows: list[dict[str, Any]], repo: str, root: Path, files: list[Path])
 def discover_components(repositories: dict[str, Path], *, exclude_paths: list[str] | None = None) -> list[dict[str, Any]]:
     """Discover components from build metadata without writing to repositories."""
     rows: list[dict[str, Any]] = []
-    for repository, root in sorted(repositories.items()):
-        root = root.expanduser().resolve()
+    roots = {repository: root.expanduser().resolve() for repository, root in repositories.items()}
+    for repository, root in sorted(roots.items()):
         if not root.is_dir():
             continue
-        files = _files(root)
+        nested_roots = {
+            candidate
+            for other, candidate in roots.items()
+            if other != repository and candidate != root and candidate.is_relative_to(root)
+        }
+        files = _files(root, excluded_roots=nested_roots)
         for discoverer in (_maven, _gradle, _node, _go, _cargo, _dotnet, _python, _bazel):
             discoverer(rows, repository, root, files)
     exclusions = [value.rstrip("/") for value in (exclude_paths or [])]

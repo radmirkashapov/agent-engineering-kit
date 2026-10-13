@@ -3,6 +3,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
+from agent_engineering_kit.errors import AgentKitError
 from agent_engineering_kit.events import append_event, read_events
 
 
@@ -56,3 +59,22 @@ def test_tool_results_can_be_replaced_with_metadata(tmp_path: Path) -> None:
     event = read_events(path)[0]
     assert event["payload"]["result"] == "[REDACTED]"
     assert event["payload"]["row_count"] == 1
+
+
+def test_event_schema_rejects_wrong_field_types_on_write_and_read(tmp_path: Path) -> None:
+    path = tmp_path / "events.jsonl"
+    with pytest.raises(AgentKitError, match="payload"):
+        append_event(
+            path,
+            {
+                "event_id": "event-1",
+                "run_id": "run-1",
+                "recorded_at": "2026-10-12T10:00:00+00:00",
+                "type": "tool_result",
+                "payload": ["not-an-object"],
+            },
+        )
+
+    path.write_text('{"schema":"wrong","event_id":"event-1","run_id":"run-1","recorded_at":"now","type":"x","payload":{}}\n', encoding="utf-8")
+    with pytest.raises(AgentKitError, match="schema"):
+        read_events(path)

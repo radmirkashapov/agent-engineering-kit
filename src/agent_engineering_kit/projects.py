@@ -1,4 +1,4 @@
-"""Logical project discovery, bootstrap и status."""
+"""Обнаружение, инициализация и состояние логического проекта."""
 
 from __future__ import annotations
 
@@ -46,7 +46,8 @@ def find_project(start: Path) -> LogicalProject | None:
     return None
 
 
-def validate_project(project: LogicalProject, repository: Path) -> ValidationResult:
+def validate_project_definition(project: LogicalProject, repository: Path) -> ValidationResult:
+    """Проверить переносимый manifest без требований к локальной полноте workspace."""
     result = validate_instance(project.manifest, repository / "schemas" / "project.schema.json", str(project.manifest_path))
     if project.manifest.get("memory", {}).get("namespace") != project.manifest.get("id"):
         result.error("projects", "memory.namespace должен совпадать со stable project.id")
@@ -60,8 +61,6 @@ def validate_project(project: LogicalProject, repository: Path) -> ValidationRes
             path.relative_to(project.root)
         except ValueError:
             result.error("projects", f"Repository выходит за logical project root: {entry['path']}")
-        if not path.is_dir():
-            result.error("projects", f"Repository path не существует: {entry['path']}")
     repositories = {item["id"]: (project.root / item["path"]).resolve() for item in project.manifest.get("repositories", [])}
     seen_components: set[str] = set()
     for component in project.manifest.get("components", []):
@@ -82,6 +81,15 @@ def validate_project(project: LogicalProject, repository: Path) -> ValidationRes
         result.error("projects", str(error))
     if result.ok:
         result.info("projects", f"Logical project {project.identifier} валиден")
+    return result
+
+
+def validate_project(project: LogicalProject, repository: Path) -> ValidationResult:
+    """Проверить manifest и наличие репозиториев в обычном committed workspace."""
+    result = validate_project_definition(project, repository)
+    for entry in project.manifest.get("repositories", []):
+        if not (project.root / entry["path"]).resolve().is_dir():
+            result.error("projects", f"Repository path не существует: {entry['path']}")
     return result
 
 
@@ -169,10 +177,12 @@ def register_memory(project: LogicalProject, paths: KitPaths) -> Path:
 def register_integrations(project: LogicalProject, repository: Path, paths: KitPaths) -> Path:
     """Зафиксировать local mapping, не забирая native state у MCP."""
     from .mcp_manager import McpManager
+    from .policy import effective_policy
 
     memory = register_memory(project, paths)
     integrations = []
-    for server in McpManager(repository, paths).list(project):
+    access_profile = str(effective_policy(repository, paths, project).values["mcp.access_profile"])
+    for server in McpManager(repository, paths).list(project, access_profile=access_profile):
         integrations.append(
             {
                 "id": server["id"],

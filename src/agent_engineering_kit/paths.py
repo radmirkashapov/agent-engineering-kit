@@ -1,4 +1,4 @@
-"""Platform-aware пути без смешивания repository, runtime и project memory."""
+"""Платформенные пути без смешивания репозитория, среды выполнения и памяти проекта."""
 
 from __future__ import annotations
 

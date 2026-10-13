@@ -1,4 +1,4 @@
-"""Explain effective configuration и provenance."""
+"""Объяснение итоговой конфигурации и происхождения её значений."""
 
 from __future__ import annotations
 
@@ -36,7 +36,11 @@ def explain(repository: Path, paths: KitPaths, start: Path, *, output_format: st
     lines.extend(["Logical project:", project.identifier if project else "не определён", ""])
     if project:
         lines.extend(["Project root:", str(project.root), ""])
-    harness = resolve_harness(repository, project.manifest if project else None)
+    harness = resolve_harness(
+        repository,
+        project.manifest if project else None,
+        policy_values=resolved_policy.values,
+    )
     lines.extend(
         [
             "Harness:",
@@ -50,7 +54,8 @@ def explain(repository: Path, paths: KitPaths, start: Path, *, output_format: st
         ]
     )
     lines.extend(["Models:", f"corporate policy: {'active' if policy.corporate_active else 'empty'}", "effective allowed models:"])
-    lines.extend(f"- {item}" for item in sorted(policy.runtime_allowed_ids))
+    effective_models = resolved_policy.values.get("models.allowed", sorted(policy.runtime_allowed_ids))
+    lines.extend(f"- {item}" for item in sorted(effective_models))
     lines.extend(["", "User-local models:"])
     lines.extend([f"- {item} (local-only)" for item in sorted(policy.local)] or ["- отсутствуют"])
     lines.extend(["", "Skills:"])
@@ -75,7 +80,10 @@ def explain(repository: Path, paths: KitPaths, start: Path, *, output_format: st
     overlays = [f"- {path.relative_to(root)} (source: {source})" for source, root in overlay_roots if root.exists() for path in sorted(root.rglob("*.yaml"))]
     lines.extend(overlays or ["- отсутствуют"])
     lines.extend(["", "MCP:"])
-    for server in McpManager(repository, paths).list(project):
+    for server in McpManager(repository, paths).list(
+        project,
+        access_profile=str(resolved_policy.values["mcp.access_profile"]),
+    ):
         activation = "enabled" if server["enabled"] else "disabled"
         lines.append(f"- {server['id']}: {activation}; {server['status']}; access: {server['access_reason']}")
     lines.extend(["", "Memory:", str(paths.projects / project.identifier) if project else "не определена"])

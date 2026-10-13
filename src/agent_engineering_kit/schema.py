@@ -1,4 +1,4 @@
-"""JSON Schema validation."""
+"""Проверка документов по схемам JSON Schema."""
 
 from __future__ import annotations
 

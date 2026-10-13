@@ -84,11 +84,46 @@ def test_core_mcp_registration_is_namespaced_and_oauth_safe(tmp_path: Path, monk
 
     state_path = register_native_mcp(repository, paths, runner=runner)
     additions = [args for args in calls if "add" in args]
-    assert len(additions) == 6
+    assert len(additions) == 2
     assert all(any(value.startswith("agent-kit-") for value in args) for args in additions)
     assert sum("https://mcp.context7.com/mcp/oauth" in args for args in additions) == 2
     registrations = json.loads(state_path.read_text(encoding="utf-8"))["registrations"]
     assert sum(item.get("mcp") == "context7" and item["status"] == "AUTH_REQUIRED" for item in registrations) == 2
+
+
+def test_write_capable_scm_server_is_not_registered_under_readonly_profile(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    data = tmp_path / "data"
+    paths = KitPaths(repository, data, data / "runtime", data / "projects", data / "overrides")
+    root = tmp_path / "project"
+    (root / ".git").mkdir(parents=True)
+    project = __import__("agent_engineering_kit.projects", fromlist=["LogicalProject"]).LogicalProject(
+        root,
+        root / ".ai-team/project.yaml",
+        {"id": "project", "repositories": [{"id": "root", "path": "."}]},
+    )
+    monkeypatch.setattr("agent_engineering_kit.clients.shutil.which", lambda name: f"/usr/bin/{name}" if name in {"codex", "claude"} else None)
+    calls: list[list[str]] = []
+
+    def runner(args, **kwargs):
+        calls.append(list(args))
+        if list(args[:3]) == ["git", "remote", "-v"]:
+            return CommandResult(tuple(args), 0, "origin https://github.com/acme/repo.git (fetch)\n", "")
+        return CommandResult(tuple(args), 1 if "get" in args else 0, "", "")
+
+    state_path = register_native_mcp(repository, paths, project=project, runner=runner)
+
+    additions = [args for args in calls if "mcp" in args and "add" in args]
+    assert not any("agent-kit-github" in args for args in additions)
+    github_rows = [
+        row for row in json.loads(state_path.read_text(encoding="utf-8"))["registrations"]
+        if row.get("mcp") == "github"
+    ]
+    assert github_rows
+    assert all(row["status"] == "DISABLED" for row in github_rows)
 
 
 def test_blocked_mcp_is_removed_from_previously_registered_native_clients(tmp_path: Path, monkeypatch) -> None:
@@ -279,3 +314,18 @@ def test_explain_reports_access_policy_layer_and_reason(tmp_path: Path) -> None:
 
     assert "verification: disabled; DISABLED; access: blocked:global" in output
     assert "context7: disabled; DISABLED; access: blocked:global" in output
+
+
+def test_capability_policy_is_materialized_for_client_harness(tmp_path: Path) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    data = tmp_path / "data"
+    paths = KitPaths(repository, data, data / "runtime", data / "projects", data / "overrides")
+
+    sync_clients(
+        repository,
+        paths,
+        capability_policy={"values": {"approvals.profile": "autonomous"}, "provenance": {}, "warnings": []},
+    )
+
+    policy = json.loads((paths.installations / "clients/shared/effective-policy.json").read_text(encoding="utf-8"))
+    assert policy["capability_policy"]["values"]["approvals.profile"] == "autonomous"

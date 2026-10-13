@@ -1,10 +1,10 @@
-"""Validation structured metadata agents, skills и MCP."""
+"""Проверка структурированных метаданных ролей, skills и MCP."""
 
 from __future__ import annotations
 
 from pathlib import Path
 import re
-from urllib.parse import parse_qsl, urlsplit
+from urllib.parse import urlsplit
 import unicodedata
 
 from .io import load_yaml, markdown_frontmatter
@@ -37,16 +37,9 @@ def is_english_text(value: object) -> bool:
 
 
 def url_contains_credentials(url: str) -> bool:
-    """Обнаружить credential material в userinfo или query URL."""
+    """Отклонить URL с userinfo, query или fragment в версионируемой конфигурации."""
     parsed = urlsplit(url)
-    return bool(
-        parsed.username
-        or parsed.password
-        or any(
-            re.search(r"(?i)(token|secret|password|key|credential|auth)", key)
-            for key, _ in parse_qsl(parsed.query, keep_blank_values=True)
-        )
-    )
+    return bool(parsed.username or parsed.password or parsed.query or parsed.fragment)
 
 
 def _validate_english_description(result: ValidationResult, section: str, identifier: object, value: object) -> None:
@@ -183,6 +176,9 @@ def validate_mcp(repository: Path) -> ValidationResult:
         if profiles.get("version") != 1 or "readonly" not in profile_ids:
             result.error("mcp", "Corporate access profile readonly отсутствует или имеет неверную версию")
         registry_by_id = {entry.get("id"): entry for entry in document.get("servers", [])}
+        corporate_ids = {entry.get("id") for entry in corporate.get("servers", [])}
+        for identifier in sorted(identifiers - corporate_ids):
+            result.error("mcp", f"MCP {identifier}: не имеет capability policy")
         seen_capabilities: set[str] = set()
         for entry in corporate.get("servers", []):
             identifier = entry.get("id")

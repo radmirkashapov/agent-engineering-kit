@@ -1,4 +1,4 @@
-"""Load and validate additive Kit and logical-project conventions."""
+"""Загрузка и проверка дополняющих соглашений Kit и логического проекта."""
 
 from __future__ import annotations
 

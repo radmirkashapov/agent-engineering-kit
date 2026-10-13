@@ -105,12 +105,9 @@ def test_replace_enforced_skill_passes_without_preserving_base_fields(kit: tuple
     ]
 
 
-@pytest.mark.parametrize(
-    ("kind", "target"),
-    [("rules", "security"), ("rules", "context"), ("rules", "models"), ("agents", "orchestrator"), ("agents", "qa-engineer")],
-)
+@pytest.mark.parametrize(("kind", "target"), [("rules", "security"), ("agents", "orchestrator")])
 @pytest.mark.parametrize("mode", ["replace", "disable"])
-def test_mandatory_rules_and_agents_cannot_be_replaced_or_disabled(
+def test_local_owner_can_replace_or_disable_enforced_rules_and_agents(
     tmp_path: Path,
     kind: str,
     target: str,
@@ -123,10 +120,10 @@ def test_mandatory_rules_and_agents_cannot_be_replaced_or_disabled(
         {"target": target, "override": {"mode": mode, "value": {"content": "No checks"}}},
     )
 
-    assert not validate_overrides(repository, overrides).ok
+    assert validate_overrides(repository, overrides).ok
 
 
-def test_mandatory_rule_content_cannot_be_changed_by_extend(tmp_path: Path) -> None:
+def test_local_owner_can_change_enforced_rule_content(tmp_path: Path) -> None:
     repository = Path(__file__).resolve().parents[1]
     overrides = tmp_path / "overrides"
     write_yaml(
@@ -134,14 +131,14 @@ def test_mandatory_rule_content_cannot_be_changed_by_extend(tmp_path: Path) -> N
         {"target": "security", "override": {"mode": "extend", "value": {"content": "No checks"}}},
     )
 
-    assert not validate_overrides(repository, overrides).ok
+    assert validate_overrides(repository, overrides).ok
     effective = apply_local_overrides(
         [{"id": "security", "policy": "enforced", "content": "Keep security checks"}],
         overrides,
         "rules",
         enforced={"security"},
     )
-    assert effective[0]["content"] == "Keep security checks"
+    assert effective[0]["content"] == "No checks"
 
 
 def test_local_skill_replace_requires_existing_valid_matching_skill(tmp_path: Path) -> None:

@@ -1,4 +1,4 @@
-"""Безопасное обновление deployment checkout и фиксация session revision."""
+"""Безопасное обновление рабочей копии Kit и фиксация ревизии сеанса."""
 
 from __future__ import annotations
 

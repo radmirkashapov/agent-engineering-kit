@@ -26,6 +26,15 @@ _MCP_SCHEMA = Path(__file__).resolve().parents[2] / "schemas" / "mcp.schema.json
 _OVERRIDE_SCHEMA = Path(__file__).resolve().parents[2] / "schemas" / "override.schema.json"
 _SKILL_SCHEMA = Path(__file__).resolve().parents[2] / "schemas" / "skill.schema.json"
 _IDENTIFIER_PATTERN = re.compile(r"^[a-z][a-z0-9-]*$")
+GENERIC_OVERRIDE_KINDS = frozenset({
+    "agents", "rules", "models", "skills", "mcp", "approvals", "sandbox", "network", "tools", "harness"
+})
+_COMPONENT_KINDS = frozenset({"agents", "rules", "skills", "mcp"})
+_POLICY_KEY_ALIASES = {
+    "harness.client": "client.preferred",
+    "mcp.access-profile": "mcp.access_profile",
+}
+_POLICY_COMPONENT_IDS = frozenset({("mcp", "access-profile")})
 
 
 @dataclass(frozen=True)
@@ -402,3 +411,91 @@ def reset_component_override(
             shutil.move(str(destination), str(origin))
         raise
     return moved
+
+
+def _generic_identifier(identifier: str) -> None:
+    if re.fullmatch(r"^[a-z][a-z0-9_.-]*$", identifier) is None or ".." in identifier:
+        raise AgentKitError(f"Некорректный ID переопределения: {identifier!r}")
+
+
+def _policy_key(kind: str, identifier: str) -> str:
+    return _POLICY_KEY_ALIASES.get(f"{kind}.{identifier}", f"{kind}.{identifier}")
+
+
+def install_generic_override(
+    scope: OverrideScope,
+    kind: str,
+    identifier: str,
+    *,
+    mode: str,
+    source: Path,
+    reason: str,
+) -> Path:
+    """Установить проверенное локальное переопределение любого публичного вида."""
+    if kind not in GENERIC_OVERRIDE_KINDS:
+        raise AgentKitError(f"Неподдерживаемый тип переопределения: {kind!r}")
+    _generic_identifier(identifier)
+    if mode not in {"extend", "replace", "disable"}:
+        raise AgentKitError(f"Неподдерживаемый режим переопределения: {mode!r}")
+    if not reason.strip():
+        raise AgentKitError("Для локального переопределения обязательна причина")
+    document = load_yaml(source.expanduser().resolve())
+    value = document.get("value", document)
+    is_component = kind in _COMPONENT_KINDS and (kind, identifier) not in _POLICY_COMPONENT_IDS
+    if is_component:
+        if mode != "disable" and not isinstance(value, dict):
+            raise AgentKitError("Переопределение компонента должно содержать объект value")
+        target = _scope_path(scope, kind, f"{identifier}.yaml")
+        payload: dict[str, object] = {
+            "target": identifier,
+            "override": {"mode": mode, "reason": reason, "value": value if isinstance(value, dict) else {}},
+        }
+        content = _validated_yaml(payload, _OVERRIDE_SCHEMA, str(target))
+    else:
+        if mode != "replace":
+            raise AgentKitError("Переопределения policy-параметров поддерживают только режим replace")
+        target = _scope_path(scope, "policy", f"{kind}-{identifier.replace('.', '-')}.yaml")
+        payload = {
+            "version": 1,
+            "overrides": [{"key": _policy_key(kind, identifier), "value": value, "reason": reason}],
+        }
+        policy_schema = Path(__file__).resolve().parents[2] / "schemas" / "policy-override.schema.json"
+        content = _validated_yaml(payload, policy_schema, str(target))
+    _snapshot_existing(scope, [target])
+    atomic_write(target, content)
+    return target
+
+
+def list_overrides(scope: OverrideScope) -> list[dict[str, object]]:
+    """Перечислить определения выбранного локального слоя без чтения backups и sources."""
+    rows: list[dict[str, object]] = []
+    for kind in sorted(GENERIC_OVERRIDE_KINDS | {"policy"}):
+        directory = scope.root / kind
+        if not directory.is_dir():
+            continue
+        for path in sorted(directory.glob("*.yaml")):
+            rows.append({"kind": kind, "path": str(path), "document": load_yaml(path)})
+    return rows
+
+
+def reset_generic_override(
+    scope: OverrideScope,
+    kind: str,
+    identifier: str,
+    backup_root: Path,
+) -> list[Path]:
+    """Сбросить generic override с сохранением recoverable backup."""
+    if kind not in GENERIC_OVERRIDE_KINDS:
+        raise AgentKitError(f"Неподдерживаемый тип переопределения: {kind!r}")
+    _generic_identifier(identifier)
+    if kind in _COMPONENT_KINDS and (kind, identifier) not in _POLICY_COMPONENT_IDS:
+        target = _scope_path(scope, kind, f"{identifier}.yaml")
+    else:
+        target = _scope_path(scope, "policy", f"{kind}-{identifier.replace('.', '-')}.yaml")
+    if not target.exists():
+        return []
+    backup = _new_backup_directory(backup_root)
+    destination = _backup_destination(scope, backup, target)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(target), str(destination))
+    return [destination]

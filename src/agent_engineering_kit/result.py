@@ -1,4 +1,4 @@
-"""Единый формат diagnostics validation."""
+"""Единый формат диагностических сообщений проверок."""
 
 from __future__ import annotations
 

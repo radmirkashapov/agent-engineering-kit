@@ -1,4 +1,4 @@
-"""Desired-state reconciliation control plane."""
+"""Приведение локального управляющего слоя к целевому состоянию."""
 
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ from .io import atomic_write
 from .mcp_manager import McpManager
 from .override_service import initialize_override_workspace
 from .paths import KitPaths, ensure_runtime
+from .policy import effective_policy as resolve_effective_policy
 from .projects import LogicalProject
 from .overrides import validate_overrides
 from .security_tools import SecurityToolManager
@@ -100,25 +101,41 @@ def resync(
     if blocked:
         raise AgentKitError(f"Resync остановлен: external skills не ACTIVE: {', '.join(blocked)}")
 
+    capability_resolution = resolve_effective_policy(repository, paths, project)
+    mcp_access_profile = str(capability_resolution.values.get("mcp.access_profile", "readonly"))
     mcp_manager = McpManager(repository, paths)
-    mcp_result = mcp_manager.install(project=project, force=force)
+    mcp_result = mcp_manager.install(
+        project=project,
+        access_profile=mcp_access_profile,
+        force=force,
+    )
     if not mcp_result.ok:
         messages = "; ".join(item.message for item in mcp_result.diagnostics if item.severity == "ERROR")
         raise AgentKitError(f"Resync остановлен MCP installation: {messages}")
-    mcp_state = mcp_manager.list(project)
+    mcp_state = mcp_manager.list(project, access_profile=mcp_access_profile)
 
     project_id = project.identifier if project else None
-    generated = sync_clients(repository, paths, project_id=project_id)
+    generated = sync_clients(
+        repository,
+        paths,
+        project_id=project_id,
+        capability_policy=capability_resolution.as_dict(),
+    )
     incomplete: list[str] = []
     if expose_native:
         generated.extend(expose_native_skills(repository, paths, project_id=project_id))
         generated.extend(expose_native_instructions(repository, paths))
-        registration_path = register_native_mcp(repository, paths, project=project)
+        registration_path = register_native_mcp(
+            repository,
+            paths,
+            project=project,
+            access_profile=mcp_access_profile,
+        )
         generated.append(registration_path)
         registrations = json.loads(registration_path.read_text(encoding="utf-8")).get("registrations", [])
         required_mcp = {
             item["id"]
-            for item, _ in mcp_manager.desired(project)
+            for item, _ in mcp_manager.desired(project, access_profile=mcp_access_profile)
             if item.get("required") and mcp_manager.is_enabled(item, project)
         }
         registration_errors = [
@@ -147,7 +164,11 @@ def resync(
         skills=skill_manager.list(),
         mcp=mcp_state,
         clients=[str(path) for path in generated],
-        harness=resolve_harness(repository, project.manifest if project else None),
+        harness=resolve_harness(
+            repository,
+            project.manifest if project else None,
+            policy_values=capability_resolution.values,
+        ),
         effective_policy=paths.installations / "clients" / "shared" / "effective-policy.json",
         recorded_at=datetime.now(timezone.utc).isoformat(),
     )

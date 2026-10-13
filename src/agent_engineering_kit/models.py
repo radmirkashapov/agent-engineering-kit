@@ -1,4 +1,4 @@
-"""Corporate и user-local model policy."""
+"""Корпоративная и локальная пользовательская политика моделей."""
 
 from __future__ import annotations
 

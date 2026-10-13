@@ -1,4 +1,4 @@
-"""Контракт между control plane набора и внешними execution harness."""
+"""Контракт между управляющим слоем Kit и внешними средами выполнения."""
 
 from __future__ import annotations
 
@@ -21,11 +21,17 @@ def load_harness_clients(repository: Path) -> list[dict[str, Any]]:
     return clients
 
 
-def resolve_harness(repository: Path, project_manifest: dict[str, Any] | None = None) -> dict[str, object]:
+def resolve_harness(
+    repository: Path,
+    project_manifest: dict[str, Any] | None = None,
+    *,
+    policy_values: dict[str, Any] | None = None,
+) -> dict[str, object]:
     """Выбрать client adapter и вернуть явную границу ответственности harness."""
     manifest = project_manifest or {}
     settings = manifest.get("harness") or {}
-    preferred = settings.get("preferred_client", "auto")
+    policy_values = policy_values or {}
+    preferred = policy_values.get("client.preferred", settings.get("preferred_client", "auto"))
     required = list(settings.get("required_capabilities", DEFAULT_REQUIRED_CAPABILITIES))
     clients = load_harness_clients(repository)
     by_id = {item["id"]: item for item in clients}
@@ -63,4 +69,10 @@ def resolve_harness(repository: Path, project_manifest: dict[str, Any] | None = 
         "required_capabilities": required,
         "managed_capabilities": list(harness["managed_capabilities"]),
         "delegated_capabilities": list(harness["delegated_capabilities"]),
+        "experimental_capabilities": list(harness.get("experimental_capabilities", [])),
+        "permission_policy": {
+            key: value
+            for key, value in policy_values.items()
+            if key.startswith(("approvals.", "sandbox.", "network.", "tools."))
+        },
     }

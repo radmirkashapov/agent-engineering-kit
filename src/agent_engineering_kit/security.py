@@ -1,4 +1,4 @@
-"""Неблокирующие и блокирующие security checks repository."""
+"""Предупреждающие и блокирующие проверки безопасности репозитория."""
 
 from __future__ import annotations
 

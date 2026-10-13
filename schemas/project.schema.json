@@ -18,7 +18,7 @@
       "items": {
         "type": "object", "required": ["id", "repository", "path"], "additionalProperties": false,
         "properties": {
-          "id": { "$ref": "#/$defs/id" },
+          "id": { "$ref": "#/$defs/componentId" },
           "repository": { "$ref": "#/$defs/id" },
           "path": { "$ref": "#/$defs/relativePath" },
           "owner": { "type": "string", "minLength": 1 },
@@ -36,6 +36,10 @@
     "memory": {
       "type": "object", "required": ["namespace"], "additionalProperties": false,
       "properties": { "namespace": { "$ref": "#/$defs/id" } }
+    },
+    "conventions": {
+      "type": "array", "uniqueItems": true,
+      "items": { "$ref": "#/$defs/relativeYamlPath" }
     },
     "discovery": {
       "type": "object", "additionalProperties": false,
@@ -57,14 +61,21 @@
   },
   "$defs": {
     "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,62}$" },
+    "componentId": { "type": "string", "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/@-]{0,255}$" },
     "relativePath": { "type": "string", "minLength": 1, "not": { "pattern": "^(?:/|[A-Za-z]:[\\\\/]|\\.\\.(?:[\\\\/]|$))" } },
+    "relativeYamlPath": {
+      "allOf": [
+        { "$ref": "#/$defs/relativePath" },
+        { "pattern": "^[^\\\\]+\\.ya?ml$" }
+      ]
+    },
     "pathEntry": {
       "type": "object", "required": ["id", "path"], "additionalProperties": false,
       "properties": {
         "id": { "$ref": "#/$defs/id" },
         "path": { "$ref": "#/$defs/relativePath" },
         "required": { "type": "boolean" },
-        "remote": { "type": "string", "minLength": 1, "not": { "pattern": "://[^/]*@" } }
+        "remote": { "type": "string", "minLength": 1, "not": { "pattern": "(?:[?#]|://[^/]*@)" } }
       }
     }
   }

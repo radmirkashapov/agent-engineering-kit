@@ -1,4 +1,4 @@
-"""External skills: candidate → validation → atomic activation → rollback."""
+"""Внешние skills: кандидат → проверка → атомарная активация → откат."""
 
 from __future__ import annotations
 

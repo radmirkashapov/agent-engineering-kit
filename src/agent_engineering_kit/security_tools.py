@@ -1,4 +1,4 @@
-"""Идемпотентная external installation и security gate для skills."""
+"""Идемпотентная установка внешних средств и проверка безопасности skills."""
 
 from __future__ import annotations
 

@@ -1,7 +1,7 @@
 ---
 version: 1
 name: greeting
-description: Поздороваться с пользователем, назвав имя текущего пользователя системы
+description: Greet the user by including the current operating-system account name
 policy: configurable
 requires:
   model_capabilities:

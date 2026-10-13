@@ -3,6 +3,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
+from agent_engineering_kit.errors import AgentKitError
 from agent_engineering_kit.paths import KitPaths
 from agent_engineering_kit.runs import build_run_request, record_run_result, write_run_request
 
@@ -75,3 +78,58 @@ def test_request_and_result_are_written_as_separate_documents(tmp_path: Path) ->
     assert result["phase"] == "result"
     assert result["request"] == "request.json"
     assert result["details"]["password"] == "[REDACTED]"
+
+
+def test_run_storage_rejects_path_traversal_identifiers(tmp_path: Path) -> None:
+    paths = KitPaths(tmp_path / "kit", tmp_path / "data", tmp_path / "runtime", tmp_path / "projects", tmp_path / "overrides")
+    request = build_run_request(
+        run_id="../escape",
+        kit_revision="abc123",
+        project_id="commerce",
+        policy={},
+        conventions={},
+        harness={},
+        roles=[],
+        skills=[],
+        mcp=[],
+        requested_model=None,
+        permissions={},
+        repositories=[],
+        verification_steps=[],
+        bypasses=[],
+    )
+
+    with pytest.raises(AgentKitError, match="run_id"):
+        write_run_request(paths, request)
+
+
+def test_run_result_rejects_unknown_status(tmp_path: Path) -> None:
+    paths = KitPaths(tmp_path / "kit", tmp_path / "data", tmp_path / "runtime", tmp_path / "projects", tmp_path / "overrides")
+    request = build_run_request(
+        run_id="run-03",
+        kit_revision="abc123",
+        project_id=None,
+        policy={},
+        conventions={},
+        harness={},
+        roles=[],
+        skills=[],
+        mcp=[],
+        requested_model=None,
+        permissions={},
+        repositories=[],
+        verification_steps=[],
+        bypasses=[],
+    )
+    write_run_request(paths, request)
+
+    with pytest.raises(AgentKitError, match="status"):
+        record_run_result(
+            paths,
+            project_id=None,
+            run_id="run-03",
+            status="unknown",
+            actual_model=None,
+            verification=[],
+            details={},
+        )

@@ -1,4 +1,4 @@
-"""Machine-local lifecycle state внешних компонентов."""
+"""Локальное состояние жизненного цикла внешних компонентов."""
 
 from __future__ import annotations
 

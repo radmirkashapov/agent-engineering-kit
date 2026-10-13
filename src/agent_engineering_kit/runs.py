@@ -1,9 +1,10 @@
-"""Воспроизводимые контракты между control plane и внешним harness."""
+"""Воспроизводимые контракты между управляющим слоем и внешней средой выполнения."""
 
 from __future__ import annotations
 
 import hashlib
 import json
+import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,6 +14,10 @@ from .errors import AgentKitError
 from .io import atomic_write
 from .paths import KitPaths
 from .redaction import redact
+
+
+_SAFE_IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+_RESULT_STATUSES = frozenset({"passed", "failed", "blocked", "cancelled"})
 
 
 def canonical_digest(value: object) -> str:
@@ -70,8 +75,17 @@ def build_run_request(
 
 
 def _run_directory(paths: KitPaths, project_id: str | None, run_id: str) -> Path:
+    if not _SAFE_IDENTIFIER.fullmatch(run_id):
+        raise AgentKitError(f"Некорректный run_id: {run_id!r}")
+    if project_id is not None and not _SAFE_IDENTIFIER.fullmatch(project_id):
+        raise AgentKitError(f"Некорректный project_id: {project_id!r}")
     namespace = project_id or "_global"
     return paths.projects / namespace / "runs" / run_id
+
+
+def run_events_path(paths: KitPaths, *, project_id: str | None, run_id: str) -> Path:
+    """Вернуть безопасный путь append-only журнала запуска."""
+    return _run_directory(paths, project_id, run_id) / "events.jsonl"
 
 
 def write_run_request(paths: KitPaths, manifest: dict[str, Any]) -> Path:
@@ -97,6 +111,8 @@ def record_run_result(
     recorded_at: str | None = None,
 ) -> Path:
     """Сохранить фактический результат отдельно от неизменяемого request."""
+    if status not in _RESULT_STATUSES:
+        raise AgentKitError(f"Некорректный status результата запуска: {status!r}")
     run_directory = _run_directory(paths, project_id, run_id)
     request = run_directory / "request.json"
     if not request.is_file():

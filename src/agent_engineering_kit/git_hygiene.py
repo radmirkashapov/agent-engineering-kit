@@ -1,4 +1,4 @@
-"""Защита Git от local-only файлов и очевидных secrets."""
+"""Защита Git от локальных файлов и явных секретов."""
 
 from __future__ import annotations
 

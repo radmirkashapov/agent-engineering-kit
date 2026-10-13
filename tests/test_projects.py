@@ -171,3 +171,102 @@ def test_missing_optional_repo_keeps_last_inventory(tmp_path: Path, kit_reposito
     preview = reconcile_project(project, kit_paths)
     assert preview["status"] == "DEGRADED"
     assert preview["diff"]["removed"] == []
+
+
+@pytest.mark.parametrize(
+    "remote",
+    [
+        "https://example.com/repository.git?access_token=secret",
+        "https://example.com/repository.git#credential",
+        "https://user:secret@example.com/repository.git",
+    ],
+)
+def test_committed_remote_rejects_credential_bearing_urls(
+    tmp_path: Path,
+    kit_repository: Path,
+    remote: str,
+) -> None:
+    project = init_project(tmp_path / "unsafe-remote", kit_repository, paths(tmp_path, kit_repository))
+    project.manifest["repositories"][0]["remote"] = remote
+
+    result = validate_project(project, kit_repository)
+
+    assert not result.ok
+
+
+def test_root_binding_cannot_be_reassigned_without_explicit_migration(
+    tmp_path: Path,
+    kit_repository: Path,
+) -> None:
+    kit_paths = paths(tmp_path, kit_repository)
+    original = tmp_path / "original"
+    replacement = tmp_path / "replacement"
+    original.mkdir()
+    replacement.mkdir()
+    project = attach_project(original, kit_repository, kit_paths, identifier="stable-root")
+
+    with pytest.raises(AgentKitError, match="root binding"):
+        bind_repository(project, kit_paths, "root", replacement)
+
+    assert project_readiness(project, kit_paths)["repositories"]["root"] == str(original)
+
+
+def test_manifest_components_refine_and_extend_discovered_inventory(
+    tmp_path: Path,
+    kit_repository: Path,
+) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    (root / "pyproject.toml").write_text('[project]\nname = "service"\n', encoding="utf-8")
+    kit_paths = paths(tmp_path, kit_repository)
+    project = init_project(root, kit_repository, kit_paths)
+    project.manifest["components"] = [
+        {
+            "id": "python:service",
+            "repository": "root",
+            "path": ".",
+            "owner": "platform-team",
+            "criticality": "critical",
+        },
+        {
+            "id": "business-boundary",
+            "repository": "root",
+            "path": ".",
+            "owner": "product-team",
+            "criticality": "high",
+        },
+    ]
+
+    added = reconcile_project(project, kit_paths)["diff"]["added"]
+    by_id = {row["id"]: row for row in added}
+
+    assert by_id["python:service"]["owner"] == "platform-team"
+    assert by_id["python:service"]["criticality"] == "critical"
+    assert by_id["business-boundary"] == {
+        "id": "business-boundary",
+        "repository": "root",
+        "path": ".",
+        "type": "logical",
+        "dependencies": [],
+        "evidence": [".ai-team/project.yaml"],
+        "confidence": "declared",
+        "owner": "product-team",
+        "criticality": "high",
+    }
+
+
+def test_manifest_component_refinement_rejects_conflicting_location(
+    tmp_path: Path,
+    kit_repository: Path,
+) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    (root / "pyproject.toml").write_text('[project]\nname = "service"\n', encoding="utf-8")
+    kit_paths = paths(tmp_path, kit_repository)
+    project = init_project(root, kit_repository, kit_paths)
+    project.manifest["components"] = [
+        {"id": "python:service", "repository": "root", "path": "other"}
+    ]
+
+    with pytest.raises(AgentKitError, match="конфликтует"):
+        reconcile_project(project, kit_paths)

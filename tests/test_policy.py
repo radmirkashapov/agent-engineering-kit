@@ -133,3 +133,17 @@ def test_explain_json_shows_local_override_reason(tmp_path: Path) -> None:
 
     assert payload["policy"]["values"]["client.preferred"] == "cline"
     assert payload["policy"]["provenance"]["client.preferred"][-1]["reason"] == "Local trial"
+
+
+def test_policy_rejects_value_outside_target_domain() -> None:
+    with pytest.raises(AgentKitError, match="approvals.profile"):
+        resolve_policy(
+            [{"source": "kit", "entries": [{"key": "approvals.profile", "value": "readonly", "classification": "restriction"}]}],
+            [{"key": "approvals.profile", "value": "unsafe-magic", "reason": "test"}],
+        )
+
+    with pytest.raises(AgentKitError, match="mcp.access_profile"):
+        resolve_policy(
+            [{"source": "kit", "entries": [{"key": "mcp.access_profile", "value": "readonly", "classification": "restriction"}]}],
+            [{"key": "mcp.access_profile", "value": "superuser", "reason": "test"}],
+        )
