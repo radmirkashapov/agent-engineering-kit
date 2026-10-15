@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-engineering-kit.local/schemas/models.schema.json",
+  "title": "Model policy",
+  "type": "object",
+  "required": ["version", "models"],
+  "additionalProperties": false,
+  "properties": {
+    "version": { "const": 1 },
+    "providers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id"],
+        "additionalProperties": false,
+        "properties": { "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" } }
+      }
+    },
+    "models": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "provider", "capabilities"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "provider": { "type": "string", "minLength": 1 },
+          "aliases": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+          "capabilities": {
+            "type": "object",
+            "minProperties": 1,
+            "additionalProperties": { "type": "boolean" }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object", "additionalProperties": false, "required": ["version", "components"],
+  "properties": {
+    "version": {"const": 1},
+    "components": {"type": "array", "items": {
+      "type": "object", "additionalProperties": false, "required": ["id", "version", "revision"],
+      "properties": {
+        "id": {"type": "string"},
+        "version": {"type": "string"},
+        "revision": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "source": {"type": "string", "format": "uri"},
+        "verified_at": {"type": "string", "format": "date"}
+      }
+    }}
+  }
+}

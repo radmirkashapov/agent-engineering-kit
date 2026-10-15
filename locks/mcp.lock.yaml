@@ -1,0 +1,28 @@
+# Approved версии и immutable revisions всех MCP contracts.
+version: 1
+components:
+  # Для каждого MCP catalog ID должна существовать ровно одна lock-запись.
+  - id: codebase-memory
+    version: v0.11.0
+    revision: 8972ea69c6ad94b1ef1d4ffbf0a92d78d2db1798
+  - id: serena
+    version: 1.7.0
+    revision: 949a27ef1e5fda1a6e7b561e777bcece345c6ffd
+  - id: context7
+    version: remote-4.1.1
+    revision: 12db78ea043954de047277960fda7e1d28f1d420
+  - id: github
+    version: v1.12.2
+    revision: 85598ba6e1256f7ebf4867b95d63b833c4549264
+  - id: gitlab
+    version: gitlab-18.11-contract
+    revision: 97ca143d2345f48ce63411a9f14ed20836030ea1
+  - id: sonarqube
+    version: 1.19.0.2785
+    revision: 307f36f4d480f9e0d32d53d2888bf583541ecd9d
+  - id: playwright
+    version: 0.0.47
+    revision: f1257a5a67aff872f947fae274759f7d54853862
+  - id: atlassian
+    version: remote-contract-2026-09-02
+    revision: 2362bd84c4e614862aded220bdf003d25d56839e

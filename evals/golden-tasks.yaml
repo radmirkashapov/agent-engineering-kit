@@ -1,0 +1,13 @@
+# Набор воспроизводимых задач сравнивает client harness на одинаковых входах.
+version: 1
+tasks:
+  # Задача проверяет поиск связанного кода без изменения репозитория.
+  - id: locate-cross-module-contract
+    category: discovery
+    prompt: Find the producer and every consumer of the selected cross-module contract
+    metrics: [correctness, tool_calls, input_tokens, elapsed_ms]
+  # Задача проверяет изменение с тестами и документацией.
+  - id: implement-bounded-change
+    category: implementation
+    prompt: Implement the accepted bounded change and provide reproducible verification
+    metrics: [acceptance_pass_rate, regressions, input_tokens, elapsed_ms]

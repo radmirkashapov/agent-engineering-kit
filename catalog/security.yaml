@@ -1,0 +1,68 @@
+# Security tools устанавливаются во внешнее machine-local хранилище по lock-файлу.
+version: 1
+security:
+  # Обязательные scanners образуют gate перед активацией стороннего skill.
+  - id: skill-evaluator
+    name: NVIDIA SkillEvaluator
+    required: true
+    command: skillevaluator
+    platforms: [darwin, linux, windows]
+    source:
+      type: git
+      repository: https://github.com/NVIDIA/SkillEvaluator.git
+    installation:
+      type: uv-tool
+      python: "3.13"
+      requirement: "skillevaluator[security] @ git+https://github.com/NVIDIA/SkillEvaluator.git@{revision}"
+
+  - id: skillspector
+    name: NVIDIA SkillSpector
+    required: true
+    command: skillspector
+    platforms: [darwin, linux, windows]
+    source:
+      type: git
+      repository: https://github.com/NVIDIA/SkillSpector.git
+    installation:
+      type: uv-tool
+      python: "3.13"
+      requirement: "skillspector @ git+https://github.com/NVIDIA/SkillSpector.git@{revision}"
+
+  - id: semgrep
+    name: Semgrep Community Edition
+    required: true
+    command: semgrep
+    platforms: [darwin, linux, windows]
+    source:
+      type: git
+      repository: https://github.com/semgrep/semgrep.git
+    installation:
+      type: uv-tool
+      python: "3.13"
+      requirement: "semgrep==1.177.0"
+
+  - id: gitleaks
+    name: Gitleaks
+    required: true
+    command: gitleaks
+    platforms: [darwin, linux, windows]
+    source:
+      type: git
+      repository: https://github.com/gitleaks/gitleaks.git
+    installation:
+      type: go-install
+      # Upstream repository переименован, но go.mod намеренно сохраняет прежний module path.
+      module: github.com/zricethezav/gitleaks/v8@{version}
+
+  # Bumblebee обязателен для общей инвентаризации project dependencies и agent tooling.
+  - id: bumblebee
+    name: Perplexity Bumblebee
+    required: true
+    command: bumblebee
+    platforms: [darwin, linux]
+    source:
+      type: git
+      repository: https://github.com/perplexityai/bumblebee.git
+    installation:
+      type: go-install
+      module: github.com/perplexityai/bumblebee/cmd/bumblebee@{version}

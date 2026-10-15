@@ -1,0 +1,29 @@
+# Шаблон manifest описывает logical project, а не отдельный Git repository.
+version: 1
+id: example-project
+name: Пример проекта
+repositories:
+  # В single-repo проекте корневой repository обозначается относительным путём '.'.
+  - id: root
+    path: .
+    required: true
+# Обнаруженные компоненты живут в локальном state; здесь задаются только уточнения.
+components: []
+# Дополнительные conventions подключаются из YAML внутри logical project.
+conventions: []
+# Исключения для автоматического обнаружения; пути остаются относительными.
+discovery:
+  enabled: true
+  exclude_paths: []
+documentation:
+  # INDEX.md остаётся канонической картой durable documentation проекта.
+  index: docs/INDEX.md
+  roots:
+    - docs
+memory:
+  # Namespace связывает project с изолированной machine-local memory.
+  namespace: example-project
+harness:
+  # Auto выбирает первый adapter, покрывающий обязательные возможности проекта.
+  preferred_client: auto
+  required_capabilities: [instructions, skills, mcp]

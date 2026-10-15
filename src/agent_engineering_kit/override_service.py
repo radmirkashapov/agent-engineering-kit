@@ -1,0 +1,501 @@
+"""Безопасное изменение пользовательских локальных переопределений."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timezone
+import os
+from pathlib import Path
+import re
+import shutil
+import tempfile
+from typing import Literal
+
+import yaml
+
+from .access import ACCESS_KINDS
+from .errors import AgentKitError
+from .io import atomic_write, load_yaml, markdown_frontmatter
+from .paths import KitPaths
+from .projects import find_project
+from .schema import validate_instance
+
+
+_ACCESS_SCHEMA = Path(__file__).resolve().parents[2] / "schemas" / "access.schema.json"
+_MCP_SCHEMA = Path(__file__).resolve().parents[2] / "schemas" / "mcp.schema.json"
+_OVERRIDE_SCHEMA = Path(__file__).resolve().parents[2] / "schemas" / "override.schema.json"
+_SKILL_SCHEMA = Path(__file__).resolve().parents[2] / "schemas" / "skill.schema.json"
+_IDENTIFIER_PATTERN = re.compile(r"^[a-z][a-z0-9-]*$")
+GENERIC_OVERRIDE_KINDS = frozenset({
+    "agents", "rules", "models", "skills", "mcp", "approvals", "sandbox", "network", "tools", "harness"
+})
+_COMPONENT_KINDS = frozenset({"agents", "rules", "skills", "mcp"})
+_POLICY_KEY_ALIASES = {
+    "harness.client": "client.preferred",
+    "mcp.access-profile": "mcp.access_profile",
+}
+_POLICY_COMPONENT_IDS = frozenset({("mcp", "access-profile")})
+
+
+@dataclass(frozen=True)
+class OverrideScope:
+    """Каталог локальных переопределений выбранного уровня."""
+
+    kind: Literal["global", "project"]
+    root: Path
+    project_id: str | None
+
+
+def _reject_symlinked_destination_parents(destination: Path, root: Path) -> None:
+    relative = destination.relative_to(root)
+    parents = [root, *(root.joinpath(*relative.parts[:index]) for index in range(1, len(relative.parts)))]
+    for parent in parents:
+        try:
+            parent.lstat()
+        except FileNotFoundError:
+            continue
+        if parent.is_symlink():
+            raise AgentKitError(f"Каталог назначения не должен быть символической ссылкой: {parent}")
+
+
+def _create_missing_file(destination: Path, content: str) -> bool:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{destination.name}.", dir=destination.parent, text=True)
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as stream:
+            stream.write(content)
+        try:
+            os.link(temporary, destination)
+        except FileExistsError:
+            return False
+        return True
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def initialize_override_workspace(repository: Path, paths: KitPaths) -> list[Path]:
+    """Создать отсутствующие нейтральные локальные переопределения из шаблонов."""
+    template_root = repository / "templates" / "overrides"
+    created: list[Path] = []
+    for template in sorted(template_root.rglob("*")):
+        if template.is_symlink() or not template.is_file() or "__pycache__" in template.relative_to(template_root).parts:
+            continue
+        destination = paths.overrides / template.relative_to(template_root)
+        _reject_symlinked_destination_parents(destination, paths.overrides)
+        if destination.exists() or destination.is_symlink():
+            continue
+        if _create_missing_file(destination, template.read_text(encoding="utf-8")):
+            created.append(destination)
+    return created
+
+
+def resolve_scope(paths: KitPaths, scope: str, cwd: Path) -> OverrideScope:
+    """Разрешить явно выбранный уровень локальных переопределений."""
+    if scope == "global":
+        return OverrideScope("global", paths.overrides / "global", None)
+    if scope != "project":
+        raise AgentKitError(f"Неизвестная область переопределений: {scope!r}")
+    project = find_project(cwd)
+    if project is None:
+        raise AgentKitError("Логический проект не найден: ожидается .ai-team/project.yaml")
+    return OverrideScope(
+        "project",
+        paths.overrides / "projects" / project.identifier,
+        project.identifier,
+    )
+
+
+def _validate_identifier(identifier: str) -> None:
+    if _IDENTIFIER_PATTERN.fullmatch(identifier) is None:
+        raise AgentKitError(
+            "ID компонента должен начинаться со строчной латинской буквы "
+            "и содержать только строчные латинские буквы, цифры и дефис"
+        )
+
+
+def _scope_path(scope: OverrideScope, *parts: str) -> Path:
+    root = scope.root.expanduser().resolve()
+    candidate = root.joinpath(*parts).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError as error:
+        raise AgentKitError(f"Путь компонента выходит за область переопределений: {candidate}") from error
+    return candidate
+
+
+def _default_backup_root(scope: OverrideScope) -> Path:
+    root = scope.root.expanduser().resolve()
+    if scope.kind == "global":
+        return root.parent / "backups"
+    if scope.kind == "project":
+        return root.parent.parent / "backups"
+    raise AgentKitError(f"Неизвестная область переопределений: {scope.kind!r}")
+
+
+def _new_backup_directory(backup_root: Path) -> Path:
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
+    backup = backup_root.expanduser().resolve() / timestamp
+    backup.mkdir(parents=True, exist_ok=False)
+    return backup
+
+
+def _backup_destination(scope: OverrideScope, backup: Path, source: Path) -> Path:
+    root = scope.root.expanduser().resolve()
+    source = source.resolve()
+    try:
+        relative = source.relative_to(root)
+    except ValueError as error:
+        raise AgentKitError(f"Резервируемый путь выходит за область переопределений: {source}") from error
+    destination = (backup / relative).resolve()
+    try:
+        destination.relative_to(backup.resolve())
+    except ValueError as error:
+        raise AgentKitError(f"Путь резервной копии выходит за её каталог: {destination}") from error
+    return destination
+
+
+def _snapshot_existing(
+    scope: OverrideScope,
+    paths: list[Path],
+    *,
+    backup_root: Path | None = None,
+) -> tuple[Path | None, list[Path]]:
+    existing = [path for path in paths if path.exists()]
+    if not existing:
+        return None, []
+    backup = _new_backup_directory(backup_root or _default_backup_root(scope))
+    snapshots: list[Path] = []
+    for source in existing:
+        destination = _backup_destination(scope, backup, source)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if source.is_dir():
+            shutil.copytree(source, destination)
+        else:
+            shutil.copy2(source, destination)
+        snapshots.append(destination)
+    return backup, snapshots
+
+
+def _write_access(path: Path, document: dict[str, object]) -> None:
+    result = validate_instance(document, _ACCESS_SCHEMA, str(path))
+    if not result.ok:
+        message = next(item.message for item in result.diagnostics if item.severity == "ERROR")
+        raise AgentKitError(f"Некорректная политика доступа: {message}")
+    atomic_write(path, yaml.safe_dump(document, allow_unicode=True, sort_keys=False))
+
+
+def _access_values(section: dict[object, object], kind: str, name: str) -> set[str]:
+    values = section.get(name, [])
+    if not isinstance(values, list) or not all(isinstance(value, str) for value in values):
+        raise AgentKitError(f"Список {kind}.{name} должен содержать только строковые ID")
+    return set(values)
+
+
+def _validated_yaml(document: dict[str, object], schema: Path, label: str) -> str:
+    result = validate_instance(document, schema, label)
+    if not result.ok:
+        message = next(item.message for item in result.diagnostics if item.severity == "ERROR")
+        raise AgentKitError(f"Некорректное переопределение: {message}")
+    return yaml.safe_dump(document, allow_unicode=True, sort_keys=False)
+
+
+def _replace_directory(source: Path, target: Path, definition: Path, content: str) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix=f".{target.name}.", dir=target.parent))
+    previous: Path | None = None
+    target_moved = False
+    try:
+        shutil.copytree(source, staging, dirs_exist_ok=True)
+        if target.exists():
+            previous = Path(tempfile.mkdtemp(prefix=f".{target.name}.previous.", dir=target.parent))
+            previous.rmdir()
+            os.replace(target, previous)
+            target_moved = True
+        try:
+            os.replace(staging, target)
+        except Exception:
+            if target_moved and previous is not None:
+                os.replace(previous, target)
+            raise
+        try:
+            atomic_write(definition, content)
+        except Exception:
+            if target.exists():
+                shutil.rmtree(target)
+            if target_moved and previous is not None:
+                os.replace(previous, target)
+            raise
+        if previous is not None:
+            shutil.rmtree(previous)
+    finally:
+        if staging.exists():
+            shutil.rmtree(staging)
+
+
+def set_component_access(
+    scope: OverrideScope,
+    kind: str,
+    identifier: str,
+    *,
+    enabled: bool,
+) -> Path:
+    """Изменить доступ к произвольному ID, сохранив остальные разделы YAML."""
+    if kind not in ACCESS_KINDS:
+        raise AgentKitError(f"Неподдерживаемый тип политики доступа: {kind!r}")
+    _validate_identifier(identifier)
+    path = _scope_path(scope, "access.yaml")
+    document: dict[str, object] = load_yaml(path) if path.is_file() else {
+        "version": 1,
+        "mcp": {"allow": [], "block": []},
+        "skills": {"allow": [], "block": []},
+    }
+    section = document.setdefault(kind, {"allow": [], "block": []})
+    if not isinstance(section, dict):
+        raise AgentKitError(f"Некорректный раздел политики доступа: {kind}")
+    allow = _access_values(section, kind, "allow")
+    block = _access_values(section, kind, "block")
+    if enabled:
+        block.discard(identifier)
+        if allow:
+            allow.add(identifier)
+    else:
+        allow.discard(identifier)
+        block.add(identifier)
+    section["allow"] = sorted(allow)
+    section["block"] = sorted(block)
+    _snapshot_existing(scope, [path])
+    _write_access(path, document)
+    return path
+
+
+def install_skill_override(scope: OverrideScope, identifier: str, source: Path) -> Path:
+    """Скопировать локальный skill и записать переносимое переопределение."""
+    _validate_identifier(identifier)
+    source = source.expanduser().resolve()
+    skill_file = source / "SKILL.md"
+    if not source.is_dir() or not skill_file.is_file():
+        raise AgentKitError(f"Источник skill должен быть каталогом с SKILL.md: {source}")
+    metadata = markdown_frontmatter(skill_file)
+    result = validate_instance(metadata, _SKILL_SCHEMA, str(skill_file))
+    if not result.ok:
+        message = next(item.message for item in result.diagnostics if item.severity == "ERROR")
+        raise AgentKitError(f"Некорректный SKILL.md: {message}")
+    actual_name = metadata.get("name") or metadata.get("id")
+    if actual_name != identifier:
+        raise AgentKitError(
+            f"Skill name {actual_name!r} должен совпадать с target {identifier!r}"
+        )
+
+    definition = _scope_path(scope, "skills", f"{identifier}.yaml")
+    copied_source = _scope_path(scope, "sources", "skills", identifier)
+    relative_source = Path("..") / "sources" / "skills" / identifier
+    document: dict[str, object] = {
+        "target": identifier,
+        "override": {
+            "mode": "replace",
+            "value": {"path": relative_source.as_posix()},
+        },
+    }
+    content = _validated_yaml(document, _OVERRIDE_SCHEMA, str(definition))
+    _snapshot_existing(scope, [definition, copied_source])
+    _replace_directory(source, copied_source, definition, content)
+    return definition
+
+
+def install_mcp_override(scope: OverrideScope, identifier: str, source: Path) -> Path:
+    """Проверить и атомарно установить локальное переопределение MCP."""
+    _validate_identifier(identifier)
+    source = source.expanduser().resolve()
+    document = load_yaml(source)
+    mode = document.get("mode")
+    value = document.get("value", {})
+    if not isinstance(value, dict):
+        raise AgentKitError("Поле value переопределения MCP должно быть объектом")
+    if "id" in value:
+        raise AgentKitError("Поле value переопределения MCP не должно содержать id; используйте target команды")
+    environment = value.get("environment", {})
+    if not isinstance(environment, dict):
+        raise AgentKitError("Поле environment переопределения MCP должно быть объектом")
+    if any(
+        not isinstance(reference, str)
+        or re.fullmatch(r"env:[A-Z][A-Z0-9_]*", reference) is None
+        for reference in environment.values()
+    ):
+        raise AgentKitError("Секреты MCP задаются только ссылками формата env:VARIABLE")
+
+    if mode == "replace":
+        effective = {**value, "id": identifier}
+        result = validate_instance(
+            {"version": 1, "servers": [effective]},
+            _MCP_SCHEMA,
+            f"итоговый MCP {identifier!r}",
+        )
+        if not result.ok:
+            message = next(item.message for item in result.diagnostics if item.severity == "ERROR")
+            raise AgentKitError(f"Некорректный итоговый MCP: {message}")
+
+    target = _scope_path(scope, "mcp", f"{identifier}.yaml")
+    override: dict[str, object] = {
+        "target": identifier,
+        "override": {"mode": mode, "value": value},
+    }
+    content = _validated_yaml(override, _OVERRIDE_SCHEMA, str(target))
+    _snapshot_existing(scope, [target])
+    atomic_write(target, content)
+    return target
+
+
+def reset_component_override(
+    scope: OverrideScope,
+    kind: str,
+    identifier: str,
+    backup_root: Path,
+) -> list[Path]:
+    """Сбросить локальные настройки и перенести данные в резервную копию."""
+    if kind not in ACCESS_KINDS:
+        raise AgentKitError(f"Неподдерживаемый тип переопределения: {kind!r}")
+    _validate_identifier(identifier)
+
+    access_path = _scope_path(scope, "access.yaml")
+    access_document: dict[str, object] | None = None
+    access_changed = False
+    if access_path.is_file():
+        access_document = load_yaml(access_path)
+        section = access_document.get(kind, {})
+        if not isinstance(section, dict):
+            raise AgentKitError(f"Некорректный раздел политики доступа: {kind}")
+        allow = _access_values(section, kind, "allow")
+        block = _access_values(section, kind, "block")
+        access_changed = identifier in allow or identifier in block
+        allow.discard(identifier)
+        block.discard(identifier)
+        section["allow"] = sorted(allow)
+        section["block"] = sorted(block)
+        result = validate_instance(access_document, _ACCESS_SCHEMA, str(access_path))
+        if not result.ok:
+            message = next(item.message for item in result.diagnostics if item.severity == "ERROR")
+            raise AgentKitError(f"Некорректная политика доступа: {message}")
+
+    candidates = [_scope_path(scope, kind, f"{identifier}.yaml")]
+    if kind == "skills":
+        candidates.append(_scope_path(scope, "sources", "skills", identifier))
+    existing = [candidate for candidate in candidates if candidate.exists()]
+    if not existing and not access_changed:
+        return []
+
+    backup = _new_backup_directory(backup_root)
+    moved: list[Path] = []
+    moved_components: list[Path] = []
+    origins: list[Path] = []
+    try:
+        if access_changed:
+            access_backup = _backup_destination(scope, backup, access_path)
+            access_backup.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(access_path, access_backup)
+            moved.append(access_backup)
+
+        for candidate in existing:
+            destination = _backup_destination(scope, backup, candidate)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(candidate), str(destination))
+            origins.append(candidate)
+            moved.append(destination)
+            moved_components.append(destination)
+
+        if access_document is not None and access_changed:
+            _write_access(access_path, access_document)
+    except Exception:
+        for origin, destination in reversed(list(zip(origins, moved_components, strict=True))):
+            origin.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(destination), str(origin))
+        raise
+    return moved
+
+
+def _generic_identifier(identifier: str) -> None:
+    if re.fullmatch(r"^[a-z][a-z0-9_.-]*$", identifier) is None or ".." in identifier:
+        raise AgentKitError(f"Некорректный ID переопределения: {identifier!r}")
+
+
+def _policy_key(kind: str, identifier: str) -> str:
+    return _POLICY_KEY_ALIASES.get(f"{kind}.{identifier}", f"{kind}.{identifier}")
+
+
+def install_generic_override(
+    scope: OverrideScope,
+    kind: str,
+    identifier: str,
+    *,
+    mode: str,
+    source: Path,
+    reason: str,
+) -> Path:
+    """Установить проверенное локальное переопределение любого публичного вида."""
+    if kind not in GENERIC_OVERRIDE_KINDS:
+        raise AgentKitError(f"Неподдерживаемый тип переопределения: {kind!r}")
+    _generic_identifier(identifier)
+    if mode not in {"extend", "replace", "disable"}:
+        raise AgentKitError(f"Неподдерживаемый режим переопределения: {mode!r}")
+    if not reason.strip():
+        raise AgentKitError("Для локального переопределения обязательна причина")
+    document = load_yaml(source.expanduser().resolve())
+    value = document.get("value", document)
+    is_component = kind in _COMPONENT_KINDS and (kind, identifier) not in _POLICY_COMPONENT_IDS
+    if is_component:
+        if mode != "disable" and not isinstance(value, dict):
+            raise AgentKitError("Переопределение компонента должно содержать объект value")
+        target = _scope_path(scope, kind, f"{identifier}.yaml")
+        payload: dict[str, object] = {
+            "target": identifier,
+            "override": {"mode": mode, "reason": reason, "value": value if isinstance(value, dict) else {}},
+        }
+        content = _validated_yaml(payload, _OVERRIDE_SCHEMA, str(target))
+    else:
+        if mode != "replace":
+            raise AgentKitError("Переопределения policy-параметров поддерживают только режим replace")
+        target = _scope_path(scope, "policy", f"{kind}-{identifier.replace('.', '-')}.yaml")
+        payload = {
+            "version": 1,
+            "overrides": [{"key": _policy_key(kind, identifier), "value": value, "reason": reason}],
+        }
+        policy_schema = Path(__file__).resolve().parents[2] / "schemas" / "policy-override.schema.json"
+        content = _validated_yaml(payload, policy_schema, str(target))
+    _snapshot_existing(scope, [target])
+    atomic_write(target, content)
+    return target
+
+
+def list_overrides(scope: OverrideScope) -> list[dict[str, object]]:
+    """Перечислить определения выбранного локального слоя без чтения backups и sources."""
+    rows: list[dict[str, object]] = []
+    for kind in sorted(GENERIC_OVERRIDE_KINDS | {"policy"}):
+        directory = scope.root / kind
+        if not directory.is_dir():
+            continue
+        for path in sorted(directory.glob("*.yaml")):
+            rows.append({"kind": kind, "path": str(path), "document": load_yaml(path)})
+    return rows
+
+
+def reset_generic_override(
+    scope: OverrideScope,
+    kind: str,
+    identifier: str,
+    backup_root: Path,
+) -> list[Path]:
+    """Сбросить generic override с сохранением recoverable backup."""
+    if kind not in GENERIC_OVERRIDE_KINDS:
+        raise AgentKitError(f"Неподдерживаемый тип переопределения: {kind!r}")
+    _generic_identifier(identifier)
+    if kind in _COMPONENT_KINDS and (kind, identifier) not in _POLICY_COMPONENT_IDS:
+        target = _scope_path(scope, kind, f"{identifier}.yaml")
+    else:
+        target = _scope_path(scope, "policy", f"{kind}-{identifier.replace('.', '-')}.yaml")
+    if not target.exists():
+        return []
+    backup = _new_backup_directory(backup_root)
+    destination = _backup_destination(scope, backup, target)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(target), str(destination))
+    return [destination]

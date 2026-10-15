@@ -1,0 +1,13 @@
+# Профиль разработчика сочетает самостоятельную реализацию с явными границами записи.
+version: 1
+id: developer
+description: Implement approved changes with scoped write access and explicit review gates
+roles: [orchestrator, developer, reviewer]
+skills: [project-orientation, change-impact, verification]
+mcp: [codebase-memory, serena, context7]
+permissions:
+  # Рискованные действия требуют решения внешнего harness.
+  approval_mode: custom
+  sandbox: workspace-write
+  network: allowlist
+  tools: [read, search, edit, test, git]

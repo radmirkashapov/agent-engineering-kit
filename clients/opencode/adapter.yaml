@@ -1,0 +1,7 @@
+# OpenCode подключается через AGENTS.md, Agent Skills и собственный MCP config.
+version: 1
+id: opencode
+entrypoint: AI.md
+instructions: AGENTS.md
+skills: skills
+mcp: mcp/registry.yaml

@@ -1,0 +1,9 @@
+# Проверенные версии сторонних skills, разрешённые к machine-local активации.
+version: 1
+components:
+  # Source и verified_at помогают воспроизвести ручной security review.
+  - id: superpowers
+    version: v6.3.0
+    revision: b36e0829c6d0140e93cfef2ca599b1b07d4a7797
+    verified_at: "2026-09-19"
+    source: https://github.com/obra/superpowers.git

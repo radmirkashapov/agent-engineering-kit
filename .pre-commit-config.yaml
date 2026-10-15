@@ -1,0 +1,22 @@
+# Локальные hooks запускают те же проверки, что и CI, до создания commit.
+repos:
+  - repo: local
+    hooks:
+      # Первый hook проверяет декларативные contracts; второй запускает tests.
+      - id: agent-kit-validate
+        name: Проверить корпоративную конфигурацию agent-kit
+        entry: python tools/precommit.py validate --ci
+        language: python
+        additional_dependencies:
+          - PyYAML>=6.0.2,<7
+          - jsonschema>=4.23,<5
+        pass_filenames: false
+      - id: agent-kit-tests
+        name: Запустить тесты agent-kit
+        entry: python tools/precommit.py tests
+        language: python
+        additional_dependencies:
+          - PyYAML>=6.0.2,<7
+          - jsonschema>=4.23,<5
+          - pytest>=8.3,<10
+        pass_filenames: false

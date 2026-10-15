@@ -1,0 +1,53 @@
+# Пользовательские модели
+models/user.local.yaml
+models/*.local.yaml
+*.local.yaml
+
+# Пользовательские overrides
+overrides/
+overrides/*.local.*
+overrides/local/
+.local/
+.runtime/
+runtime/
+installations/
+state/
+projects/
+
+# Secrets
+.env
+.env.*
+!.env.example
+secrets/
+*.token
+*.secret
+*.pem
+*.key
+
+# Runtime
+.cache/
+.codebase-memory/
+.serena/
+logs/
+tmp/
+*.log
+
+# Generated machine-specific configs
+clients/**/generated/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+.venv/
+dist/
+build/
+*.egg-info/
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

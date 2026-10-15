@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-engineering-kit.local/schemas/skill.schema.json",
+  "type": "object",
+  "required": ["version", "name", "description", "requires"],
+  "additionalProperties": false,
+  "properties": {
+    "version": { "const": 1 },
+    "name": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+    "description": { "type": "string", "minLength": 1 },
+    "policy": { "enum": ["configurable", "enforced"] },
+    "requires": {
+      "type": "object", "required": ["model_capabilities"], "additionalProperties": false,
+      "properties": { "model_capabilities": { "type": "array", "uniqueItems": true, "items": { "type": "string" } } }
+    },
+    "model": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "preferred": { "type": "string" },
+        "allowed": { "type": "array", "uniqueItems": true, "items": { "type": "string" } }
+      }
+    }
+  }
+}

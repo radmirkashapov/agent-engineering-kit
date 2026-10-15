@@ -1,0 +1,7 @@
+# Thin adapter не копирует global rules, а указывает Cline на canonical contracts.
+version: 1
+id: cline
+entrypoint: AI.md
+instructions: AGENTS.md
+skills: skills
+mcp: mcp/registry.yaml

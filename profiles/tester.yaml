@@ -1,0 +1,13 @@
+# Профиль тестировщика по умолчанию не разрешает изменение исходного кода.
+version: 1
+id: tester
+description: Verify acceptance criteria with read-only source access and controlled test execution
+roles: [orchestrator, qa-engineer]
+skills: [project-orientation, verification]
+mcp: [codebase-memory, context7]
+permissions:
+  # Запись допускается только в управляемые каталоги результатов.
+  approval_mode: readonly
+  sandbox: read-only
+  network: deny
+  tools: [read, search, test]

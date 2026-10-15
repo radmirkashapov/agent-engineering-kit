@@ -1,0 +1,7 @@
+# Claude Desktop получает отдельный MCP contract из-за отличий от Claude Code.
+version: 1
+id: claude-desktop
+entrypoint: AI.md
+instructions: desktop-mcp
+skills: skills
+mcp: mcp/registry.yaml

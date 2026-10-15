@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-engineering-kit.local/schemas/access.schema.json",
+  "type": "object",
+  "required": ["version"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {"const": 1},
+    "mcp": {"$ref": "#/$defs/access-list"},
+    "skills": {"$ref": "#/$defs/access-list"}
+  },
+  "$defs": {
+    "access-list": {
+      "type": "object",
+      "required": ["allow", "block"],
+      "additionalProperties": false,
+      "properties": {
+        "allow": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "block": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        }
+      }
+    }
+  }
+}

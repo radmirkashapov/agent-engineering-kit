@@ -1,0 +1,7 @@
+# Codex и Codex Desktop используют общий AI.md и нативные discovery paths.
+version: 1
+id: codex
+entrypoint: AI.md
+instructions: AGENTS.md
+skills: skills
+mcp: mcp/registry.yaml

@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-engineering-kit.local/schemas/policy-override.schema.json",
+  "title": "Machine-local capability policy overrides",
+  "type": "object",
+  "required": ["version", "overrides"],
+  "additionalProperties": false,
+  "properties": {
+    "version": { "const": 1 },
+    "overrides": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["key", "value", "reason"],
+        "additionalProperties": false,
+        "properties": {
+          "key": { "type": "string", "pattern": "^[a-z][a-z0-9_.-]*$" },
+          "value": {},
+          "reason": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}

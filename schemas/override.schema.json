@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-engineering-kit.local/schemas/override.schema.json",
+  "type": "object",
+  "required": ["target", "override"],
+  "additionalProperties": false,
+  "properties": {
+    "target": { "type": "string", "minLength": 1 },
+    "override": {
+      "type": "object", "required": ["mode"],
+      "additionalProperties": false,
+      "properties": {
+        "mode": { "enum": ["extend", "replace", "disable"] },
+        "reason": { "type": "string", "minLength": 1 },
+        "value": { "type": "object" }
+      }
+    }
+  }
+}

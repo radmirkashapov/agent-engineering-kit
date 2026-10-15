@@ -1,0 +1,38 @@
+# Реестр сторонних skills хранит metadata, но никогда не содержит их исходный код.
+version: 1
+skills:
+  # Superpowers — обязательный внешний baseline с точным security review.
+  - id: superpowers
+    source:
+      type: git
+      repository: https://github.com/obra/superpowers.git
+    installation:
+      mode: external
+    required: true
+    capabilities:
+      - using-superpowers
+      - brainstorming
+      - writing-plans
+      - executing-plans
+      - dispatching-parallel-agents
+      - subagent-driven-development
+      - using-git-worktrees
+      - test-driven-development
+      - systematic-debugging
+      - verification-before-completion
+      - requesting-code-review
+      - receiving-code-review
+      - finishing-a-development-branch
+      - writing-skills
+    security:
+      profile: external
+      activation_requires_pass: true
+      reviewed_revision: b36e0829c6d0140e93cfef2ca599b1b07d4a7797
+      accepted_finding_codes: [AE1, AS1, AS3, E4, EA2, EA4, LP3, P2, PE2, PE3, RA1, RA2, TM1]
+      accepted_gitleaks:
+        - rule: generic-api-key
+          path: tests/brainstorm-server/ws-protocol.test.js
+          line: 53
+      review_note: Upstream-документация обоснованно описывает настройку agents, поиск skills, отладку, очистку Git, push и создание skills; выполнение и пользовательские разрешения по-прежнему регулируются обязательной политикой kit.
+    activation:
+      default: enabled

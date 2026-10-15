@@ -1,0 +1,121 @@
+# Каталог управляет интерактивным меню project init; CLI не содержит зашитого списка стеков.
+version: 1
+templates:
+  # Минимальный вариант создаёт только project metadata и документацию Kit.
+  - id: minimal
+    name: Minimal project
+    language: generic
+    stack: none
+    description: Create only Agent Engineering Kit metadata without application scaffolding
+    files: {}
+
+  # Python service с небольшим FastAPI-каркасом и проверкой health endpoint.
+  - id: python-fastapi
+    name: Python / FastAPI service
+    language: python
+    stack: fastapi
+    description: Create a Python service with FastAPI, pytest, and environment examples
+    files:
+      pyproject.toml: |
+        [project]
+        name = "${PROJECT_NAME}"
+        version = "0.1.0"
+        requires-python = ">=3.11"
+        dependencies = ["fastapi>=0.115,<1", "uvicorn>=0.32,<1"]
+
+        [project.optional-dependencies]
+        dev = ["pytest>=8,<10", "httpx>=0.28,<1"]
+
+        [tool.pytest.ini_options]
+        testpaths = ["tests"]
+      src/app/__init__.py: |
+        """Application package."""
+      src/app/main.py: |
+        """HTTP entry point."""
+
+        from fastapi import FastAPI
+
+        app = FastAPI(title="${PROJECT_NAME}")
+
+
+        @app.get("/health")
+        def health() -> dict[str, str]:
+            return {"status": "ok"}
+      tests/test_health.py: |
+        from fastapi.testclient import TestClient
+
+        from app.main import app
+
+
+        def test_health() -> None:
+            assert TestClient(app).get("/health").json() == {"status": "ok"}
+      .gitignore: |
+        .venv/
+        __pycache__/
+        .pytest_cache/
+        .env
+      .env.example: |
+        # Добавляйте только имена переменных и безопасные примеры, но не секреты.
+        APP_ENV=development
+
+  # TypeScript service без привязки к облачной платформе.
+  - id: typescript-node
+    name: TypeScript / Node.js service
+    language: typescript
+    stack: node
+    description: Create a TypeScript Node.js service with a test command
+    files:
+      package.json: |
+        {
+          "name": "${PROJECT_NAME}",
+          "version": "0.1.0",
+          "private": true,
+          "scripts": {"build": "tsc", "test": "node --test"},
+          "devDependencies": {"typescript": "^5.7.0"}
+        }
+      tsconfig.json: |
+        {
+          "compilerOptions": {"target": "ES2022", "module": "NodeNext", "strict": true, "outDir": "dist"},
+          "include": ["src/**/*.ts"]
+        }
+      src/index.ts: |
+        export const health = (): { status: string } => ({ status: "ok" });
+      .gitignore: |
+        node_modules/
+        dist/
+        .env
+      .env.example: |
+        # Добавляйте только имена переменных и безопасные примеры, но не секреты.
+        NODE_ENV=development
+
+  # Go service использует только стандартную библиотеку в стартовом каркасе.
+  - id: go-http
+    name: Go / net/http service
+    language: go
+    stack: net-http
+    description: Create a small Go HTTP service using the standard library
+    files:
+      go.mod: |
+        module ${PROJECT_NAME}
+
+        go 1.23
+      cmd/server/main.go: |
+        package main
+
+        import (
+          "encoding/json"
+          "net/http"
+        )
+
+        func main() {
+          http.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
+            _ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+          })
+          _ = http.ListenAndServe(":8080", nil)
+        }
+      .gitignore: |
+        bin/
+        .env
+      .env.example: |
+        # Добавляйте только имена переменных и безопасные примеры, но не секреты.
+        APP_ENV=development
