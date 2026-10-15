@@ -15,6 +15,7 @@ SCHEMA_TARGETS = {
     "models/corporate.yaml": "models/schemas/models.schema.json",
     "templates/project/project.yaml": "schemas/project.schema.json",
     "mcp/registry.yaml": "schemas/mcp.schema.json",
+    "mcp/docker-toolkit.yaml": "schemas/docker-toolkit.schema.json",
     "catalog/skills.yaml": "schemas/skill-source.schema.json",
     "catalog/security.yaml": "schemas/security-catalog.schema.json",
     "catalog/clients.yaml": "schemas/clients.schema.json",

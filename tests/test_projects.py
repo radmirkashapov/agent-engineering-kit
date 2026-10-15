@@ -8,6 +8,7 @@ import pytest
 from agent_engineering_kit.errors import AgentKitError
 from agent_engineering_kit.paths import KitPaths
 from agent_engineering_kit.projects import find_project, init_project, register_memory, validate_project
+import agent_engineering_kit.projects as projects_module
 from agent_engineering_kit.bindings import attach_project, bind_repository, project_readiness, reconcile_project
 
 
@@ -32,6 +33,28 @@ def test_single_repo_project(tmp_path: Path, kit_repository: Path) -> None:
     }
     assert (root / "docs/INDEX.md").is_file()
     assert validate_project(project, kit_repository).ok
+
+
+def test_project_init_indexes_memory_immediately(
+    tmp_path: Path,
+    kit_repository: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    indexed: list[tuple[str, str]] = []
+
+    class FakeMemoryManager:
+        def __init__(self, repository: Path, kit_paths: KitPaths) -> None:
+            assert repository == kit_repository
+
+        def index(self, project, *, mode: str):
+            indexed.append((project.identifier, mode))
+            return {"status": "PASS"}
+
+    monkeypatch.setattr(projects_module, "ProjectMemoryManager", FakeMemoryManager)
+
+    init_project(tmp_path / "indexed-project", kit_repository, paths(tmp_path, kit_repository))
+
+    assert indexed == [("indexed-project", "full")]
 
 
 def test_monorepo_detects_nested_components(tmp_path: Path, kit_repository: Path) -> None:

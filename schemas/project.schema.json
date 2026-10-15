@@ -37,6 +37,22 @@
       "type": "object", "required": ["namespace"], "additionalProperties": false,
       "properties": { "namespace": { "$ref": "#/$defs/id" } }
     },
+    "integrations": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "jira": {
+          "type": "object",
+          "required": ["project_key"],
+          "additionalProperties": false,
+          "properties": {
+            "project_key": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]*$" },
+            "cloud_id": { "type": "string", "minLength": 1 },
+            "site_url": { "type": "string", "format": "uri" }
+          }
+        }
+      }
+    },
     "conventions": {
       "type": "array", "uniqueItems": true,
       "items": { "$ref": "#/$defs/relativeYamlPath" }

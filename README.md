@@ -98,6 +98,8 @@ python3 -m venv .venv
 python -m pip install -e '.[dev]'
 ```
 
+Сценарий для команды, которая ведёт корпоративную копию в GitLab и периодически забирает изменения из исходного GitHub, описан в [отдельной инструкции](docs/runbooks/install-from-gitlab-fork.md).
+
 ## Первый запуск
 
 ```bash
@@ -126,6 +128,8 @@ agent-kit doctor
 
 CBM и Serena дополняют друг друга: сначала CBM определяет область влияния, затем Serena уточняет конкретные символы и ссылки. Однако нативная регистрация выполняется только тогда, когда штатный client способен применить весь выбранный capability contract. В профиле `readonly` mixed read/write серверы (`codebase-memory`, `serena`, SCM, Playwright и Atlassian) не регистрируются целиком под видом read-only. `planned_capabilities` показывают план, а `enabled_capabilities` — только реально применённый полный surface. Локальный пользователь может выбрать более свободный профиль через override, принимая соответствующий риск.
 
+Serena сохраняет web dashboard, но Kit запускает сервер с `--open-web-dashboard false`: страница доступна вручную и больше не открывается новой вкладкой при каждом старте MCP.
+
 Проверить состояние:
 
 ```bash
@@ -133,6 +137,20 @@ agent-kit mcp list
 agent-kit mcp status
 agent-kit mcp explain <id>
 ```
+
+### Docker MCP Toolkit
+
+Docker MCP Toolkit поддерживается как опциональный способ запуска `github` и `playwright`. По умолчанию он отключён, поэтому все серверы используют прежнюю нативную регистрацию. После включения Kit управляет только выделенным профилем `agent-engineering-kit` и гарантирует для каждого MCP единственный маршрут: native либо Docker gateway.
+
+```bash
+agent-kit mcp docker status
+agent-kit mcp docker plan
+agent-kit mcp docker enable --scope global
+agent-kit mcp docker sync
+agent-kit mcp docker disable --scope global
+```
+
+`plan` ничего не изменяет. `sync` добавляет и удаляет только записи, которыми владеет Kit; пользовательские серверы в Docker profile сохраняются. Клиенты переключаются на namespaced gateway `agent-kit-docker` только после успешной сверки профиля. Если `docker mcp` недоступен, команда возвращает `CONFIG_REQUIRED`, а нативные MCP продолжают работать.
 
 ## Skills из коробки
 
@@ -177,15 +195,32 @@ agent-kit skills explain <id>
 
 ### 1. При необходимости подключить logical project
 
-Выполни команду из корня рабочего пространства:
+Выполни команду из каталога будущего проекта:
 
 ```bash
-agent-kit project init . --id my-project
+agent-kit project init
 # Если менять repository нельзя:
 agent-kit project attach /workspace/my-project --id my-project
 ```
 
-Project manifest необязателен для общих настроек Kit. `project init` создаёт версионируемый `.ai-team/project.yaml`; `project attach` создаёт descriptor только в локальных данных машины и не меняет исходный repository. Компоненты Maven, Gradle, Node.js, Go, Cargo, .NET, Python и Bazel обнаруживаются автоматически. Поле `components` нужно только для ownership, criticality и дополнительных логических границ.
+В интерактивном терминале `project init` предлагает язык и стек из версионируемого `catalog/project-templates.yaml`, основную ветку и при необходимости выполняет `git init`. Существующие файлы не перезаписываются. Для CI те же настройки задаются явно:
+
+```bash
+agent-kit project init ./orders \
+  --template python-fastapi \
+  --git \
+  --default-branch main
+```
+
+Project manifest необязателен для общих настроек Kit. `project init` создаёт версионируемый `.ai-team/project.yaml`; `project attach` создаёт descriptor только в локальных данных машины и не меняет исходный repository. Компоненты Maven, Gradle, Node.js, Go, Cargo, .NET, Python и Bazel обнаруживаются автоматически. Поле `components` нужно только для ownership, criticality и дополнительных логических границ. Настройку Jira можно объявить в `integrations.jira` через `project_key`, `cloud_id` и `site_url`.
+
+При `project init` Kit сразу строит полный граф Codebase Memory и индекс символов Serena для каждого доступного репозитория logical project. Перед управляемыми запусками агентов (`run prepare`, высокоуровневый `task create`, создание lane) индексы обновляются в быстром режиме. После изменений, выполненных внешним harness в обход этих точек, запусти обновление явно:
+
+```bash
+agent-kit project memory-refresh
+```
+
+Сводка сохраняется в `<data>/projects/<project-id>/integrations/memory-index.json`. Нативные индексы MCP не добавляются в Git. Индексы также обновляются после `task complete` и `lane complete`, когда интегрированные изменения уже находятся в общей ветке задачи.
 
 Проверь результат:
 
@@ -205,17 +240,49 @@ agent-kit doctor
 
 После этого открой `docs/INDEX.md`, выбери нужную роль агента и используй только MCP и skills, относящиеся к задаче. Ревизию набора не следует менять до окончания текущей задачи.
 
-### 3. Подготовить воспроизводимый запуск
+### 3. Создать задачу и рабочее дерево
+
+```bash
+# Jira URL и обычный ID поддерживаются одинаково.
+agent task create https://company.atlassian.net/browse/TASK-123
+agent task create SOME-ID --type fix
+```
+
+Если Jira настроена и доступна, Kit добавляет summary и выбирает тип ветки по типу задачи. Если issue не найден, ID всё равно используется, а summary в имени ветки отсутствует. `--type` всегда имеет приоритет. Формат ветки: `<type>/dd-MM-yyyy-<task-id>-<summary>`. При занятом имени создаётся `-copy-N` от исходного base commit.
+
+Низкоуровневый fallback не требует Jira и сам определяет project по текущему каталогу:
+
+```bash
+agent-kit task create TASK-123 \
+  --type feat \
+  --summary orders \
+  --write 'services/orders/**'
+agent-kit task status TASK-123
+agent-kit task retry TASK-123
+```
+
+Локальная бронь области записи, или lease, предотвращает пересекающиеся изменения только на одной машине. При конфликте более поздняя задача получает `WAITING`; `status` показывает блокирующую задачу и пути. Между компьютерами синхронизацию обеспечивают Git remote, PR/MR, CI и merge queue.
+
+Для параллельных агентов внутри одной задачи используются отдельные lane-ветки и worktree:
+
+```bash
+agent task lane create TASK-123 api --write 'services/orders/api/**'
+agent task lane create TASK-123 tests --write 'services/orders/tests/**'
+agent task lane status TASK-123
+agent task lane integrate TASK-123 api
+# Выполни напечатанный git merge обычной Git-командой.
+agent task lane complete TASK-123 api
+```
+
+Непересекающиеся lanes работают параллельно. Изменения общих файлов обслуживаются по очереди. `lane integrate` только проверяет состояние и печатает Git-команды; commit и merge Kit не выполняет.
+
+Для воспроизводимого запуска harness отдельно подготовь manifest:
 
 ```bash
 agent-kit run prepare . --profile developer --verify pytest
-agent-kit task create my-project TASK-123 --write 'services/orders/**'
-agent-kit task lease my-project TASK-123
-agent-kit task worktree-plan my-project TASK-123 \
-  --branch-prefix feat/13-10-2026-orders
 ```
 
-`run prepare` сохраняет request manifest с ревизиями, effective policy, conventions, ролями, skills, MCP и разрешениями. `task create` фиксирует revision vector всех репозиториев и declared write set. Команды ничего не меняют в primary checkout; worktree создаётся только явной командой `task worktree-create`.
+`run prepare` сохраняет request manifest с ревизиями, effective policy, conventions, ролями, skills, MCP и разрешениями.
 
 ### 4. Выполнить изменение
 
@@ -224,6 +291,26 @@ agent-kit task worktree-plan my-project TASK-123 \
 3. Оцени влияние изменения, затем внеси минимальный связный набор правок.
 4. Добавь или обнови тесты.
 5. Если изменился контракт или архитектура, обнови документацию проекта.
+
+Перед записью агент обязан выполнить `agent task lane status <task-id> <lane-id>`. Статус `WAITING` запрещает изменение файлов. После расширения write set проверка выполняется повторно.
+
+### Обновить контекст текущего PR/MR
+
+```bash
+# Найти единственный открытый PR/MR текущей ветки.
+agent-kit pr refresh
+
+# Либо указать номер или URL.
+agent-kit pr refresh 152
+agent-kit pr refresh https://github.com/acme/orders/pull/42
+
+agent-kit pr status
+agent-kit pr show
+```
+
+URL определяет провайдера первым, затем используется Git remote, а GitLab является значением по умолчанию. GitLab вызывается через `list_merge_requests` и `get_merge_request`; GitHub — через `list_pull_requests` и `pull_request_read`. GitHub запускается в read-only и lockdown режимах. Снимок сохраняется только в machine-local памяти проекта, ограничивается по размеру и считается недоверенными данными. Команда ничего не изменяет в PR/MR.
+
+Официальная документация: [GitLab MCP server](https://docs.gitlab.com/user/model_context_protocol/mcp_server/), [GitHub MCP server](https://github.com/github/github-mcp-server).
 
 ### 5. Проверить и зафиксировать результат
 
@@ -316,8 +403,11 @@ agent-kit task gc my-project TASK-123
 ```bash
 agent-kit security status
 agent-kit security doctor
+agent-kit security scan
 agent-kit security validate
 ```
+
+`agent-kit install` и `agent-kit resync` устанавливают закреплённые версии Bumblebee и SkillSpector вместе с остальными обязательными средствами безопасности. `security scan [path]` запускает Bumblebee для инвентаризации dependency/tool metadata проекта и SkillSpector для всех действующих skills. SkillSpector работает с `--no-llm`, поэтому проверка не отправляет содержимое skills внешней модели. Сводный отчёт хранится в `<data>/state/reports/security/`.
 
 ## Политика моделей
 
@@ -382,10 +472,6 @@ agent-kit skills rollback <id>
 ```
 
 Для MCP и инструментов безопасности откат выполняется возвратом lock-файла и повторным `resync`.
-
-## OpenCodeReview
-
-Поддержка [Alibaba OpenCodeReview](https://github.com/alibaba/open-code-review) оценена, но пока не включена из коробки. Основной интерфейс `ocr` — CLI, при этом дорожная карта проекта также заявляет MCP-сервер; его фактический контракт и версия требуют отдельной проверки. Функции OpenCodeReview частично пересекаются со встроенным skill `code-review`. Безопасный вариант пилота — закрепить точную версию как внешнюю зависимость, проверить её тем же конвейером безопасности и начать с режима делегирования без отдельного ключа модели. Подробное решение и критерии включения описаны в [ADR 0011](docs/adr/0011-open-code-review-integration.md).
 
 ## JEV и оптимизация контекста
 

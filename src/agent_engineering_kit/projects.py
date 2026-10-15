@@ -15,6 +15,9 @@ from .errors import AgentKitError
 from .harness import resolve_harness
 from .io import atomic_write, load_yaml
 from .paths import KitPaths, ensure_runtime
+from .process import run_command
+from .project_memory import ProjectMemoryManager
+from .project_templates import apply_project_template, load_project_templates, resolve_project_template
 from .result import ValidationResult
 from .schema import validate_instance
 
@@ -200,16 +203,42 @@ def register_integrations(project: LogicalProject, repository: Path, paths: KitP
     return target
 
 
-def init_project(root: Path, repository: Path, paths: KitPaths, *, identifier: str | None = None) -> LogicalProject:
+def init_project(
+    root: Path,
+    repository: Path,
+    paths: KitPaths,
+    *,
+    identifier: str | None = None,
+    template_id: str | None = None,
+    language: str | None = None,
+    stack: str | None = None,
+    initialize_git: bool = False,
+    default_branch: str = "main",
+) -> LogicalProject:
     root = root.expanduser().resolve()
     root.mkdir(parents=True, exist_ok=True)
     manifest_path = root / ".ai-team" / "project.yaml"
     if manifest_path.exists():
         project = LogicalProject(root, manifest_path, load_yaml(manifest_path))
         register_integrations(project, repository, paths)
+        memory_report = ProjectMemoryManager(repository, paths).index(project, mode="full")
+        if memory_report["status"] == "FAIL":
+            raise AgentKitError("Индексация памяти проекта завершилась ошибкой")
         return project
 
     project_id = slugify(identifier or root.name)
+    if template_id is not None or language is not None or stack is not None:
+        template = resolve_project_template(
+            load_project_templates(repository),
+            template_id=template_id,
+            language=language,
+            stack=stack,
+        )
+        apply_project_template(root, template, project_name=project_id)
+    if initialize_git and not (root / ".git").exists():
+        initialized = run_command(["git", "-C", str(root), "init", "-b", default_branch])
+        if not initialized.ok:
+            raise AgentKitError(initialized.stderr.strip() or "Не удалось инициализировать Git repository")
     repositories = _find_repositories(root)
     manifest: dict[str, Any] = {
         "version": 1,
@@ -220,6 +249,7 @@ def init_project(root: Path, repository: Path, paths: KitPaths, *, identifier: s
         "discovery": {"enabled": True, "exclude_paths": []},
         "documentation": {"index": "docs/INDEX.md", "roots": ["docs"]},
         "memory": {"namespace": project_id},
+        "integrations": {},
         "harness": {
             "preferred_client": "auto",
             "required_capabilities": ["instructions", "skills", "mcp"],
@@ -239,4 +269,7 @@ def init_project(root: Path, repository: Path, paths: KitPaths, *, identifier: s
         )
     project = LogicalProject(root, manifest_path, manifest)
     register_integrations(project, repository, paths)
+    memory_report = ProjectMemoryManager(repository, paths).index(project, mode="full")
+    if memory_report["status"] == "FAIL":
+        raise AgentKitError("Индексация памяти проекта завершилась ошибкой")
     return project

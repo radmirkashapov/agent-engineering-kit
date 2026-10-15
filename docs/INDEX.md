@@ -2,14 +2,20 @@
 
 - [README](../README.md) — эксплуатация и первое знакомство.
 - [AI.md](../AI.md) — точка входа для AI-агента.
+- [Установка из корпоративного GitLab и синхронизация с GitHub](runbooks/install-from-gitlab-fork.md).
 - [ADR](adr/) — архитектурные решения.
 - [Политика моделей](../models/README.md).
 - [Реестр MCP](../mcp/README.md).
 - [Локальные переопределения](../README.md#локальные-переопределения).
-- [Оценка интеграции OpenCodeReview](adr/0011-open-code-review-integration.md).
 - [Kit как control plane для внешних agent harness](adr/0012-harness-control-plane.md).
 - [Capability kernel, multi-repo topology и безопасная параллельная работа](adr/0013-capability-kernel.md).
 - [Согласованный дизайн capability kernel](superpowers/specs/2026-10-12-capability-kernel-design.md).
+- [Дизайн автоматического workflow задач и контекста PR/MR](superpowers/specs/2026-10-14-agent-workflow-and-pr-context-design.md).
+- [Дизайн управляемого профиля Docker MCP Toolkit](superpowers/specs/2026-10-14-docker-mcp-toolkit-design.md).
+- [План управляемого профиля Docker MCP Toolkit](superpowers/plans/2026-10-15-docker-mcp-toolkit.md).
+- [Дизайн автоиндексации памяти и общей проверки безопасности](superpowers/specs/2026-10-15-project-memory-and-security-design.md).
+- [План автоиндексации памяти и общей проверки безопасности](superpowers/plans/2026-10-15-project-memory-and-security.md).
+- [План реализации workflow задач и контекста PR/MR](superpowers/plans/2026-10-14-agent-workflow-and-pr-context.md).
 - [План реализации capability kernel](superpowers/plans/2026-10-12-capability-kernel.md).
 - [Проект основы harness control plane](superpowers/specs/2026-10-09-harness-control-plane-design.md).
 - [План реализации основы harness control plane](superpowers/plans/2026-10-09-harness-control-plane.md).

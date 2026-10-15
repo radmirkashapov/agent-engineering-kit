@@ -13,6 +13,7 @@ from typing import Any, Callable
 
 from .catalog import LockedComponent, resolve_desired
 from .component_state import Lifecycle, read_state, write_state
+from .io import atomic_write
 from .paths import KitPaths, ensure_runtime
 from .process import CommandResult, run_command
 from .result import ValidationResult
@@ -231,6 +232,64 @@ class SecurityToolManager:
         })
         evidence.append({"check": "Gitleaks current tree", "status": "PASS" if leaks.ok else ("PASS_WITH_REVIEWED_FINDINGS" if leaks_reviewed else "FAIL"), "reviewed_findings": sorted(actual_leaks) if leaks_reviewed else [], "output": (leaks.stdout + leaks.stderr)[-2000:]})
         return (completed.ok or accepted) and leaks_ok, evidence
+
+    def scan(self, target: Path, *, skill_roots: list[Path]) -> tuple[bool, dict[str, Any]]:
+        """Запустить локальную инвентаризацию проекта и статическую проверку effective skills."""
+        target = target.expanduser().resolve()
+        if not target.is_dir():
+            report = {"version": 1, "status": "FAIL", "checks": [], "error": f"Каталог не существует: {target}"}
+            return False, report
+        ensure_runtime(self.paths)
+        desired = {item["id"]: item for item, _ in self.desired()}
+        status_by_id = {item["id"]: item for item in self.status()}
+        required = ("bumblebee", "skillspector")
+        missing = [
+            identifier
+            for identifier in required
+            if status_by_id.get(identifier, {}).get("status") != Lifecycle.ACTIVE.value
+        ]
+        report_root = self.paths.state / "reports" / "security" / hashlib.sha256(str(target).encode()).hexdigest()[:16]
+        report_root.mkdir(parents=True, exist_ok=True)
+        report_path = report_root / "scan.json"
+        checks: list[dict[str, Any]] = []
+        if missing:
+            checks.append({"check": "security-tools", "status": "FAIL", "missing_or_unverified": missing})
+        else:
+            bumblebee = self.executable(desired["bumblebee"])
+            inventory = self.runner([
+                str(bumblebee), "scan", "--profile", "project", "--root", str(target),
+            ])
+            checks.append({
+                "check": "Bumblebee project inventory",
+                "status": "PASS" if inventory.ok else "FAIL",
+                "exit_code": inventory.returncode,
+                "output": (inventory.stdout + inventory.stderr)[-8000:],
+            })
+            skillspector = self.executable(desired["skillspector"])
+            for index, skill_root in enumerate(sorted({path.expanduser().resolve() for path in skill_roots})):
+                output_path = report_root / f"skillspector-{index + 1}.json"
+                completed = self.runner([
+                    str(skillspector), "scan", str(skill_root), "--no-llm",
+                    "--format", "json", "--output", str(output_path),
+                ])
+                checks.append({
+                    "check": "SkillSpector static skill scan",
+                    "target": str(skill_root),
+                    "status": "PASS" if completed.ok else "FAIL",
+                    "exit_code": completed.returncode,
+                    "output": (completed.stdout + completed.stderr)[-4000:],
+                    "details_path": str(output_path) if output_path.is_file() else None,
+                })
+        ok = bool(checks) and all(check["status"] == "PASS" for check in checks)
+        report = {
+            "version": 1,
+            "target": str(target),
+            "status": "PASS" if ok else "FAIL",
+            "checks": checks,
+            "report_path": str(report_path),
+        }
+        atomic_write(report_path, json.dumps(report, ensure_ascii=False, indent=2) + "\n")
+        return ok, report
 
     def doctor(self) -> ValidationResult:
         result = ValidationResult()

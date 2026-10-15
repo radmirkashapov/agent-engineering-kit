@@ -65,6 +65,34 @@ def write_sets_overlap(left: list[str], right: list[str]) -> bool:
     return False
 
 
+def find_lease_conflicts(
+    paths: KitPaths,
+    *,
+    project_id: str,
+    task_id: str,
+    write_set: list[str],
+) -> list[dict[str, Any]]:
+    """Найти активные локальные брони с пересекающимися областями записи."""
+    directory = paths.projects / project_id / "leases"
+    conflicts: list[dict[str, Any]] = []
+    if not directory.is_dir():
+        return conflicts
+    for path in sorted(directory.glob("*.json")):
+        current = json.loads(path.read_text(encoding="utf-8"))
+        current_task = str(current.get("task_id", ""))
+        if current_task == task_id:
+            continue
+        current_write_set = [str(item) for item in current.get("write_set", [])]
+        overlap = [
+            pattern
+            for pattern in [*current_write_set, *write_set]
+            if write_sets_overlap([pattern], write_set if pattern in current_write_set else current_write_set)
+        ]
+        if overlap:
+            conflicts.append({"task_id": current_task, "overlap": list(dict.fromkeys(overlap))})
+    return conflicts
+
+
 def create_task_workspace(
     paths: KitPaths,
     *,
@@ -107,6 +135,7 @@ def create_task_workspace(
         "policy_digest": policy_digest,
         "conventions_digest": conventions_digest,
         "worktrees": [],
+        "created_at": datetime.now(timezone.utc).isoformat(),
     }
     atomic_write(target, json.dumps(document, ensure_ascii=False, indent=2) + "\n")
     return target
@@ -153,14 +182,15 @@ def acquire_lease(
             raise AgentKitError(f"Task workspace {task_id} уже имеет terminal status={workspace.get('status')}")
         if list(workspace.get("write_set", [])) != write_set:
             raise AgentKitError(f"Write set lease не совпадает с task workspace {task_id}")
-        for path in sorted(directory.glob("*.json")):
-            current = json.loads(path.read_text(encoding="utf-8"))
-            if current.get("task_id") == task_id:
-                continue
-            if write_sets_overlap(write_set, list(current.get("write_set", []))):
-                raise AgentKitError(
-                    f"Write set задачи {task_id} пересекается с активной задачей {current.get('task_id')}"
-                )
+        conflicts = find_lease_conflicts(
+            paths,
+            project_id=project_id,
+            task_id=task_id,
+            write_set=write_set,
+        )
+        if conflicts:
+            blockers = ", ".join(str(item["task_id"]) for item in conflicts)
+            raise AgentKitError(f"Write set задачи {task_id} пересекается с активными задачами: {blockers}")
         atomic_write(
             target,
             json.dumps({"project_id": project_id, "task_id": task_id, "write_set": write_set}, ensure_ascii=False, indent=2) + "\n",

@@ -10,6 +10,100 @@ from agent_engineering_kit.component_state import Lifecycle, write_state
 from agent_engineering_kit.security_tools import SecurityToolManager, _sha256
 
 
+def _scan_manager(tmp_path: Path, runner) -> tuple[SecurityToolManager, Path]:
+    repository = tmp_path / "kit"
+    (repository / "catalog").mkdir(parents=True)
+    (repository / "locks").mkdir()
+    revision = "c" * 40
+    tools = [
+        {"id": "bumblebee", "command": "bumblebee"},
+        {"id": "skillspector", "command": "skillspector"},
+    ]
+    catalog = {
+        "version": 1,
+        "security": [
+            {
+                **tool,
+                "required": True,
+                "platforms": ["darwin", "linux", "windows"],
+                "installation": {"type": "uv-tool", "requirement": "unused"},
+            }
+            for tool in tools
+        ],
+    }
+    locks = {
+        "version": 1,
+        "components": [
+            {"id": tool["id"], "version": "1.0.0", "revision": revision}
+            for tool in tools
+        ],
+    }
+    (repository / "catalog/security.yaml").write_text(yaml.safe_dump(catalog), encoding="utf-8")
+    (repository / "locks/security.lock.yaml").write_text(yaml.safe_dump(locks), encoding="utf-8")
+    data = tmp_path / "data"
+    paths = KitPaths(repository, data, data / "runtime", data / "projects", data / "overrides")
+    for tool in tools:
+        executable = paths.installations / "security" / tool["id"] / "bin" / tool["command"]
+        executable.parent.mkdir(parents=True, exist_ok=True)
+        executable.write_bytes(tool["id"].encode())
+        write_state(
+            paths,
+            "security",
+            tool["id"],
+            Lifecycle.ACTIVE,
+            revision=revision,
+            executable_sha256=_sha256(executable),
+        )
+    return SecurityToolManager(repository, paths, runner=runner), data
+
+
+def test_security_scan_runs_bumblebee_and_offline_skillspector(tmp_path: Path) -> None:
+    calls: list[list[str]] = []
+
+    def runner(args, **kwargs):
+        calls.append(list(args))
+        if Path(args[0]).name == "skillspector":
+            output = Path(args[args.index("--output") + 1])
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text('{"recommendation":"SAFE"}\n', encoding="utf-8")
+        return CommandResult(tuple(args), 0, '{"kind":"inventory"}\n', "")
+
+    manager, data = _scan_manager(tmp_path, runner)
+    target = tmp_path / "project"
+    skill = tmp_path / "skill"
+    target.mkdir()
+    skill.mkdir()
+
+    ok, report = manager.scan(target, skill_roots=[skill])
+
+    assert ok is True
+    assert Path(calls[0][0]).name == "bumblebee"
+    assert calls[0][1:] == ["scan", "--profile", "project", "--root", str(target)]
+    assert Path(calls[1][0]).name == "skillspector"
+    assert calls[1][1:4] == ["scan", str(skill), "--no-llm"]
+    assert report["status"] == "PASS"
+    assert Path(report["report_path"]).is_file()
+    assert Path(report["report_path"]).is_relative_to(data / "state/reports/security")
+
+
+def test_security_scan_fails_when_either_scanner_fails(tmp_path: Path) -> None:
+    def runner(args, **kwargs):
+        code = 1 if Path(args[0]).name == "skillspector" else 0
+        return CommandResult(tuple(args), code, "", "unsafe" if code else "")
+
+    manager, _ = _scan_manager(tmp_path, runner)
+    target = tmp_path / "project"
+    skill = tmp_path / "skill"
+    target.mkdir()
+    skill.mkdir()
+
+    ok, report = manager.scan(target, skill_roots=[skill])
+
+    assert ok is False
+    assert report["status"] == "FAIL"
+    assert report["checks"][1]["status"] == "FAIL"
+
+
 def test_scanner_crash_is_not_accepted_as_reviewed_findings(tmp_path: Path) -> None:
     repository = tmp_path / "kit"
     (repository / "catalog").mkdir(parents=True)

@@ -257,6 +257,7 @@ def register_native_mcp(
 ) -> Path:
     """Добавить namespaced core MCP, не изменяя чужие client entries."""
     from .mcp_manager import McpManager
+    from .docker_mcp import confirmed_docker_routes
 
     manager = McpManager(repository, paths, runner=runner)
     available = {
@@ -268,6 +269,27 @@ def register_native_mcp(
         for item, _ in manager.desired(project, access_profile=access_profile)
         if manager.is_enabled(item, project)
     }
+    project_id = project.identifier if project else None
+    docker_routes, docker_state = confirmed_docker_routes(paths, project_id)
+    # Подтверждённый snapshot не может расширять более свежую effective policy.
+    docker_routes &= set(desired)
+    for identifier in docker_routes:
+        desired.pop(identifier, None)
+    gateway = {
+        "id": "docker-gateway",
+        "category": "runtime",
+        "required": False,
+        "enabled": bool(docker_routes),
+        "access_reason": "runtime:docker-toolkit",
+        "registration_name": str((docker_state or {}).get("gateway_registration", "agent-kit-docker")),
+        "command": "docker",
+        "args": ["mcp", "gateway", "run", "--profile", str((docker_state or {}).get("profile", "agent-engineering-kit"))],
+        "installation": {"type": "external-command", "command": "docker"},
+        "source": {"repository": "https://docs.docker.com/ai/mcp-catalog-and-toolkit/"},
+    }
+    available["docker-gateway"] = gateway
+    if docker_routes:
+        desired["docker-gateway"] = gateway
     target = paths.state / "client-mcp-registrations.json"
     previous_rows: list[dict] = []
     if target.is_file():
@@ -295,14 +317,14 @@ def register_native_mcp(
             continue
         managed_ids = set(available) | previous_ids
         for identifier in sorted(managed_ids - set(desired)):
-            name = f"agent-kit-{identifier}"
+            item = available.get(identifier)
+            name = str((item or {}).get("registration_name", f"agent-kit-{identifier}"))
             probe = runner(
                 [executable, "mcp", "get", name, "--json"] if client == "codex" else [executable, "mcp", "get", name],
                 cwd=paths.state,
             )
-            item = available.get(identifier)
-            status = "DISABLED" if not item or not item["enabled"] else "inactive"
-            reason = item["access_reason"] if item else "removed:catalog"
+            status = "DOCKER_ROUTED" if identifier in docker_routes else ("DISABLED" if not item or not item["enabled"] else "inactive")
+            reason = "runtime:docker-toolkit" if identifier in docker_routes else (item["access_reason"] if item else "removed:catalog")
             if not probe.ok:
                 rows.append({"client": client, "mcp": identifier, "status": status, "changed": False, "desired_verified": True, "reason": reason})
                 continue
@@ -315,7 +337,7 @@ def register_native_mcp(
                 continue
             rows.append({"client": client, "mcp": identifier, "status": status, "changed": True, "desired_verified": True, "reason": reason})
         for identifier, item in desired.items():
-            name = f"agent-kit-{identifier}"
+            name = str(item.get("registration_name", f"agent-kit-{identifier}"))
             # Некоторые клиенты запускают stdio-сервер во время проверки. Изолируем
             # его временные файлы от логического проекта и репозитория Kit.
             probe = runner(

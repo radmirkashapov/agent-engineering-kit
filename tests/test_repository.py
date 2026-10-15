@@ -56,7 +56,10 @@ def test_user_facing_markdown_files_are_written_in_russian() -> None:
     for name in completed.stdout.splitlines():
         if name.startswith("agents/"):
             continue
-        lines = (repository / name).read_text(encoding="utf-8").splitlines()
+        path = repository / name
+        if not path.is_file():
+            continue
+        lines = path.read_text(encoding="utf-8").splitlines()
         prose: list[str] = []
         in_frontmatter = bool(lines and lines[0] == "---")
         in_code_fence = False

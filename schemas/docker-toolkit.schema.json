@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["version", "enabled", "profile", "catalog", "gateway_registration", "clients", "mappings"],
+  "properties": {
+    "version": {"const": 1},
+    "enabled": {"type": "boolean"},
+    "profile": {"type": "string", "minLength": 1},
+    "catalog": {"type": "string", "minLength": 1},
+    "gateway_registration": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"},
+    "clients": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"enum": ["codex", "claude-code", "claude-desktop", "opencode", "cline"]}
+    },
+    "mappings": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^(catalog|docker|https|file)://\\S+$"
+      }
+    }
+  },
+  "additionalProperties": false
+}

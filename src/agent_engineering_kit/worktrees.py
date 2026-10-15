@@ -24,7 +24,24 @@ def _git(repository: Path, *arguments: str) -> str:
     return result.stdout.strip()
 
 
-def plan_managed_worktrees(paths: KitPaths, task_path: Path, *, branch_prefix: str) -> list[dict[str, Any]]:
+def _unique_branch(source: Path, requested: str) -> str:
+    """Вернуть свободное имя ветки, не изменяя существующие refs."""
+    candidate = requested
+    counter = 2
+    while run_command(["git", "-C", str(source), "show-ref", "--verify", "--quiet", f"refs/heads/{candidate}"]).ok:
+        candidate = f"{requested}-copy-{counter}"
+        counter += 1
+    return candidate
+
+
+def plan_managed_worktrees(
+    paths: KitPaths,
+    task_path: Path,
+    *,
+    branch_prefix: str,
+    append_repository: bool = True,
+    copy_existing_branch: bool = False,
+) -> list[dict[str, Any]]:
     """Построить план без создания веток и каталогов."""
     document = json.loads(task_path.read_text(encoding="utf-8"))
     project_id = str(document["project_id"])
@@ -43,13 +60,15 @@ def plan_managed_worktrees(paths: KitPaths, task_path: Path, *, branch_prefix: s
             target.relative_to(managed_root)
         except ValueError as error:
             raise AgentKitError(f"Worktree выходит за managed root: {target}") from error
+        requested_branch = f"{branch_prefix}-{_slug(identifier)}" if append_repository else branch_prefix
+        branch = _unique_branch(source, requested_branch) if copy_existing_branch else requested_branch
         plans.append(
             {
                 "repository": identifier,
                 "source": str(source),
                 "commit": commit,
                 "target": str(target),
-                "branch": f"{branch_prefix}-{_slug(identifier)}",
+                "branch": branch,
             }
         )
     return plans

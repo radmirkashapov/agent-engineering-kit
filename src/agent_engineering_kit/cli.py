@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import date
 from pathlib import Path
 from typing import Literal
 
@@ -12,10 +13,12 @@ from .bindings import attach_project, bind_repository, load_attached_project, pr
 from .bindings import repository_paths
 from .conventions import load_conventions
 from .doctor import doctor
+from .docker_mcp import DockerMcpToolkit
 from .errors import AgentKitError
 from .explain import explain
 from .external_skills import ExternalSkillManager
 from .mcp_manager import McpManager
+from .mcp_client import McpToolClient
 from .events import read_events
 from .harness import resolve_harness
 from .io import markdown_frontmatter
@@ -34,6 +37,9 @@ from .overrides import apply_local_overrides
 from .paths import KitPaths, resolve_paths
 from .policy import effective_policy
 from .profiles import compile_permission_profile, load_profiles
+from .pull_requests import PullRequestService
+from .project_templates import load_project_templates
+from .project_memory import ProjectMemoryManager
 from .projects import LogicalProject, detect_project, find_project, init_project, validate_project_definition
 from .runs import build_run_request, canonical_digest, record_run_result, run_events_path, write_run_request
 from .resync import ResyncReport, resync
@@ -47,9 +53,18 @@ from .tasks import (
     release_leases,
     task_workspace_path,
 )
+from .task_workflow import (
+    complete_task_lane,
+    create_task_lane,
+    create_task_workflow,
+    integration_plan,
+    retry_task_workflow,
+    task_workflow_status,
+)
 from .validation import VALIDATORS, validate
 from .worktrees import create_managed_worktrees, plan_managed_worktrees
 from .process import run_command
+from .clients import register_native_mcp
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -108,6 +123,14 @@ def _parser() -> argparse.ArgumentParser:
     mcp_override.add_argument("--resync", action="store_true", help="Выполнить resync после успешного изменения")
     mcp_explain = mcp.add_parser("explain", help="Объяснить итоговое состояние MCP")
     mcp_explain.add_argument("id")
+    docker_mcp = mcp.add_parser("docker", help="Управлять выделенным профилем Docker MCP Toolkit").add_subparsers(dest="docker_command", required=True)
+    for name in ("status", "plan", "sync"):
+        command = docker_mcp.add_parser(name)
+        command.add_argument("--project", dest="project_reference")
+    for name in ("enable", "disable"):
+        command = docker_mcp.add_parser(name)
+        command.add_argument("--scope", choices=["global", "project"], required=True)
+        command.add_argument("--project", dest="project_reference")
 
     overrides = subs.add_parser("override", help="Управлять всеми локальными переопределениями").add_subparsers(dest="override_command", required=True)
     override_list = overrides.add_parser("list", help="Показать определения выбранного локального слоя")
@@ -135,11 +158,18 @@ def _parser() -> argparse.ArgumentParser:
         security.add_parser(name)
     security_validate = security.add_parser("validate")
     security_validate.add_argument("path", nargs="?", default="skills/first-party")
+    security_scan = security.add_parser("scan", help="Проверить проект через Bumblebee и effective skills через SkillSpector")
+    security_scan.add_argument("path", nargs="?", default=".")
 
     project = subs.add_parser("project").add_subparsers(dest="project_command", required=True)
     project_init = project.add_parser("init")
     project_init.add_argument("path", nargs="?", default=".")
     project_init.add_argument("--id", dest="identifier")
+    project_init.add_argument("--template", dest="template_id", help="ID шаблона из catalog/project-templates.yaml")
+    project_init.add_argument("--language", help="Язык шаблона")
+    project_init.add_argument("--stack", help="Стек шаблона")
+    project_init.add_argument("--git", action="store_true", dest="initialize_git", help="Инициализировать Git repository")
+    project_init.add_argument("--default-branch", default="main", help="Начальная ветка нового Git repository")
     for name in ("detect", "status"):
         command = project.add_parser(name)
         command.add_argument("path", nargs="?", default=".")
@@ -153,11 +183,21 @@ def _parser() -> argparse.ArgumentParser:
     project_reconcile = project.add_parser("reconcile", help="Показать structural diff inventory")
     project_reconcile.add_argument("project")
     project_reconcile.add_argument("--apply", action="store_true", help="Сохранить inventory в machine-local state")
+    project_memory = project.add_parser("memory-refresh", help="Обновить индексы Codebase Memory и Serena")
+    project_memory.add_argument("path", nargs="?", default=".")
 
     config = subs.add_parser("config").add_subparsers(dest="config_command", required=True)
     config_explain = config.add_parser("explain")
     config_explain.add_argument("path", nargs="?", default=".")
     config_explain.add_argument("--format", choices=["text", "json"], default="text")
+
+    pull_requests = subs.add_parser("pr", help="Обновлять machine-local контекст PR/MR через MCP").add_subparsers(dest="pr_command", required=True)
+    pr_refresh = pull_requests.add_parser("refresh", help="Загрузить PR/MR либо найти его по текущей ветке")
+    pr_refresh.add_argument("reference", nargs="?", help="URL или номер PR/MR")
+    pr_refresh.add_argument("--repository", dest="repository_id", help="Repository ID в multi-repo проекте")
+    for name in ("show", "status"):
+        command = pull_requests.add_parser(name)
+        command.add_argument("reference", nargs="?", help="Номер PR/MR; без него используется последний снимок")
 
     runs = subs.add_parser("run", help="Фиксировать контракты запуска harness").add_subparsers(dest="run_command", required=True)
     run_prepare = runs.add_parser("prepare", help="Создать request manifest")
@@ -178,10 +218,17 @@ def _parser() -> argparse.ArgumentParser:
     run_events.add_argument("--project-id")
 
     tasks = subs.add_parser("task", help="Управлять изолированным workspace задачи").add_subparsers(dest="task_command", required=True)
-    task_create = tasks.add_parser("create", help="Создать planning snapshot")
-    task_create.add_argument("project")
-    task_create.add_argument("task_id")
+    task_create = tasks.add_parser("create", help="Создать task workspace, бронь, ветку и worktree")
+    task_create.add_argument("reference", help="Task ID либо project ID для совместимого старого синтаксиса")
+    task_create.add_argument("legacy_task_id", nargs="?", help=argparse.SUPPRESS)
+    task_create.add_argument("--project", dest="project_reference", help="Logical project при запуске вне его каталога")
+    task_create.add_argument("--type", dest="branch_type", default="feat", help="Префикс имени ветки")
+    task_create.add_argument("--summary", help="Краткое описание для имени ветки")
     task_create.add_argument("--write", action="append", required=True, dest="write_set")
+    for name in ("status", "retry"):
+        task_action = tasks.add_parser(name)
+        task_action.add_argument("task_id")
+        task_action.add_argument("--project", dest="project_reference")
     for name in ("lease", "complete", "release", "gc"):
         task_action = tasks.add_parser(name)
         task_action.add_argument("project_id")
@@ -191,6 +238,17 @@ def _parser() -> argparse.ArgumentParser:
         task_action.add_argument("project_id")
         task_action.add_argument("task_id")
         task_action.add_argument("--branch-prefix", required=True)
+    lanes = tasks.add_parser("lane", help="Управлять параллельными agent lanes").add_subparsers(dest="lane_command", required=True)
+    lane_create = lanes.add_parser("create")
+    lane_create.add_argument("task_id")
+    lane_create.add_argument("lane_id")
+    lane_create.add_argument("--write", action="append", required=True, dest="write_set")
+    lane_create.add_argument("--project", dest="project_reference")
+    for name in ("status", "integrate", "complete"):
+        lane_action = lanes.add_parser(name)
+        lane_action.add_argument("task_id")
+        lane_action.add_argument("lane_id", nargs="?" if name == "status" else None)
+        lane_action.add_argument("--project", dest="project_reference")
     return parser
 
 
@@ -206,6 +264,31 @@ def _print_rows(rows: list[dict]) -> None:
         print(f"{row['id']}: {row.get('status', 'UNKNOWN')} ({row.get('source', row.get('category', 'managed'))})")
 
 
+def _interactive_project_setup(repository: Path) -> dict[str, object]:
+    """Запросить шаблон и Git-настройки из версионируемого каталога Kit."""
+    templates = load_project_templates(repository)
+    print("Выберите шаблон проекта:")
+    for index, template in enumerate(templates, start=1):
+        print(
+            f"  {index}. {template['name']} "
+            f"({template.get('language', 'generic')}/{template.get('stack', 'none')})"
+        )
+    raw_choice = input("Номер шаблона [1]: ").strip() or "1"
+    try:
+        selected = templates[int(raw_choice) - 1]
+    except (ValueError, IndexError) as error:
+        raise AgentKitError(f"Некорректный номер шаблона: {raw_choice}") from error
+    initialize_git = (input("Инициализировать Git repository? [Y/n]: ").strip().lower() or "y") in {"y", "yes", "д", "да"}
+    default_branch = "main"
+    if initialize_git:
+        default_branch = input("Основная ветка [main]: ").strip() or "main"
+    return {
+        "template_id": str(selected["id"]),
+        "initialize_git": initialize_git,
+        "default_branch": default_branch,
+    }
+
+
 def _project_reference(value: str, paths: KitPaths) -> LogicalProject:
     candidate = Path(value).expanduser()
     project = find_project(candidate) if candidate.exists() else None
@@ -214,6 +297,68 @@ def _project_reference(value: str, paths: KitPaths) -> LogicalProject:
     if project is None:
         raise AgentKitError(f"Logical project не найден: {value}")
     return project
+
+
+def _current_or_explicit_project(value: str | None, paths: KitPaths) -> LogicalProject:
+    """Найти проект по явной ссылке либо текущему каталогу."""
+    if value:
+        return _project_reference(value, paths)
+    project = find_project(Path.cwd())
+    if project is None:
+        raise AgentKitError("Logical project не найден; выполните agent-kit project init или укажите --project")
+    return project
+
+
+def _refresh_project_memory(repository: Path, paths: KitPaths, project: LogicalProject) -> dict:
+    report = ProjectMemoryManager(repository, paths).index(project, mode="refresh")
+    if report["status"] == "FAIL":
+        raise AgentKitError("Обновление памяти проекта завершилось ошибкой")
+    return report
+
+
+def _effective_skill_roots(repository: Path, paths: KitPaths, project: LogicalProject | None) -> list[Path]:
+    manager = ExternalSkillManager(repository, paths, project_id=project.identifier if project else None)
+    roots: set[Path] = set()
+    for item in manager.available():
+        if not item.get("enabled"):
+            continue
+        if item.get("path"):
+            roots.add(Path(str(item["path"])).expanduser().resolve())
+            continue
+        active = manager.active_path(str(item["id"]))
+        if active:
+            roots.update(skill_file.parent.resolve() for skill_file in active.rglob("SKILL.md"))
+    return sorted(path for path in roots if path.is_dir())
+
+
+def _project_repository_path(project: LogicalProject, paths: KitPaths, repository_id: str | None) -> Path:
+    """Выбрать repository текущего каталога или потребовать явный ID при неоднозначности."""
+    repositories = repository_paths(project, paths)
+    if repository_id:
+        if repository_id not in repositories:
+            raise AgentKitError(f"Repository ID не найден: {repository_id}")
+        return repositories[repository_id]
+    current = Path.cwd().resolve()
+    candidates: list[Path] = []
+    for path in repositories.values():
+        try:
+            current.relative_to(path.resolve())
+        except ValueError:
+            continue
+        candidates.append(path.resolve())
+    if candidates:
+        return max(candidates, key=lambda item: len(item.parts))
+    if len(repositories) == 1:
+        return next(iter(repositories.values())).resolve()
+    raise AgentKitError("Multi-repo project: укажите --repository")
+
+
+def _scm_snapshots(paths: KitPaths, project_id: str, reference: str | None) -> list[Path]:
+    root = paths.projects / project_id / "integrations" / "scm"
+    snapshots = sorted(root.glob("*/*/*/snapshot.json"), key=lambda item: item.stat().st_mtime, reverse=True)
+    if reference and reference.isdigit():
+        snapshots = [item for item in snapshots if item.parent.name == reference]
+    return snapshots
 
 
 def _print_resync_report(report: ResyncReport) -> None:
@@ -411,6 +556,35 @@ def run(argv: list[str] | None = None) -> int:
                 return _mutate_resource("skills", args, repository, paths, project)
             return 0
         if args.command == "mcp":
+            if args.mcp_command == "docker":
+                project = (
+                    _current_or_explicit_project(args.project_reference, paths)
+                    if args.project_reference or args.docker_command in {"status", "plan", "sync"} and find_project(Path.cwd())
+                    else None
+                )
+                toolkit = DockerMcpToolkit(repository, paths)
+                if args.docker_command in {"enable", "disable"}:
+                    if args.scope == "project" and project is None:
+                        project = _current_or_explicit_project(args.project_reference, paths)
+                    target = toolkit.set_enabled(
+                        scope=args.scope,
+                        project_id=project.identifier if project else None,
+                        enabled=args.docker_command == "enable",
+                    )
+                    print(target)
+                    _print_resync_report(resync(repository, paths, project=project, update_kit=False, force=False))
+                    return 0
+                access_profile = str(effective_policy(repository, paths, project).values["mcp.access_profile"])
+                if args.docker_command == "status":
+                    result = toolkit.status(project=project, access_profile=access_profile)
+                elif args.docker_command == "plan":
+                    result = toolkit.plan(project=project, access_profile=access_profile)
+                else:
+                    result = toolkit.sync(project=project, access_profile=access_profile)
+                    if result.get("status") == "SYNCED":
+                        register_native_mcp(repository, paths, project=project, access_profile=access_profile)
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+                return 1 if result.get("status") in {"NOT_INSTALLED", "CONFIG_REQUIRED", "ERROR"} else 0
             project = find_project(Path.cwd())
             manager = McpManager(repository, paths)
             access_profile = str(effective_policy(repository, paths, project).values["mcp.access_profile"])
@@ -438,11 +612,39 @@ def run(argv: list[str] | None = None) -> int:
                 return _render_result(manager.doctor())
             if args.security_command in {"install", "update"}:
                 return _render_result(manager.install(force=args.security_command == "update"))
+            if args.security_command == "scan":
+                target = Path(args.path).expanduser().resolve()
+                project = find_project(target)
+                ok, report = manager.scan(
+                    target,
+                    skill_roots=_effective_skill_roots(repository, paths, project),
+                )
+                print(json.dumps(report, ensure_ascii=False, indent=2))
+                return 0 if ok else 1
             ok, evidence = manager.validate_skill(Path(args.path).resolve())
             print(json.dumps(evidence, ensure_ascii=False, indent=2))
             return 0 if ok else 1
         if args.command == "project" and args.project_command == "init":
-            project = init_project(Path(args.path), repository, paths, identifier=args.identifier)
+            setup: dict[str, object] = {
+                "template_id": args.template_id,
+                "language": args.language,
+                "stack": args.stack,
+                "initialize_git": args.initialize_git,
+                "default_branch": args.default_branch,
+            }
+            if not any((args.template_id, args.language, args.stack, args.initialize_git)) and sys.stdin.isatty():
+                setup.update(_interactive_project_setup(repository))
+            project = init_project(
+                Path(args.path),
+                repository,
+                paths,
+                identifier=args.identifier,
+                template_id=setup["template_id"] if isinstance(setup["template_id"], str) else None,
+                language=setup["language"] if isinstance(setup["language"], str) else None,
+                stack=setup["stack"] if isinstance(setup["stack"], str) else None,
+                initialize_git=bool(setup["initialize_git"]),
+                default_branch=str(setup["default_branch"]),
+            )
             print(f"Logical project создан/найден: {project.identifier}\nManifest: {project.manifest_path}\nMemory: {paths.projects / project.identifier}")
             return 0
         if args.command == "project" and args.project_command == "detect":
@@ -475,6 +677,10 @@ def run(argv: list[str] | None = None) -> int:
             preview = reconcile_project(project, paths, apply=args.apply)
             print(json.dumps(preview, ensure_ascii=False, indent=2))
             return 1 if preview["status"] in {"BLOCKED", "MISMATCHED"} else 0
+        if args.command == "project" and args.project_command == "memory-refresh":
+            project = _project_reference(args.path, paths)
+            print(json.dumps(_refresh_project_memory(repository, paths, project), ensure_ascii=False, indent=2))
+            return 0
         if args.command == "run" and args.run_command == "prepare":
             candidate = Path(args.path).expanduser()
             if candidate.exists():
@@ -483,6 +689,8 @@ def run(argv: list[str] | None = None) -> int:
                 project = load_attached_project(args.path, paths)
                 if project is None:
                     raise AgentKitError(f"Logical project или path не найден: {args.path}")
+            if project is not None:
+                _refresh_project_memory(repository, paths, project)
             policy = effective_policy(repository, paths, project)
             conventions = {"items": load_conventions(repository, project)}
             harness = resolve_harness(
@@ -567,19 +775,82 @@ def run(argv: list[str] | None = None) -> int:
             print(json.dumps(read_events(event_path), ensure_ascii=False, indent=2))
             return 0
         if args.command == "task" and args.task_command == "create":
-            project = _project_reference(args.project, paths)
+            if args.legacy_task_id is not None:
+                project = _project_reference(args.reference, paths)
+                task_id = args.legacy_task_id
+            else:
+                project = _current_or_explicit_project(args.project_reference, paths)
+                task_id = args.reference
+            _refresh_project_memory(repository, paths, project)
             policy = effective_policy(repository, paths, project)
             conventions = {"items": load_conventions(repository, project)}
-            target = create_task_workspace(
+            snapshots = _repository_snapshots(project, paths, require_git=True)
+            if args.legacy_task_id is not None:
+                target = create_task_workspace(
+                    paths,
+                    project_id=project.identifier,
+                    task_id=task_id,
+                    repositories=snapshots,
+                    write_set=args.write_set,
+                    policy_digest=canonical_digest(policy.as_dict()),
+                    conventions_digest=canonical_digest(conventions),
+                )
+                print(target)
+                return 0
+            result = create_task_workflow(
                 paths,
                 project_id=project.identifier,
-                task_id=args.task_id,
-                repositories=_repository_snapshots(project, paths, require_git=True),
+                task_id=task_id,
+                repositories=snapshots,
                 write_set=args.write_set,
                 policy_digest=canonical_digest(policy.as_dict()),
                 conventions_digest=canonical_digest(conventions),
+                branch_type=args.branch_type,
+                summary=args.summary,
+                today=date.today(),
             )
-            print(target)
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return 0
+        if args.command == "task" and args.task_command in {"status", "retry"}:
+            project = _current_or_explicit_project(args.project_reference, paths)
+            result = (
+                task_workflow_status(paths, project_id=project.identifier, task_id=args.task_id)
+                if args.task_command == "status"
+                else retry_task_workflow(paths, project_id=project.identifier, task_id=args.task_id)
+            )
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return 0
+        if args.command == "task" and args.task_command == "lane":
+            project = _current_or_explicit_project(args.project_reference, paths)
+            if args.lane_command == "create":
+                _refresh_project_memory(repository, paths, project)
+                result = create_task_lane(
+                    paths,
+                    project_id=project.identifier,
+                    task_id=args.task_id,
+                    lane_id=args.lane_id,
+                    write_set=args.write_set,
+                )
+            elif args.lane_command == "integrate":
+                result = integration_plan(
+                    paths,
+                    project_id=project.identifier,
+                    task_id=args.task_id,
+                    lane_id=args.lane_id,
+                )
+            elif args.lane_command == "complete":
+                result = complete_task_lane(
+                    paths,
+                    project_id=project.identifier,
+                    task_id=args.task_id,
+                    lane_id=args.lane_id,
+                )
+                _refresh_project_memory(repository, paths, project)
+            else:
+                status = task_workflow_status(paths, project_id=project.identifier, task_id=args.task_id)
+                lanes = list(status.get("lanes", []))
+                result = next((item for item in lanes if item.get("id") == args.lane_id), lanes)
+            print(json.dumps(result, ensure_ascii=False, indent=2))
             return 0
         if args.command == "task":
             task_path = _task_path(paths, args.project_id, args.task_id)
@@ -595,11 +866,13 @@ def run(argv: list[str] | None = None) -> int:
                 ))
                 return 0
             if args.task_command == "complete":
-                print(complete_task_workspace(
+                completed = complete_task_workspace(
                     paths,
                     project_id=args.project_id,
                     task_id=args.task_id,
-                ))
+                )
+                _refresh_project_memory(repository, paths, _project_reference(args.project_id, paths))
+                print(completed)
                 return 0
             if args.task_command == "release":
                 released = release_leases(paths, project_id=args.project_id, task_id=args.task_id)
@@ -620,6 +893,34 @@ def run(argv: list[str] | None = None) -> int:
             return 0
         if args.command == "config" and args.config_command == "explain":
             print(explain(repository, paths, Path(args.path), output_format=args.format), end="")
+            return 0
+        if args.command == "pr":
+            project = _current_or_explicit_project(None, paths)
+            if args.pr_command == "refresh":
+                repository_path = _project_repository_path(project, paths, args.repository_id)
+                target = PullRequestService(repository, paths, McpToolClient(repository, paths, project=project)).refresh(
+                    args.reference,
+                    project=project,
+                    repository_path=repository_path,
+                )
+                print(target)
+                return 0
+            snapshots = _scm_snapshots(paths, project.identifier, args.reference)
+            if not snapshots:
+                raise AgentKitError("Локальный снимок PR/MR не найден; выполните agent-kit pr refresh")
+            document = json.loads(snapshots[0].read_text(encoding="utf-8"))
+            if args.pr_command == "show":
+                print(json.dumps(document, ensure_ascii=False, indent=2))
+            else:
+                print(json.dumps({
+                    "path": str(snapshots[0]),
+                    "provider": document.get("provider"),
+                    "project": document.get("project"),
+                    "number": document.get("number"),
+                    "source_revision": document.get("source_revision"),
+                    "fetched_at": document.get("fetched_at"),
+                    "warnings": document.get("warnings", []),
+                }, ensure_ascii=False, indent=2))
             return 0
     except AgentKitError as error:
         print(f"ERROR   [agent-kit] {error}", file=sys.stderr)

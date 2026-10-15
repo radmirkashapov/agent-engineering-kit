@@ -91,6 +91,58 @@ def test_core_mcp_registration_is_namespaced_and_oauth_safe(tmp_path: Path, monk
     assert sum(item.get("mcp") == "context7" and item["status"] == "AUTH_REQUIRED" for item in registrations) == 2
 
 
+def test_confirmed_docker_route_replaces_native_server_with_one_gateway(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    data = tmp_path / "data"
+    paths = KitPaths(repository, data, data / "runtime", data / "projects", data / "overrides")
+    root = tmp_path / "web-project"
+    root.mkdir()
+    (root / "package.json").write_text('{"name":"web-project"}', encoding="utf-8")
+    project = __import__("agent_engineering_kit.projects", fromlist=["LogicalProject"]).LogicalProject(
+        root,
+        root / ".ai-team/project.yaml",
+        {"id": "web-project", "repositories": [{"id": "root", "path": "."}]},
+    )
+    for identifier, command in (("codebase-memory", "codebase-memory-mcp"), ("serena", "serena")):
+        binary = paths.installations / "mcp" / identifier / "bin" / command
+        binary.parent.mkdir(parents=True, exist_ok=True)
+        binary.write_text("fixture", encoding="utf-8")
+    paths.state.mkdir(parents=True)
+    (paths.state / "docker-mcp-toolkit.json").write_text(
+        json.dumps({
+            "version": 1,
+            "status": "SYNCED",
+            "project_id": "web-project",
+            "profile": "agent-engineering-kit",
+            "gateway_registration": "agent-kit-docker",
+            "routes": {"context7": "docker"},
+            "managed_servers": {"context7": "catalog://context7"},
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "agent_engineering_kit.clients.shutil.which",
+        lambda name: f"/usr/bin/{name}" if name in {"codex", "claude", "npx", "docker"} else None,
+    )
+    calls: list[list[str]] = []
+
+    def runner(args, **kwargs):
+        calls.append(list(args))
+        return CommandResult(tuple(args), 1 if "get" in args else 0, "", "")
+
+    register_native_mcp(repository, paths, project=project, access_profile="administrator", runner=runner)
+
+    additions = [args for args in calls if "add" in args]
+    assert not any("agent-kit-context7" in args for args in additions)
+    gateway = [args for args in additions if "agent-kit-docker" in args]
+    assert len(gateway) == 2
+    assert all(Path(args[-6]).name == "docker" for args in gateway)
+    assert all(args[-5:] == ["mcp", "gateway", "run", "--profile", "agent-engineering-kit"] for args in gateway)
+
+
 def test_write_capable_scm_server_is_not_registered_under_readonly_profile(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -160,10 +212,22 @@ def test_blocked_mcp_is_removed_from_previously_registered_native_clients(tmp_pa
     register_native_mcp(repository, paths, runner=runner)
     assert all("agent-kit-context7" in registrations for registrations in client_state.values())
 
+    (paths.state / "docker-mcp-toolkit.json").write_text(
+        json.dumps({
+            "status": "SYNCED",
+            "project_id": None,
+            "profile": "agent-engineering-kit",
+            "gateway_registration": "agent-kit-docker",
+            "routes": {"context7": "docker"},
+            "managed_servers": {"context7": "catalog://context7"},
+        }),
+        encoding="utf-8",
+    )
     write_yaml(paths.overrides / "global/access.yaml", {"version": 1, "mcp": {"allow": [], "block": ["context7"]}})
     state_path = register_native_mcp(repository, paths, runner=runner)
 
     assert all("agent-kit-context7" not in registrations for registrations in client_state.values())
+    assert all("agent-kit-docker" not in registrations for registrations in client_state.values())
     assert all("user-owned" in registrations for registrations in client_state.values())
     rows = json.loads(state_path.read_text(encoding="utf-8"))["registrations"]
     disabled = [row for row in rows if row.get("mcp") == "context7" and row["status"] == "DISABLED"]

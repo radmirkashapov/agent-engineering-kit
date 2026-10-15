@@ -54,10 +54,10 @@ security:
       # Upstream repository переименован, но go.mod намеренно сохраняет прежний module path.
       module: github.com/zricethezav/gitleaks/v8@{version}
 
-  # Bumblebee необязателен: он инвентаризирует окружение, но не блокирует activation.
+  # Bumblebee обязателен для общей инвентаризации project dependencies и agent tooling.
   - id: bumblebee
     name: Perplexity Bumblebee
-    required: false
+    required: true
     command: bumblebee
     platforms: [darwin, linux]
     source:

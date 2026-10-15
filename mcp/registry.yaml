@@ -29,7 +29,14 @@ servers:
     transport: stdio
     activation: always
     command: serena
-    args: [start-mcp-server, --project-from-cwd, --context, codex]
+    args:
+      # Проект берётся из cwd клиента, а dashboard остаётся доступен без автоматического открытия вкладки.
+      - start-mcp-server
+      - --project-from-cwd
+      - --context
+      - codex
+      - --open-web-dashboard
+      - "false"
     source:
       type: git
       repository: https://github.com/oraios/serena.git
@@ -65,7 +72,14 @@ servers:
     transport: stdio
     activation: github
     command: docker
-    args: [run, -i, --rm, -e, GITHUB_PERSONAL_ACCESS_TOKEN, "ghcr.io/github/github-mcp-server@sha256:508a0857ec762b1ab1cece29193345b501fab1dd9d1228a7b617062954cecac6"]
+    args:
+      # Токен передаётся Docker по имени переменной; значение остаётся только в окружении пользователя.
+      - run
+      - -i
+      - --rm
+      - -e
+      - GITHUB_PERSONAL_ACCESS_TOKEN
+      - "ghcr.io/github/github-mcp-server@sha256:508a0857ec762b1ab1cece29193345b501fab1dd9d1228a7b617062954cecac6"
     source:
       type: git
       repository: https://github.com/github/github-mcp-server.git

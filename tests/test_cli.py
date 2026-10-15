@@ -413,9 +413,120 @@ def test_run_prepare_rejects_unknown_explicit_project(
     assert "не найден" in capsys.readouterr().err
 
 
+def test_project_init_uses_configured_template_and_git_options(
+    isolated_data: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    root = isolated_data / "fastapi-service"
+
+    assert run([
+        "project", "init", str(root),
+        "--template", "python-fastapi",
+        "--git",
+        "--default-branch", "develop",
+    ]) == 0
+
+    assert (root / "src/app/main.py").is_file()
+    assert (root / ".git/HEAD").read_text(encoding="utf-8").strip() == "ref: refs/heads/develop"
+    assert "Logical project" in capsys.readouterr().out
+
+
+def test_project_init_parser_exposes_language_and_stack() -> None:
+    args = _parser().parse_args([
+        "project", "init", ".", "--language", "python", "--stack", "fastapi",
+    ])
+
+    assert args.language == "python"
+    assert args.stack == "fastapi"
+
+
+def test_project_memory_refresh_command_updates_native_indexes(
+    isolated_data: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = isolated_data / "memory-project"
+    assert run(["project", "init", str(root), "--id", "memory-project"]) == 0
+    capsys.readouterr()
+    calls: list[tuple[str, str]] = []
+
+    class FakeMemoryManager:
+        def __init__(self, repository: Path, paths) -> None:
+            pass
+
+        def index(self, project, *, mode: str):
+            calls.append((project.identifier, mode))
+            return {"status": "PASS", "integrations": []}
+
+    monkeypatch.setattr(cli_module, "ProjectMemoryManager", FakeMemoryManager)
+
+    assert run(["project", "memory-refresh", str(root)]) == 0
+
+    assert calls == [("memory-project", "refresh")]
+    assert json.loads(capsys.readouterr().out)["status"] == "PASS"
+
+
+def test_security_scan_cli_uses_project_and_effective_skills(
+    isolated_data: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = isolated_data / "scan-project"
+    root.mkdir()
+    skill = isolated_data / "skill"
+    skill.mkdir()
+    calls: list[tuple[Path, list[Path]]] = []
+
+    class FakeSecurityManager:
+        def __init__(self, repository: Path, paths) -> None:
+            pass
+
+        def scan(self, target: Path, *, skill_roots: list[Path]):
+            calls.append((target, skill_roots))
+            return True, {"status": "PASS", "checks": []}
+
+    monkeypatch.setattr(cli_module, "SecurityToolManager", FakeSecurityManager)
+    monkeypatch.setattr(cli_module, "_effective_skill_roots", lambda *_args: [skill])
+
+    assert run(["security", "scan", str(root)]) == 0
+
+    assert calls == [(root.resolve(), [skill])]
+    assert json.loads(capsys.readouterr().out)["status"] == "PASS"
+
+
+def test_mcp_docker_enable_writes_local_override_and_resyncs(
+    isolated_data: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[bool] = []
+
+    def fake_resync(*args, **kwargs):
+        calls.append(True)
+        return SimpleNamespace(incomplete=[], revision="test", changed=True, skills=[], mcp=[], clients=[])
+
+    monkeypatch.setattr(cli_module, "resync", fake_resync)
+
+    assert run(["mcp", "docker", "enable", "--scope", "global"]) == 0
+
+    override = isolated_data / "overrides/global/docker-toolkit.yaml"
+    assert load_yaml(override)["enabled"] is True
+    assert calls == [True]
+    assert str(override) in capsys.readouterr().out
+
+
+def test_mcp_docker_parser_exposes_project_selector() -> None:
+    args = _parser().parse_args(["mcp", "docker", "plan", "--project", "shop"])
+
+    assert args.mcp_command == "docker"
+    assert args.docker_command == "plan"
+    assert args.project_reference == "shop"
+
+
 def test_task_cli_creates_workspace_and_controls_lease(
     isolated_data: Path,
     capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     root = isolated_data / "task-project"
     root.mkdir()
@@ -427,6 +538,17 @@ def test_task_cli_creates_workspace_and_controls_lease(
     subprocess.run(["git", "commit", "-m", "docs(readme): add project"], cwd=root, check=True, capture_output=True)
     assert run(["project", "attach", str(root), "--id", "task-project"]) == 0
     capsys.readouterr()
+    refreshes: list[str] = []
+
+    class FakeMemoryManager:
+        def __init__(self, repository: Path, paths) -> None:
+            pass
+
+        def index(self, project, *, mode: str):
+            refreshes.append(f"{project.identifier}:{mode}")
+            return {"status": "PASS", "integrations": []}
+
+    monkeypatch.setattr(cli_module, "ProjectMemoryManager", FakeMemoryManager)
 
     assert run([
         "task", "create", "task-project", "task-01", "--write", "src/**",
@@ -441,8 +563,85 @@ def test_task_cli_creates_workspace_and_controls_lease(
     assert json.loads(capsys.readouterr().out)[0]["branch"].startswith("feat/13-10-2026-task-01")
     assert run(["task", "complete", "task-project", "task-01"]) == 0
     capsys.readouterr()
+    assert refreshes == ["task-project:refresh", "task-project:refresh"]
     assert run(["task", "release", "task-project", "task-01"]) == 0
     assert not lease_path.exists()
     capsys.readouterr()
     assert run(["task", "gc", "task-project", "task-01"]) == 0
     assert not task_path.exists()
+
+
+def test_new_task_cli_detects_current_project_and_runs_full_workflow(
+    isolated_data: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = isolated_data / "workflow-project"
+    root.mkdir()
+    subprocess.run(["git", "init", "-b", "main"], cwd=root, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "tests@example.invalid"], cwd=root, check=True)
+    subprocess.run(["git", "config", "user.name", "Tests"], cwd=root, check=True)
+    (root / "README.md").write_text("# Project\n", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-m", "docs(readme): add project"], cwd=root, check=True, capture_output=True)
+    assert run(["project", "init", str(root), "--id", "workflow-project"]) == 0
+    capsys.readouterr()
+    monkeypatch.chdir(root)
+
+    assert run([
+        "task", "create", "SOME-ID", "--type", "fix", "--write", "src/**",
+    ]) == 0
+
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "active"
+    assert result["worktrees"][0]["branch"].startswith("fix/")
+    assert result["worktrees"][0]["branch"].endswith("-some-id")
+    assert run(["task", "status", result["task_id"]]) == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "active"
+
+
+def test_pr_refresh_without_reference_uses_current_branch(
+    isolated_data: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = isolated_data / "pr-project"
+    root.mkdir()
+    subprocess.run(["git", "init", "-b", "main"], cwd=root, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "tests@example.invalid"], cwd=root, check=True)
+    subprocess.run(["git", "config", "user.name", "Tests"], cwd=root, check=True)
+    (root / "README.md").write_text("# Project\n", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-m", "docs(readme): add project"], cwd=root, check=True, capture_output=True)
+    subprocess.run(["git", "remote", "add", "origin", "git@gitlab.example.com:team/project.git"], cwd=root, check=True)
+    subprocess.run(["git", "switch", "-c", "feature/context"], cwd=root, check=True, capture_output=True)
+    assert run(["project", "init", str(root), "--id", "pr-project"]) == 0
+    capsys.readouterr()
+    monkeypatch.chdir(root)
+
+    class FakeClient:
+        def call(self, server_id: str, tool: str, arguments: dict) -> dict:
+            if tool == "list_merge_requests":
+                    return {
+                        "merge_requests": [
+                            {
+                                "iid": 9,
+                                "title": "Context",
+                                "source_branch": "feature/context",
+                                "web_url": "https://gitlab.example.com/team/project/-/merge_requests/9",
+                            }
+                        ]
+                    }
+            if arguments.get("include"):
+                return {arguments["include"][0]: []}
+            return {"iid": 9, "diff_head_sha": "deadbeef"}
+
+    monkeypatch.setattr(
+        cli_module,
+        "McpToolClient",
+        lambda repository, paths, **_kwargs: FakeClient(),
+    )
+
+    assert run(["pr", "refresh"]) == 0
+    snapshot = Path(capsys.readouterr().out.strip())
+    assert json.loads(snapshot.read_text(encoding="utf-8"))["number"] == 9

@@ -25,6 +25,16 @@ def test_managed_mcp_does_not_fall_back_to_unmanaged_path(tmp_path: Path, monkey
     assert manager.executable(item) is None
 
 
+def test_serena_keeps_dashboard_available_without_opening_browser_tabs(tmp_path: Path) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    data = tmp_path / "data"
+    paths = KitPaths(repository, data, data / "runtime", data / "projects", data / "overrides")
+
+    serena = next(item for item in McpManager(repository, paths).available() if item["id"] == "serena")
+
+    assert serena["args"][-2:] == ["--open-web-dashboard", "false"]
+
+
 def test_default_profile_exposes_only_servers_with_enforceable_read_boundaries(tmp_path: Path) -> None:
     repository = Path(__file__).resolve().parents[1]
     root = tmp_path / "workspace"
