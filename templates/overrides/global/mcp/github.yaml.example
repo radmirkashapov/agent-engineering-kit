@@ -1,0 +1,9 @@
+# Пример добавляет ссылку на переменную окружения для локального GitHub MCP.
+target: github
+override:
+  # extend сохраняет базовую конфигурацию и меняет только указанные параметры.
+  mode: extend
+  value:
+    # Значение секрета остаётся во внешней переменной окружения, а не в файле.
+    environment:
+      GITHUB_PERSONAL_ACCESS_TOKEN: env:GITHUB_PERSONAL_ACCESS_TOKEN

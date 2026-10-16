@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object", "additionalProperties": false, "required": ["version", "security"],
+  "properties": {
+    "version": {"const": 1},
+    "security": {"type": "array", "items": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "name", "required", "command", "platforms", "source", "installation"],
+      "properties": {
+        "id": {"type": "string"}, "name": {"type": "string"}, "required": {"type": "boolean"}, "command": {"type": "string"},
+        "platforms": {"type": "array", "items": {"enum": ["darwin", "linux", "windows"]}},
+        "source": {"type": "object", "required": ["type", "repository"]},
+        "installation": {"type": "object", "required": ["type"], "properties": {"type": {"enum": ["uv-tool", "go-install"]}, "python": {"type": "string"}, "requirement": {"type": "string"}, "module": {"type": "string"}}}
+      }
+    }}
+  }
+}

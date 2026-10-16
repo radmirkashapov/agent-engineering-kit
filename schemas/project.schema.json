@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-engineering-kit.local/schemas/project.schema.json",
+  "title": "Logical project manifest",
+  "type": "object",
+  "required": ["version", "id", "name", "repositories", "documentation", "memory"],
+  "additionalProperties": false,
+  "properties": {
+    "version": { "const": 1 },
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,62}$" },
+    "name": { "type": "string", "minLength": 1 },
+    "repositories": {
+      "type": "array", "minItems": 1,
+      "items": { "$ref": "#/$defs/pathEntry" }
+    },
+    "components": {
+      "type": "array",
+      "items": {
+        "type": "object", "required": ["id", "repository", "path"], "additionalProperties": false,
+        "properties": {
+          "id": { "$ref": "#/$defs/componentId" },
+          "repository": { "$ref": "#/$defs/id" },
+          "path": { "$ref": "#/$defs/relativePath" },
+          "owner": { "type": "string", "minLength": 1 },
+          "criticality": { "enum": ["low", "medium", "high", "critical"] }
+        }
+      }
+    },
+    "documentation": {
+      "type": "object", "required": ["index", "roots"], "additionalProperties": false,
+      "properties": {
+        "index": { "$ref": "#/$defs/relativePath" },
+        "roots": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/relativePath" } }
+      }
+    },
+    "memory": {
+      "type": "object", "required": ["namespace"], "additionalProperties": false,
+      "properties": { "namespace": { "$ref": "#/$defs/id" } }
+    },
+    "integrations": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "jira": {
+          "type": "object",
+          "required": ["project_key"],
+          "additionalProperties": false,
+          "properties": {
+            "project_key": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]*$" },
+            "cloud_id": { "type": "string", "minLength": 1 },
+            "site_url": { "type": "string", "format": "uri" }
+          }
+        }
+      }
+    },
+    "conventions": {
+      "type": "array", "uniqueItems": true,
+      "items": { "$ref": "#/$defs/relativeYamlPath" }
+    },
+    "discovery": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "exclude_paths": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/relativePath" } }
+      }
+    },
+    "harness": {
+      "type": "object", "required": ["preferred_client", "required_capabilities"], "additionalProperties": false,
+      "properties": {
+        "preferred_client": {"enum": ["auto", "codex", "claude-code", "claude-desktop", "opencode", "cline"]},
+        "required_capabilities": {
+          "type": "array", "uniqueItems": true,
+          "items": {"enum": ["instructions", "skills", "mcp"]}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,62}$" },
+    "componentId": { "type": "string", "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/@-]{0,255}$" },
+    "relativePath": { "type": "string", "minLength": 1, "not": { "pattern": "^(?:/|[A-Za-z]:[\\\\/]|\\.\\.(?:[\\\\/]|$))" } },
+    "relativeYamlPath": {
+      "allOf": [
+        { "$ref": "#/$defs/relativePath" },
+        { "pattern": "^[^\\\\]+\\.ya?ml$" }
+      ]
+    },
+    "pathEntry": {
+      "type": "object", "required": ["id", "path"], "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "path": { "$ref": "#/$defs/relativePath" },
+        "required": { "type": "boolean" },
+        "remote": { "type": "string", "minLength": 1, "not": { "pattern": "(?:[?#]|://[^/]*@)" } }
+      }
+    }
+  }
+}

@@ -1,0 +1,21 @@
+# Оптимизация контекста выключена до успешного сравнительного eval.
+version: 1
+capability: context-optimization
+default_status: disabled
+providers:
+  # JEV ранжирует релевантность, но не становится источником истины и не переписывает код.
+  - id: jev
+    description: Use JEV as an experimental relevance scorer for large reads and transcript compaction
+    source: https://github.com/BorisLeMeec/jev
+    clients: [codex, claude-code]
+    activation: explicit-local-opt-in
+    secrets: [TYPE_SAFE_AI_KEY]
+    fail_mode: passthrough
+evaluation:
+  # Качество не должно снижаться ради экономии токенов.
+  baseline: disabled
+  treatment: jev
+  minimum_quality_ratio: 1.0
+  minimum_context_reduction_ratio: 0.2
+  maximum_extra_tool_calls_ratio: 0.1
+  required_runs_per_arm: 5

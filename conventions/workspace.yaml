@@ -1,0 +1,13 @@
+# Общие соглашения фиксируют безопасную работу с task workspace и worktree.
+version: 1
+conventions:
+  - id: worktree-ownership
+    description: Give each writable execution lane one owned worktree.
+    requirements:
+      - Serialize execution lanes with overlapping declared write sets.
+      - Integrate through Git commits, merges, or cherry-picks in a separate worktree.
+  - id: project-knowledge
+    description: Keep canonical project knowledge in versioned sources.
+    requirements:
+      - Store durable knowledge in Git code, tests, ADRs, and documentation.
+      - Keep machine-local project memory outside the repository.

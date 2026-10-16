@@ -1,0 +1,13 @@
+# Профиль рецензента отделяет независимую проверку от реализации.
+version: 1
+id: reviewer
+description: Review proposed changes independently without modifying the implementation
+roles: [reviewer]
+skills: [code-review, change-impact]
+mcp: [codebase-memory, serena]
+permissions:
+  # Рецензент читает diff и запускает безопасные проверки.
+  approval_mode: readonly
+  sandbox: read-only
+  network: deny
+  tools: [read, search, test, git-diff]

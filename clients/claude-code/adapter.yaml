@@ -1,0 +1,7 @@
+# Thin adapter связывает Claude Code с единым AI.md, skills и MCP registry.
+version: 1
+id: claude-code
+entrypoint: AI.md
+instructions: CLAUDE.md
+skills: skills
+mcp: mcp/registry.yaml

@@ -1,0 +1,9 @@
+# Профили явно отделяют безопасное чтение от изменения и администрирования.
+version: 1
+profiles:
+  - id: readonly
+    allowed_modes: [read]
+  - id: editor
+    allowed_modes: [read, write]
+  - id: administrator
+    allowed_modes: [read, write, admin]

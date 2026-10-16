@@ -1,0 +1,17 @@
+# Переносимый контракт выделенного профиля Docker MCP Toolkit.
+version: 1
+enabled: false
+profile: agent-engineering-kit
+catalog: docker-mcp
+gateway_registration: agent-kit-docker
+clients:
+  # Эти клиенты получают один gateway вместо дублирующих native registrations.
+  - codex
+  - claude-code
+  - claude-desktop
+  - opencode
+  - cline
+mappings:
+  # Используются только server IDs, подтверждённые официальной документацией Docker.
+  github: catalog://github-official
+  playwright: catalog://playwright

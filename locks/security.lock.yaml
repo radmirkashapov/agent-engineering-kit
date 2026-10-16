@@ -1,0 +1,19 @@
+# Проверенные версии security tools; обновление выполняется только через review.
+version: 1
+components:
+  # Полная Git revision связывает установленный binary с проверенным upstream source.
+  - id: skill-evaluator
+    version: v0.3.0
+    revision: ac0a04905100acdafc6c95829311a9739c340ff6
+  - id: skillspector
+    version: v2.11.2
+    revision: 69dcdfb74487d361ba4c811d088cfdea2ff3a9dc
+  - id: semgrep
+    version: v1.177.0
+    revision: 6f497be6aad3410ecd1aee2adc701c565817db78
+  - id: gitleaks
+    version: v8.30.1
+    revision: 83d9cd684c87d95d656c1458ef04895a7f1cbd8e
+  - id: bumblebee
+    version: v0.1.2
+    revision: 59f4ba1cece7b86a02651a7c140c27bf66823fbe

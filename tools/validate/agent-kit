@@ -1,0 +1,4 @@
+#!/usr/bin/env sh
+set -eu
+REPOSITORY=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
+PYTHONPATH="$REPOSITORY/src${PYTHONPATH:+:$PYTHONPATH}" exec python3 -m agent_engineering_kit.cli validate "$@"

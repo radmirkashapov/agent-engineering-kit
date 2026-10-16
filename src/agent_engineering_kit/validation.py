@@ -1,0 +1,49 @@
+"""Единая точка запуска всех проверок конфигурации."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from .clients import validate_clients
+from .conventions import validate_conventions
+from .definitions import validate_agents, validate_locks, validate_mcp, validate_skills
+from .git_hygiene import validate_git_hygiene
+from .models import validate_models
+from .overrides import validate_overrides
+from .paths import KitPaths
+from .profiles import validate_profiles
+from .policy import validate_policy
+from .projects import find_project
+from .result import ValidationResult
+from .schema import validate_repository_schemas
+from .security import validate_security
+
+
+VALIDATORS = {
+    "schemas": lambda repository, paths, include_local: validate_repository_schemas(repository),
+    "models": lambda repository, paths, include_local: validate_models(repository, include_local=include_local, local_path=paths.overrides / "models.yaml"),
+    "agents": lambda repository, paths, include_local: validate_agents(repository),
+    "skills": lambda repository, paths, include_local: validate_skills(repository),
+    "mcp": lambda repository, paths, include_local: validate_mcp(repository),
+    "catalogs": lambda repository, paths, include_local: validate_locks(repository),
+    "clients": lambda repository, paths, include_local: validate_clients(repository),
+    "profiles": lambda repository, paths, include_local: validate_profiles(repository),
+    "conventions": lambda repository, paths, include_local: validate_conventions(repository, find_project(Path.cwd()) if include_local else None),
+    "policy": lambda repository, paths, include_local: validate_policy(repository, paths, find_project(Path.cwd()) if include_local else None, include_local=include_local),
+    "overrides": lambda repository, paths, include_local: validate_overrides(repository, paths.overrides) if include_local else ValidationResult(),
+    "git-hygiene": lambda repository, paths, include_local: validate_git_hygiene(repository, paths, require_gitleaks=not include_local),
+    "security": lambda repository, paths, include_local: validate_security(repository),
+}
+
+
+def validate(repository: Path, paths: KitPaths, target: str = "all", *, include_local: bool = True) -> ValidationResult:
+    result = ValidationResult()
+    names = VALIDATORS if target == "all" else {target: VALIDATORS[target]}
+    for validator in names.values():
+        try:
+            result.extend(validator(repository, paths, include_local))
+        except Exception as error:
+            result.error(target if target != "all" else "validation", str(error))
+    if not include_local:
+        result.info("validation", "CI baseline: user-local overrides отключены")
+    return result

@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object", "additionalProperties": false, "required": ["version", "clients"],
+  "properties": {
+    "version": {"const": 1},
+    "clients": {"type": "array", "minItems": 5, "items": {
+      "type": "object", "additionalProperties": false, "required": ["id", "description", "instructions", "skills", "mcp", "harness"],
+      "properties": {
+        "id": {"type": "string", "enum": ["codex", "claude-code", "claude-desktop", "opencode", "cline"]},
+        "description": {"type": "string", "minLength": 20},
+        "instructions": {"type": "string"},
+        "skills": {"type": "string"},
+        "mcp": {"type": "string"},
+        "harness": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["adapter_version", "reference_runtime", "execution_owner", "managed_capabilities", "delegated_capabilities", "experimental_capabilities"],
+          "properties": {
+            "adapter_version": {"type": "integer", "minimum": 1},
+            "reference_runtime": {"type": "boolean"},
+            "execution_owner": {"const": "client"},
+            "managed_capabilities": {
+              "type": "array", "minItems": 1, "uniqueItems": true,
+              "items": {"enum": ["instructions", "skills", "mcp"]}
+            },
+            "delegated_capabilities": {
+              "type": "array", "minItems": 1, "uniqueItems": true,
+              "items": {"enum": ["agent-loop", "context-window", "sandbox", "approvals", "task-lifecycle", "event-stream"]}
+            },
+            "experimental_capabilities": {
+              "type": "array", "uniqueItems": true,
+              "items": {"enum": ["context-optimization"]}
+            }
+          }
+        }
+      }
+    }}
+  }
+}
