@@ -10,6 +10,31 @@
 
 Набор является управляющим слоем. Git-репозиторий Kit не хранит память проектов, учётные данные, сеансы, базы MCP или пользовательские настройки: локальное состояние размещается в каталоге данных машины и отделено от версионируемых определений.
 
+## Быстрый старт
+
+```bash
+# Установить CLI из рабочей копии Kit.
+./bootstrap/install.sh
+
+# Проверить переносимую конфигурацию и подготовить локальное окружение.
+agent-kit validate --ci
+agent-kit resync --no-update
+agent-kit doctor
+
+# Открыть встроенную справку.
+agent-kit help
+```
+
+Для подключения продуктового репозитория перейдите в его корень и выполните:
+
+```bash
+agent-kit project init
+agent-kit project status .
+agent-kit config explain .
+```
+
+Kit не заменяет Git, Pull Request, CI или выбранный AI-клиент. Он формирует согласованную конфигурацию, а разработка, commit, push и PR выполняются штатными средствами Git и платформы репозитория.
+
 ## Связь с agent harness
 
 `agent-engineering-kit` — control plane и компилятор эффективной политики, а не собственный agent runtime. Он определяет роли, rules, skills, MCP, модели, локальные overrides и способы подключения клиентов. Цикл агента, контекстное окно, sandbox, approvals, жизненный цикл задач и поток событий остаются ответственностью внешнего execution harness: Codex, Claude Code, Claude Desktop, OpenCode или Cline.
@@ -109,6 +134,46 @@ agent-kit doctor
 ```
 
 `resync` устанавливает инструменты безопасности, проверяет и активирует сторонние skills, подготавливает MCP и создаёт нативные мосты для клиентов. Повторный запуск идемпотентен.
+
+## Встроенная справка и каталог команд
+
+`agent-kit help` показывает команды верхнего уровня. После `help` можно указать любой путь команды; вывод строится из того же CLI parser, поэтому не расходится с `--help`:
+
+```bash
+agent-kit help
+agent-kit help project init
+agent-kit help task lane
+agent-kit help mcp docker
+agent-kit help security scan
+```
+
+Обычная форма `--help` также поддерживается:
+
+```bash
+agent-kit project init --help
+```
+
+| Команда | Назначение |
+|---|---|
+| `agent-kit install` | Применить desired state без обновления Git checkout. |
+| `agent-kit validate [target]` | Проверить схемы, каталоги, policy, Git hygiene и безопасность. |
+| `agent-kit doctor` | Диагностировать установленное окружение и runtime. |
+| `agent-kit sync` / `resync` | Синхронизировать локальные установки, MCP и клиентские адаптеры. |
+| `agent-kit project ...` | Создать, подключить, обнаружить или сверить logical project и его память. |
+| `agent-kit config explain` | Показать effective configuration, выбранный harness и происхождение решений. |
+| `agent-kit skills ...` | Просмотреть, включить, отключить или переопределить skills. |
+| `agent-kit mcp ...` | Просмотреть, включить, отключить или переопределить MCP. |
+| `agent-kit mcp docker ...` | Управлять выделенным профилем Docker MCP Toolkit. |
+| `agent-kit override ...` | Управлять локальными overrides правил, ролей, policy, tools и harness. |
+| `agent-kit security ...` | Установить и запустить средства проверки skills и проекта. |
+| `agent-kit pr refresh` | Обновить локальный недоверенный снимок открытого PR/MR через SCM MCP. |
+| `agent-kit run ...` | Зафиксировать входной и итоговый контракт запуска внешнего harness. |
+| `agent-kit task ...` | Вручную управлять workspace, lease, worktree и параллельными lanes. |
+| `agent task create ...` | Начать обычную задачу: определить Jira-контекст, ветку и worktree. |
+
+Высокоуровневая команда `agent` предназначена для ежедневной работы разработчика. Команды `agent-kit` предоставляют полный управляющий и аварийный интерфейс.
+
+Подробная документация начинается с [канонического индекса](docs/INDEX.md). Инструкция по корпоративной схеме GitHub → GitLab находится в [отдельном runbook](docs/runbooks/install-from-gitlab-fork.md), описание MCP — в [mcp/README.md](mcp/README.md), а принятые архитектурные решения — в [docs/adr](docs/adr/).
 
 ## MCP из коробки
 

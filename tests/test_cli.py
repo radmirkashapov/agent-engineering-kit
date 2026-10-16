@@ -59,6 +59,34 @@ def test_available_does_not_require_scope() -> None:
     assert args.skills_command == "available"
 
 
+def test_help_prints_top_level_reference(capsys: pytest.CaptureFixture[str]) -> None:
+    assert run(["help"]) == 0
+
+    output = capsys.readouterr().out
+    assert "usage: agent-kit" in output
+    assert "Универсальный engineering kit" in output
+    assert "project" in output
+    assert "mcp" in output
+    assert "Проверять и устанавливать средства безопасности" in output
+
+
+def test_help_prints_nested_command_reference(capsys: pytest.CaptureFixture[str]) -> None:
+    assert run(["help", "mcp", "docker"]) == 0
+
+    output = capsys.readouterr().out
+    assert "usage: agent-kit mcp docker" in output
+    assert "status" in output
+    assert "plan" in output
+    assert "sync" in output
+    assert "Показать состояние Docker MCP Toolkit" in output
+
+
+def test_help_rejects_unknown_topic(capsys: pytest.CaptureFixture[str]) -> None:
+    assert run(["help", "unknown-topic"]) == 2
+
+    assert "unknown-topic" in capsys.readouterr().err
+
+
 @pytest.mark.parametrize("resource", ["skills", "mcp"])
 def test_override_requires_source_and_scope(resource: str) -> None:
     with pytest.raises(SystemExit):

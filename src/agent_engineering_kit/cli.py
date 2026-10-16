@@ -70,6 +70,8 @@ from .clients import register_native_mcp
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="agent-kit", description="Универсальный engineering kit для AI coding agents")
     subs = parser.add_subparsers(dest="command", required=True)
+    help_command = subs.add_parser("help", help="Показать справку по команде или разделу")
+    help_command.add_argument("topic", nargs="*", help="Путь команды, например: mcp docker")
     subs.add_parser("install", help="Установить desired-state environment без обновления checkout")
     check = subs.add_parser("validate", help="Проверить repository и effective policy")
     check.add_argument("target", nargs="?", default="all", choices=["all", *VALIDATORS])
@@ -124,11 +126,18 @@ def _parser() -> argparse.ArgumentParser:
     mcp_explain = mcp.add_parser("explain", help="Объяснить итоговое состояние MCP")
     mcp_explain.add_argument("id")
     docker_mcp = mcp.add_parser("docker", help="Управлять выделенным профилем Docker MCP Toolkit").add_subparsers(dest="docker_command", required=True)
-    for name in ("status", "plan", "sync"):
-        command = docker_mcp.add_parser(name)
+    for name, help_text in (
+        ("status", "Показать состояние Docker MCP Toolkit"),
+        ("plan", "Рассчитать операции без изменения профиля"),
+        ("sync", "Применить рассчитанный состав профиля"),
+    ):
+        command = docker_mcp.add_parser(name, help=help_text)
         command.add_argument("--project", dest="project_reference")
-    for name in ("enable", "disable"):
-        command = docker_mcp.add_parser(name)
+    for name, help_text in (
+        ("enable", "Включить Docker runtime в выбранной области"),
+        ("disable", "Отключить Docker runtime в выбранной области"),
+    ):
+        command = docker_mcp.add_parser(name, help=help_text)
         command.add_argument("--scope", choices=["global", "project"], required=True)
         command.add_argument("--project", dest="project_reference")
 
@@ -153,16 +162,27 @@ def _parser() -> argparse.ArgumentParser:
     override_reset.add_argument("--scope", choices=["global", "project"], required=True)
     override_reset.add_argument("--resync", action="store_true")
 
-    security = subs.add_parser("security").add_subparsers(dest="security_command", required=True)
-    for name in ("status", "doctor", "install", "update"):
-        security.add_parser(name)
-    security_validate = security.add_parser("validate")
+    security = subs.add_parser(
+        "security",
+        help="Проверять и устанавливать средства безопасности",
+    ).add_subparsers(dest="security_command", required=True)
+    for name, help_text in (
+        ("status", "Показать состояние средств безопасности"),
+        ("doctor", "Диагностировать установленные средства"),
+        ("install", "Установить отсутствующие обязательные средства"),
+        ("update", "Повторно установить закреплённые версии средств"),
+    ):
+        security.add_parser(name, help=help_text)
+    security_validate = security.add_parser("validate", help="Проверить один каталог skill")
     security_validate.add_argument("path", nargs="?", default="skills/first-party")
     security_scan = security.add_parser("scan", help="Проверить проект через Bumblebee и effective skills через SkillSpector")
     security_scan.add_argument("path", nargs="?", default=".")
 
-    project = subs.add_parser("project").add_subparsers(dest="project_command", required=True)
-    project_init = project.add_parser("init")
+    project = subs.add_parser(
+        "project",
+        help="Инициализировать и обслуживать logical project",
+    ).add_subparsers(dest="project_command", required=True)
+    project_init = project.add_parser("init", help="Инициализировать проект по выбранному шаблону")
     project_init.add_argument("path", nargs="?", default=".")
     project_init.add_argument("--id", dest="identifier")
     project_init.add_argument("--template", dest="template_id", help="ID шаблона из catalog/project-templates.yaml")
@@ -170,8 +190,11 @@ def _parser() -> argparse.ArgumentParser:
     project_init.add_argument("--stack", help="Стек шаблона")
     project_init.add_argument("--git", action="store_true", dest="initialize_git", help="Инициализировать Git repository")
     project_init.add_argument("--default-branch", default="main", help="Начальная ветка нового Git repository")
-    for name in ("detect", "status"):
-        command = project.add_parser(name)
+    for name, help_text in (
+        ("detect", "Обнаружить структуру и компоненты проекта"),
+        ("status", "Показать готовность проекта и его репозиториев"),
+    ):
+        command = project.add_parser(name, help=help_text)
         command.add_argument("path", nargs="?", default=".")
     project_attach = project.add_parser("attach", help="Создать machine-local descriptor без изменения repository")
     project_attach.add_argument("path")
@@ -186,8 +209,11 @@ def _parser() -> argparse.ArgumentParser:
     project_memory = project.add_parser("memory-refresh", help="Обновить индексы Codebase Memory и Serena")
     project_memory.add_argument("path", nargs="?", default=".")
 
-    config = subs.add_parser("config").add_subparsers(dest="config_command", required=True)
-    config_explain = config.add_parser("explain")
+    config = subs.add_parser(
+        "config",
+        help="Показывать effective configuration и её происхождение",
+    ).add_subparsers(dest="config_command", required=True)
+    config_explain = config.add_parser("explain", help="Объяснить итоговую конфигурацию")
     config_explain.add_argument("path", nargs="?", default=".")
     config_explain.add_argument("--format", choices=["text", "json"], default="text")
 
@@ -515,7 +541,17 @@ def _handle_generic_override(
 
 
 def run(argv: list[str] | None = None) -> int:
-    args = _parser().parse_args(argv)
+    parser = _parser()
+    args = parser.parse_args(argv)
+    if args.command == "help":
+        if not args.topic:
+            parser.print_help()
+            return 0
+        try:
+            parser.parse_args([*args.topic, "--help"])
+        except SystemExit as error:
+            return int(error.code)
+        return 0
     paths = resolve_paths()
     repository = paths.repository
     try:
