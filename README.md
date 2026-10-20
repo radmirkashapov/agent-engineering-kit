@@ -16,9 +16,6 @@
 # Выполнять из полного Git checkout, а не из скачанного ZIP-архива.
 ./bootstrap/install.sh
 
-# Перед doctor передать Sentry token из локального secret store в окружение.
-export SENTRY_ACCESS_TOKEN
-
 # Проверить переносимую конфигурацию и подготовить локальное окружение.
 agent-kit validate --ci
 agent-kit resync --no-update
@@ -112,7 +109,6 @@ Kit необходимо клонировать через Git. ZIP-архив �
 git clone <адрес-репозитория> agent-engineering-kit
 cd agent-engineering-kit
 ./bootstrap/install.sh
-export SENTRY_ACCESS_TOKEN
 agent-kit validate --ci
 agent-kit resync --no-update
 agent-kit doctor
@@ -124,7 +120,6 @@ agent-kit doctor
 git clone <адрес-репозитория> agent-engineering-kit
 Set-Location agent-engineering-kit
 .\bootstrap\install.ps1
-$env:SENTRY_ACCESS_TOKEN = (получение значения из корпоративного secret store)
 agent-kit validate --ci
 agent-kit resync --no-update
 agent-kit doctor
@@ -145,9 +140,6 @@ python -m pip install -e '.[dev]'
 ## Первый запуск
 
 ```bash
-export SENTRY_ACCESS_TOKEN
-# Только для self-hosted Sentry; hostname без https:// и пути:
-export SENTRY_HOST=sentry.company.example
 agent-kit validate --ci
 agent-kit resync --no-update
 agent-kit doctor
@@ -155,7 +147,18 @@ agent-kit doctor
 
 `resync` устанавливает инструменты безопасности, проверяет и активирует сторонние skills, подготавливает MCP и создаёт нативные мосты для клиентов. Повторный запуск идемпотентен.
 
-`SENTRY_ACCESS_TOKEN` обязателен для диагностики базового Sentry MCP. Не записывайте значение токена в `.env`, YAML, shell profile или Git; получайте его из локального либо корпоративного хранилища секретов перед запуском клиента. `SENTRY_HOST` нужен только для self-hosted Sentry и принимает hostname с необязательным портом, но без протокола и пути. Базовая конфигурация предоставляет только read-only skill `inspect`.
+Sentry MCP опционален и по умолчанию выключен. Для включения снимите локальную блокировку, получите token из secret store и повторите синхронизацию:
+
+```bash
+agent-kit mcp enable sentry
+export SENTRY_ACCESS_TOKEN
+# Только для self-hosted Sentry; hostname без https:// и пути:
+export SENTRY_HOST=sentry.company.example
+agent-kit resync --no-update
+agent-kit doctor
+```
+
+Не записывайте значение токена в `.env`, YAML, shell profile или Git. `SENTRY_HOST` принимает hostname с необязательным портом, но без протокола и пути. Базовая конфигурация предоставляет только read-only skill `inspect`. Отключить интеграцию можно командой `agent-kit mcp disable sentry`.
 
 ## Встроенная справка и каталог команд
 
@@ -204,7 +207,7 @@ agent-kit project init --help
 - `codebase-memory` — граф кода, архитектура, связи вызовов и анализ влияния;
 - `serena` — поиск символов и ссылок, семантическое редактирование и рефакторинг;
 - `context7` — актуальная документация библиотек, фреймворков и API;
-- `sentry` — обязательное read-only чтение ошибок, issues, traces, проектов и release health; SaaS используется по умолчанию, self-hosted задаётся через `SENTRY_HOST`.
+- `sentry` — опциональное read-only чтение ошибок, issues, traces, проектов и release health; выключено по умолчанию, SaaS используется после включения, self-hosted задаётся через `SENTRY_HOST`.
 
 Условные интеграции:
 

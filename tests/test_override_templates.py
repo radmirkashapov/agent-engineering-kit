@@ -9,6 +9,7 @@ import pytest
 
 import agent_engineering_kit.override_service as override_service
 from agent_engineering_kit.errors import AgentKitError
+from agent_engineering_kit.io import load_yaml
 from agent_engineering_kit.override_service import initialize_override_workspace
 from agent_engineering_kit.overrides import validate_overrides
 from agent_engineering_kit.paths import KitPaths
@@ -24,7 +25,7 @@ def _paths(repository: Path, tmp_path: Path) -> KitPaths:
     )
 
 
-def test_initializer_creates_neutral_policy_and_examples(tmp_path: Path) -> None:
+def test_initializer_creates_default_policy_and_examples(tmp_path: Path) -> None:
     repository = Path(__file__).resolve().parents[1]
     paths = _paths(repository, tmp_path)
 
@@ -103,6 +104,16 @@ def test_initializer_rejects_symlinked_destination_parent(tmp_path: Path) -> Non
 
     assert not (outside / "README.md").exists()
     assert not (outside / "access.yaml").exists()
+
+
+def test_initializer_disables_optional_sentry_by_default(tmp_path: Path) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    paths = _paths(repository, tmp_path)
+
+    initialize_override_workspace(repository, paths)
+
+    access = load_yaml(paths.overrides / "global/access.yaml")
+    assert "sentry" in access["mcp"]["block"]
 
 
 def test_initializer_preserves_file_created_during_copy(monkeypatch, tmp_path: Path) -> None:

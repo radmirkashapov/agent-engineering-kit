@@ -46,17 +46,22 @@ git remote -v
 
 ```bash
 ./bootstrap/install.sh
-export SENTRY_ACCESS_TOKEN
 agent-kit validate --ci
 agent-kit resync --no-update
 agent-kit doctor
 ```
 
-Значение `SENTRY_ACCESS_TOKEN` получите из корпоративного хранилища секретов и не сохраняйте в Git или shell profile. Для self-hosted Sentry дополнительно задайте hostname без протокола и пути:
+Sentry по умолчанию выключен и не мешает установке. Если интеграция нужна, включите её локально и получите `SENTRY_ACCESS_TOKEN` из корпоративного хранилища секретов:
 
 ```bash
+agent-kit mcp enable sentry
+export SENTRY_ACCESS_TOKEN
+# Для self-hosted Sentry задайте hostname без протокола и пути:
 export SENTRY_HOST=sentry.company.example
+agent-kit resync --no-update
 ```
+
+Не сохраняйте token в Git или shell profile.
 
 Если checkout перенесён в другой каталог, сменился корпоративный fork или pointer остался от прежней установки, повторный запуск bootstrap безопасно обновит `<data>/state/repository-path`.
 
@@ -141,7 +146,6 @@ git push -u origin chore/20-10-2026-sync-upstream
 git switch main
 git pull --ff-only origin main
 ./bootstrap/install.sh
-export SENTRY_ACCESS_TOKEN
 agent-kit validate --ci
 agent-kit resync --no-update
 agent-kit doctor

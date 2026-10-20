@@ -198,6 +198,9 @@ class McpManager:
 
     def _project_signals(self, project: LogicalProject | None) -> set[str]:
         signals: set[str] = set()
+        # Наличие token является локальным сигналом готовности опционального Sentry MCP.
+        if os.environ.get("SENTRY_ACCESS_TOKEN"):
+            signals.add("sentry")
         if not project:
             return signals
         for repository in project.manifest.get("repositories", []):
@@ -380,7 +383,7 @@ class McpManager:
         }
         for state in self.list(project, access_profile=access_profile):
             desired = desired_by_id.get(state["id"])
-            if desired:
+            if desired and self.is_enabled(desired, project):
                 missing = [
                     name
                     for name in desired.get("required_environment", [])

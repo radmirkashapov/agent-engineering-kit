@@ -47,7 +47,7 @@ servers:
     capabilities:
       - {id: documentation.read, mode: read, tool_cost: 2, data_classes: [public]}
 
-  # Sentry по умолчанию запускается только со skill inspect и не изменяет issues или projects.
+  # После локального включения Sentry запускается только со skill inspect и не изменяет issues или projects.
   - id: sentry
     owner: observability-platform
     trust: trusted

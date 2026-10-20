@@ -64,13 +64,13 @@ servers:
     state: stateless
     policy: locked
 
-  # Core: обязательное чтение ошибок, issues и traces из Sentry SaaS или self-hosted.
+  # Optional: чтение ошибок, issues и traces из Sentry SaaS или self-hosted после явного включения.
   - id: sentry
     description: Inspect Sentry errors, issues, traces, projects, and release health for debugging
     category: quality
-    required: true
+    required: false
     transport: stdio
-    activation: always
+    activation: sentry
     command: npx
     args:
       # Read-only skill работает в базовом corporate readonly profile.
@@ -92,7 +92,7 @@ servers:
     required_environment:
       - SENTRY_ACCESS_TOKEN
     state: native
-    policy: locked
+    policy: configurable
 
   # Conditional SCM integrations активируются по remotes logical project.
   - id: github
