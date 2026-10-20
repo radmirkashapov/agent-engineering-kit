@@ -61,7 +61,8 @@ def _local_model_document(repository: Path, include_local: bool, local_path: Pat
 def load_policy(repository: Path, *, include_local: bool = True, local_path: Path | None = None) -> ModelPolicy:
     corporate_document = load_yaml(repository / "models" / "corporate.yaml")
     local_document = _local_model_document(repository, include_local, local_path)
-    corporate, _ = _model_map(corporate_document)
+    corporate_catalog, _ = _model_map(corporate_document)
+    corporate = corporate_catalog if corporate_document.get("enabled", True) else {}
     local, _ = _model_map(local_document)
     providers = {
         item["id"]
@@ -138,9 +139,11 @@ def validate_models(repository: Path, *, include_local: bool = True, local_path:
     if local_document:
         result.extend(validate_instance(local_document, schema_path, str(effective_local_path)))
 
-    corporate, corporate_duplicates = _model_map(corporate_document)
+    corporate_catalog, corporate_duplicates = _model_map(corporate_document)
+    corporate_enabled = bool(corporate_document.get("enabled", True))
+    corporate = corporate_catalog if corporate_enabled else {}
     local, local_duplicates = _model_map(local_document)
-    corporate_aliases, duplicate_corporate_aliases = _aliases(corporate)
+    corporate_aliases, duplicate_corporate_aliases = _aliases(corporate_catalog)
     local_aliases, duplicate_local_aliases = _aliases(local)
     for identifier in corporate_duplicates:
         result.error("models", f"Повторяющийся corporate model ID: {identifier}")
@@ -150,7 +153,7 @@ def validate_models(repository: Path, *, include_local: bool = True, local_path:
         result.error("models", f"Повторяющийся corporate model alias: {alias}")
     for alias in duplicate_local_aliases:
         result.error("models", f"Повторяющийся user-local model alias: {alias}")
-    for identifier in sorted(set(corporate) & set(local)):
+    for identifier in sorted(set(corporate_catalog) & set(local)):
         result.error("models", f"User-local model конфликтует с corporate model ID: {identifier}")
 
     providers = {
@@ -159,21 +162,22 @@ def validate_models(repository: Path, *, include_local: bool = True, local_path:
         for item in document.get("providers", [])
         if isinstance(item, dict) and isinstance(item.get("id"), str)
     }
-    for source, models in (("corporate", corporate), ("user-local", local)):
+    for source, models in (("corporate", corporate_catalog), ("user-local", local)):
         for identifier, model in models.items():
             if providers and model.get("provider") not in providers:
                 result.error("models", f"Модель {identifier} ({source}) использует неизвестного provider: {model.get('provider')}")
 
-    allowed = (set(corporate) | set(corporate_aliases)) if corporate else (set(local) | set(local_aliases))
+    declared = set(corporate_catalog) | set(corporate_aliases)
+    allowed = declared if declared else (set(local) | set(local_aliases))
     for path, document in _definition_documents(repository):
         for reference in sorted(set(_collect_model_references(document))):
             if reference not in allowed:
-                policy = "corporate allowlist" if corporate else "effective local policy"
+                policy = "corporate allowlist" if corporate else "declared model catalog"
                 result.error("models", f"{path.relative_to(repository)} ссылается на модель {reference!r}, отсутствующую в {policy}")
             elif corporate and reference in local and reference not in corporate:
                 result.error("models", f"Committed definition {path.relative_to(repository)} зависит от user-local модели {reference!r}")
 
     if result.ok:
-        mode = "corporate" if corporate else "local runtime"
+        mode = "corporate" if corporate else "local runtime (corporate disabled)"
         result.info("models", f"Model policy валидна; режим: {mode}, разрешено моделей: {len(allowed)}")
     return result

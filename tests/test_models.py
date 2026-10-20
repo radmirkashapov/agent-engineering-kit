@@ -4,8 +4,9 @@ from pathlib import Path
 
 import pytest
 
+from agent_engineering_kit.io import load_yaml
 from agent_engineering_kit.models import load_policy, validate_models
-from conftest import make_model_repository, model
+from conftest import make_model_repository, model, write_yaml
 
 
 @pytest.fixture
@@ -40,6 +41,25 @@ def test_corporate_empty_uses_local_model_at_runtime(tmp_path: Path, real_reposi
     write_agent(repository, "local-model")
     assert validate_models(repository, include_local=True).ok
     assert load_policy(repository).runtime_allowed_ids == {"local-model"}
+
+
+def test_disabled_corporate_catalog_does_not_restrict_runtime_models(
+    tmp_path: Path,
+    real_repository: Path,
+) -> None:
+    repository = make_model_repository(tmp_path, real_repository, [model("documented-default")])
+    corporate_path = repository / "models/corporate.yaml"
+    corporate = load_yaml(corporate_path)
+    corporate["enabled"] = False
+    write_yaml(corporate_path, corporate)
+    write_agent(repository, "documented-default")
+
+    result = validate_models(repository, include_local=False)
+    policy = load_policy(repository, include_local=False)
+
+    assert result.ok, "\n".join(item.render() for item in result.diagnostics)
+    assert policy.corporate_active is False
+    assert policy.committed_allowed_ids == set()
 
 
 def test_local_models_extend_non_empty_runtime_policy(tmp_path: Path, real_repository: Path) -> None:

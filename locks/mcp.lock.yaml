@@ -11,6 +11,9 @@ components:
   - id: context7
     version: remote-4.1.1
     revision: 12db78ea043954de047277960fda7e1d28f1d420
+  - id: sentry
+    version: 0.42.0
+    revision: 54f66d8d77bdee0d036d4754806d782b58217ef7
   - id: github
     version: v1.12.2
     revision: 85598ba6e1256f7ebf4867b95d63b833c4549264

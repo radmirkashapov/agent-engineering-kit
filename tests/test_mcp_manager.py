@@ -11,6 +11,7 @@ from agent_engineering_kit.projects import LogicalProject
 from agent_engineering_kit.mcp_manager import select_capabilities
 from agent_engineering_kit.errors import AgentKitError
 from agent_engineering_kit.catalog import resolve_desired
+from agent_engineering_kit.override_service import OverrideScope, set_component_access
 from conftest import write_yaml
 
 
@@ -33,6 +34,91 @@ def test_serena_keeps_dashboard_available_without_opening_browser_tabs(tmp_path:
     serena = next(item for item in McpManager(repository, paths).available() if item["id"] == "serena")
 
     assert serena["args"][-2:] == ["--open-web-dashboard", "false"]
+
+
+def test_sentry_is_optional_read_only_and_supports_custom_host(tmp_path: Path) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    data = tmp_path / "data"
+    paths = KitPaths(repository, data, data / "runtime", data / "projects", data / "overrides")
+
+    sentry = next(item for item in McpManager(repository, paths).available() if item["id"] == "sentry")
+
+    assert sentry["required"] is False
+    assert sentry["activation"] == "sentry"
+    assert sentry["policy"] == "configurable"
+    assert sentry["args"] == [
+        "-y",
+        "@sentry/mcp-server@0.42.0",
+        "--skills=inspect",
+        "--sentry-dsn=",
+    ]
+    assert sentry["environment"] == {
+        "SENTRY_ACCESS_TOKEN": "env:SENTRY_ACCESS_TOKEN",
+        "SENTRY_HOST": "env:SENTRY_HOST",
+    }
+    assert sentry["required_environment"] == ["SENTRY_ACCESS_TOKEN"]
+    assert sentry["enabled_capabilities"] == ["observability.read"]
+
+
+def test_sentry_without_token_is_inactive_and_does_not_fail_doctor(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    data = tmp_path / "data"
+    paths = KitPaths(repository, data, data / "runtime", data / "projects", data / "overrides")
+    monkeypatch.delenv("SENTRY_ACCESS_TOKEN", raising=False)
+    monkeypatch.setattr("agent_engineering_kit.mcp_manager.shutil.which", lambda command: f"/usr/bin/{command}")
+
+    manager = McpManager(repository, paths)
+    sentry = next(item for item in manager.list() if item["id"] == "sentry")
+    result = manager.doctor()
+
+    assert sentry["enabled"] is False
+    assert sentry["status"] == "inactive"
+    assert result.ok
+
+
+def test_sentry_can_be_enabled_from_default_access_policy(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    data = tmp_path / "data"
+    paths = KitPaths(repository, data, data / "runtime", data / "projects", data / "overrides")
+    write_yaml(paths.overrides / "global/access.yaml", {
+        "version": 1,
+        "mcp": {"allow": [], "block": ["sentry"]},
+        "skills": {"allow": [], "block": []},
+    })
+    scope = OverrideScope("global", paths.overrides / "global", None)
+    monkeypatch.setenv("SENTRY_ACCESS_TOKEN", "not-printed-token")
+
+    assert next(item for item in McpManager(repository, paths).list() if item["id"] == "sentry")["status"] == "DISABLED"
+
+    set_component_access(scope, "mcp", "sentry", enabled=True)
+    sentry = next(item for item in McpManager(repository, paths).list() if item["id"] == "sentry")
+
+    assert sentry["enabled"] is True
+
+
+def test_sentry_doctor_rejects_protocol_in_custom_host(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    data = tmp_path / "data"
+    paths = KitPaths(repository, data, data / "runtime", data / "projects", data / "overrides")
+    monkeypatch.setenv("SENTRY_ACCESS_TOKEN", "not-printed-token")
+    monkeypatch.setenv("SENTRY_HOST", "https://sentry.company.example")
+    monkeypatch.setattr("agent_engineering_kit.mcp_manager.shutil.which", lambda command: f"/usr/bin/{command}")
+
+    result = McpManager(repository, paths).doctor()
+    messages = "\n".join(item.message for item in result.diagnostics)
+
+    assert not result.ok
+    assert "SENTRY_HOST должен содержать hostname без протокола и пути" in messages
+    assert "not-printed-token" not in messages
 
 
 def test_default_profile_exposes_only_servers_with_enforceable_read_boundaries(tmp_path: Path) -> None:

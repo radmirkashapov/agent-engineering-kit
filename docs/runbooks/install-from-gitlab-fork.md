@@ -40,14 +40,30 @@ git fetch --all --prune
 git remote -v
 ```
 
+Не устанавливайте Kit из ZIP-архива: для проверки Git hygiene, определения версии и получения обновлений нужен полный checkout. Один и тот же `bootstrap/install.sh` используется для исходной и корпоративной версии. Он устанавливает CLI и регистрирует именно текущий checkout в `<data>/state/repository-path`, поэтому отдельный корпоративный установщик не требуется.
+
 Установите Kit:
 
 ```bash
 ./bootstrap/install.sh
-agent-kit doctor
 agent-kit validate --ci
 agent-kit resync --no-update
+agent-kit doctor
 ```
+
+Sentry по умолчанию выключен и не мешает установке. Если интеграция нужна, включите её локально и получите `SENTRY_ACCESS_TOKEN` из корпоративного хранилища секретов:
+
+```bash
+agent-kit mcp enable sentry
+export SENTRY_ACCESS_TOKEN
+# Для self-hosted Sentry задайте hostname без протокола и пути:
+export SENTRY_HOST=sentry.company.example
+agent-kit resync --no-update
+```
+
+Не сохраняйте token в Git или shell profile.
+
+Если checkout перенесён в другой каталог, сменился корпоративный fork или pointer остался от прежней установки, повторный запуск bootstrap безопасно обновит `<data>/state/repository-path`.
 
 Установщик размещает Python-пакет в пользовательском окружении. Если shell не находит `agent-kit`, добавьте каталог пользовательских исполняемых файлов Python в `PATH` и откройте новый терминал:
 
@@ -59,21 +75,41 @@ agent-kit doctor
 
 Для Bash используйте `~/.bashrc` вместо `~/.zshrc`. На Windows запустите `bootstrap\install.ps1` из PowerShell.
 
-## 3. Обычная работа команды
+## 3. Корпоративная конфигурация
+
+В оригинальном репозитории `models/corporate.yaml` поставляется с `enabled: false`, поэтому работает без корпоративного allowlist. В корпоративной ветке включите политику и замените пример собственными разрешёнными моделями:
+
+```yaml
+version: 1
+enabled: true
+providers:
+  - id: company-provider
+models:
+  - id: company-coding-model
+    provider: company-provider
+    capabilities:
+      reasoning: true
+      coding: true
+      tool_use: true
+```
+
+Корпоративные MCP описывайте в `catalog/corporate/mcp.yaml`, а секреты оставляйте ссылками `env:VARIABLE`. Изменения схем, allowlist, MCP, ролей и правил проходят через обычный Merge Request в GitLab. Локальные пользовательские overrides хранятся вне репозитория и не являются способом распространения корпоративной конфигурации.
+
+## 4. Обычная работа команды
 
 Перед началом задачи обновите локальный `main`, затем создайте рабочую ветку:
 
 ```bash
 git switch main
 git pull --ff-only origin main
-git switch -c feat/15-10-2026-short-description
+git switch -c feat/20-10-2026-short-description
 ```
 
 Допустимые префиксы: `feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `ci`, `style`. Дата задаётся в формате `dd-MM-yyyy`. Коммиты оформляются как `<type>(<scope>): <description>`, например:
 
 ```bash
 git commit -m "feat(mcp): add corporate server profile"
-git push -u origin feat/15-10-2026-short-description
+git push -u origin feat/20-10-2026-short-description
 ```
 
 После push создайте Merge Request в `main` корпоративного GitLab. Перед слиянием выполните тесты и проверку конфигурации:
@@ -83,7 +119,7 @@ python3 -m pytest -q
 agent-kit validate --ci
 ```
 
-## 4. Получение изменений из исходного GitHub
+## 5. Получение изменений из исходного GitHub
 
 Синхронизацию выполняйте в отдельной ветке. Это позволяет проверить изменения и разрешить конфликты до обновления корпоративного `main`:
 
@@ -91,16 +127,18 @@ agent-kit validate --ci
 git fetch upstream --prune
 git switch main
 git pull --ff-only origin main
-git switch -c chore/15-10-2026-sync-upstream
+git switch -c chore/20-10-2026-sync-upstream
 git merge upstream/main
 python3 -m pytest -q
 agent-kit validate --ci
-git push -u origin chore/15-10-2026-sync-upstream
+git push -u origin chore/20-10-2026-sync-upstream
 ```
 
-После этого создайте Merge Request из `chore/15-10-2026-sync-upstream` в `main` GitLab. Если ветка с таким именем уже существует, добавьте короткий уникальный суффикс. Не отправляйте изменения напрямую в GitHub и не сливайте `upstream/main` непосредственно в корпоративный `main` без проверки через Merge Request.
+После этого создайте Merge Request из `chore/20-10-2026-sync-upstream` в `main` GitLab. Если ветка с таким именем уже существует, добавьте короткий уникальный суффикс. Не отправляйте изменения напрямую в GitHub и не сливайте `upstream/main` непосредственно в корпоративный `main` без проверки через Merge Request.
 
-## 5. Обновление установленного Kit
+Конфликты корпоративных файлов разрешайте в пользу осознанной корпоративной настройки, затем вручную переносите совместимые изменения upstream. Особенно внимательно проверяйте `models/corporate.yaml`, `catalog/corporate/`, lock-файлы, схемы и bootstrap. Слияние должно завершаться полным тестовым прогоном и `agent-kit validate --ci`.
+
+## 6. Обновление установленного Kit
 
 После слияния изменений в GitLab обновите локальный клон и повторите установку:
 
@@ -115,7 +153,7 @@ agent-kit doctor
 
 `resync --no-update` применяет текущую версию репозитория, не пытаясь самостоятельно менять Git-состояние. Локальные настройки, память проектов, секреты и состояние MCP хранятся вне репозитория. Секреты передавайте через переменные окружения; в Git допускается только перечень переменных без значений в `.env.example`.
 
-## 6. Быстрая проверка схемы remote
+## 7. Быстрая проверка схемы remote
 
 Ожидаемый результат:
 

@@ -13,7 +13,7 @@
 ## Быстрый старт
 
 ```bash
-# Установить CLI из рабочей копии Kit.
+# Выполнять из полного Git checkout, а не из скачанного ZIP-архива.
 ./bootstrap/install.sh
 
 # Проверить переносимую конфигурацию и подготовить локальное окружение.
@@ -91,7 +91,7 @@ Kit уже формирует контракты запусков, task workspac
 
 | Назначение | Unix по умолчанию | Windows по умолчанию |
 |---|---|---|
-| рабочая копия набора | `<data>/repository` | `<data>\repository` |
+| каноническая рабочая копия набора | полный Git checkout; путь записан в `<data>/state/repository-path` | полный Git checkout; путь записан в `<data>\state\repository-path` |
 | установленные компоненты | `~/.local/share/agent-engineering-kit/installations` | `%LOCALAPPDATA%\agent-engineering-kit\installations` |
 | состояние, блокировки и журналы | `~/.local/share/agent-engineering-kit/{state,locks,logs}` | `%LOCALAPPDATA%\agent-engineering-kit\{state,locks,logs}` |
 | память проектов | `~/.local/share/agent-engineering-kit/projects` | `%LOCALAPPDATA%\agent-engineering-kit\projects` |
@@ -101,19 +101,31 @@ Kit уже формирует контракты запусков, task workspac
 
 ## Установка
 
+Kit необходимо клонировать через Git. ZIP-архив со страницы репозитория не является эксплуатационной рабочей копией: в нём нет Git metadata, нужной для обновления, проверки hygiene и определения ревизии.
+
 В Unix:
 
 ```bash
+git clone <адрес-репозитория> agent-engineering-kit
+cd agent-engineering-kit
 ./bootstrap/install.sh
+agent-kit validate --ci
+agent-kit resync --no-update
 agent-kit doctor
 ```
 
 В PowerShell:
 
 ```powershell
+git clone <адрес-репозитория> agent-engineering-kit
+Set-Location agent-engineering-kit
 .\bootstrap\install.ps1
+agent-kit validate --ci
+agent-kit resync --no-update
 agent-kit doctor
 ```
+
+Bootstrap устанавливает Python CLI и атомарно записывает абсолютный путь текущего checkout в `<data>/state/repository-path`. Поэтому один и тот же сценарий подходит и для оригинального GitHub, и для корпоративной копии в GitLab: источником manifests становится репозиторий, из которого запущен bootstrap. После перемещения checkout либо переключения на другую корпоративную копию запустите bootstrap ещё раз.
 
 Для разработки самого набора:
 
@@ -134,6 +146,19 @@ agent-kit doctor
 ```
 
 `resync` устанавливает инструменты безопасности, проверяет и активирует сторонние skills, подготавливает MCP и создаёт нативные мосты для клиентов. Повторный запуск идемпотентен.
+
+Sentry MCP опционален и по умолчанию выключен. Для включения снимите локальную блокировку, получите token из secret store и повторите синхронизацию:
+
+```bash
+agent-kit mcp enable sentry
+export SENTRY_ACCESS_TOKEN
+# Только для self-hosted Sentry; hostname без https:// и пути:
+export SENTRY_HOST=sentry.company.example
+agent-kit resync --no-update
+agent-kit doctor
+```
+
+Не записывайте значение токена в `.env`, YAML, shell profile или Git. `SENTRY_HOST` принимает hostname с необязательным портом, но без протокола и пути. Базовая конфигурация предоставляет только read-only skill `inspect`. Отключить интеграцию можно командой `agent-kit mcp disable sentry`.
 
 ## Встроенная справка и каталог команд
 
@@ -181,7 +206,8 @@ agent-kit project init --help
 
 - `codebase-memory` — граф кода, архитектура, связи вызовов и анализ влияния;
 - `serena` — поиск символов и ссылок, семантическое редактирование и рефакторинг;
-- `context7` — актуальная документация библиотек, фреймворков и API.
+- `context7` — актуальная документация библиотек, фреймворков и API;
+- `sentry` — опциональное read-only чтение ошибок, issues, traces, проектов и release health; выключено по умолчанию, SaaS используется после включения, self-hosted задаётся через `SENTRY_HOST`.
 
 Условные интеграции:
 
@@ -476,7 +502,7 @@ agent-kit security validate
 
 ## Политика моделей
 
-Отслеживаемый файл `models/corporate.yaml` задаёт разрешённых провайдеров, идентификаторы, псевдонимы и способности моделей. При непустом списке только эти модели могут использоваться в закоммиченных определениях.
+Отслеживаемый файл `models/corporate.yaml` задаёт разрешённых провайдеров, идентификаторы, псевдонимы и способности моделей. В исходном Kit он содержит `enabled: false`: примеры валидируются, но корпоративный allowlist не ограничивает локальный runtime. В корпоративном форке администратор меняет значение на `true` и поддерживает собственный список; тогда только разрешённые модели могут использоваться в закоммиченных определениях и effective policy.
 
 Пользовательские модели задаются вне рабочей копии в `<data>/overrides/models.yaml`; защитный путь `models/user.local.yaml` исключён из Git. Локальные модели расширяют только рабочее окружение конкретной машины.
 
