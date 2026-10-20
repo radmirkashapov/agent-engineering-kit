@@ -170,7 +170,7 @@ def effective_policy(repository: Path, paths: KitPaths, project: LogicalProject 
         ],
     }]
     corporate = load_yaml(repository / "models" / "corporate.yaml")
-    allowed = [item["id"] for item in corporate.get("models", [])]
+    allowed = [item["id"] for item in corporate.get("models", [])] if corporate.get("enabled", True) else []
     if allowed:
         layers.append({
             "source": "corporate:models/corporate.yaml",

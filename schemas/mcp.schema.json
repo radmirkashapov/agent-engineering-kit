@@ -24,6 +24,7 @@
         "transport": {"enum": ["stdio", "http", "sse"]}, "activation": {"type": "string"}, "command": {"type": "string"},
         "args": {"type": "array", "items": {"type": "string"}}, "source": {"type": "object"}, "installation": {"type": "object"},
         "environment": {"type": "object", "additionalProperties": {"type": "string", "pattern": "^env:[A-Z][A-Z0-9_]*$"}},
+        "required_environment": {"type": "array", "uniqueItems": true, "items": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]*$"}},
         "state": {"enum": ["native", "stateless"]}, "policy": {"enum": ["configurable", "locked"]}
       }
     },

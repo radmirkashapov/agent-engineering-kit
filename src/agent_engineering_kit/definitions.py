@@ -132,6 +132,10 @@ def validate_mcp(repository: Path) -> ValidationResult:
                 result.error("mcp", f"MCP {identifier}: environment.{name} должен использовать env:VARIABLE")
             elif source.removeprefix("env:") not in example_variables:
                 result.error("mcp", f"MCP {identifier}: {source} отсутствует в .env.example")
+        environment_names = set((server.get("environment") or {}).keys())
+        for name in server.get("required_environment", []) or []:
+            if name not in environment_names:
+                result.error("mcp", f"MCP {identifier}: required_environment {name} отсутствует в environment")
         image = (server.get("installation") or {}).get("image")
         if image and not re.search(r"@sha256:[0-9a-f]{64}$", image):
             result.error("mcp", f"MCP {identifier}: container image должен быть закреплён immutable digest")

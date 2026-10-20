@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import platform
+import re
 import shutil
 import uuid
 from pathlib import Path
@@ -378,6 +379,27 @@ class McpManager:
             for item, _ in self.desired(project, access_profile=access_profile)
         }
         for state in self.list(project, access_profile=access_profile):
+            desired = desired_by_id.get(state["id"])
+            if desired:
+                missing = [
+                    name
+                    for name in desired.get("required_environment", [])
+                    if not os.environ.get(name)
+                ]
+                if missing:
+                    for name in missing:
+                        result.error(
+                            "mcp-doctor",
+                            f"{state['id']}: отсутствует обязательная переменная окружения {name}",
+                        )
+                    continue
+                if state["id"] == "sentry" and (host := os.environ.get("SENTRY_HOST")):
+                    if not re.fullmatch(r"[A-Za-z0-9.-]+(?::[0-9]{1,5})?", host):
+                        result.error(
+                            "mcp-doctor",
+                            "sentry: SENTRY_HOST должен содержать hostname без протокола и пути",
+                        )
+                        continue
             if state["status"] == "DISABLED":
                 result.info("mcp-doctor", f"{state['id']}: отключён пользователем ({state['access_reason']})")
             elif state["status"] == "inactive":

@@ -35,6 +35,66 @@ def test_serena_keeps_dashboard_available_without_opening_browser_tabs(tmp_path:
     assert serena["args"][-2:] == ["--open-web-dashboard", "false"]
 
 
+def test_sentry_is_required_read_only_and_supports_custom_host(tmp_path: Path) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    data = tmp_path / "data"
+    paths = KitPaths(repository, data, data / "runtime", data / "projects", data / "overrides")
+
+    sentry = next(item for item in McpManager(repository, paths).available() if item["id"] == "sentry")
+
+    assert sentry["required"] is True
+    assert sentry["activation"] == "always"
+    assert sentry["policy"] == "locked"
+    assert sentry["args"] == [
+        "-y",
+        "@sentry/mcp-server@0.42.0",
+        "--skills=inspect",
+        "--sentry-dsn=",
+    ]
+    assert sentry["environment"] == {
+        "SENTRY_ACCESS_TOKEN": "env:SENTRY_ACCESS_TOKEN",
+        "SENTRY_HOST": "env:SENTRY_HOST",
+    }
+    assert sentry["required_environment"] == ["SENTRY_ACCESS_TOKEN"]
+    assert sentry["enabled_capabilities"] == ["observability.read"]
+
+
+def test_sentry_doctor_reports_missing_token_without_printing_values(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    data = tmp_path / "data"
+    paths = KitPaths(repository, data, data / "runtime", data / "projects", data / "overrides")
+    monkeypatch.delenv("SENTRY_ACCESS_TOKEN", raising=False)
+    monkeypatch.setattr("agent_engineering_kit.mcp_manager.shutil.which", lambda command: f"/usr/bin/{command}")
+
+    result = McpManager(repository, paths).doctor()
+    messages = "\n".join(item.message for item in result.diagnostics)
+
+    assert not result.ok
+    assert "sentry: отсутствует обязательная переменная окружения SENTRY_ACCESS_TOKEN" in messages
+
+
+def test_sentry_doctor_rejects_protocol_in_custom_host(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    data = tmp_path / "data"
+    paths = KitPaths(repository, data, data / "runtime", data / "projects", data / "overrides")
+    monkeypatch.setenv("SENTRY_ACCESS_TOKEN", "not-printed-token")
+    monkeypatch.setenv("SENTRY_HOST", "https://sentry.company.example")
+    monkeypatch.setattr("agent_engineering_kit.mcp_manager.shutil.which", lambda command: f"/usr/bin/{command}")
+
+    result = McpManager(repository, paths).doctor()
+    messages = "\n".join(item.message for item in result.diagnostics)
+
+    assert not result.ok
+    assert "SENTRY_HOST должен содержать hostname без протокола и пути" in messages
+    assert "not-printed-token" not in messages
+
+
 def test_default_profile_exposes_only_servers_with_enforceable_read_boundaries(tmp_path: Path) -> None:
     repository = Path(__file__).resolve().parents[1]
     root = tmp_path / "workspace"

@@ -64,6 +64,36 @@ servers:
     state: stateless
     policy: locked
 
+  # Core: обязательное чтение ошибок, issues и traces из Sentry SaaS или self-hosted.
+  - id: sentry
+    description: Inspect Sentry errors, issues, traces, projects, and release health for debugging
+    category: quality
+    required: true
+    transport: stdio
+    activation: always
+    command: npx
+    args:
+      # Read-only skill работает в базовом corporate readonly profile.
+      - -y
+      - "@sentry/mcp-server@0.42.0"
+      - --skills=inspect
+      # Телеметрия самого MCP не отправляется во внешний Sentry по умолчанию.
+      - --sentry-dsn=
+    source:
+      type: git
+      repository: https://github.com/getsentry/sentry-mcp.git
+    installation:
+      type: external-command
+      command: npx
+      package: "@sentry/mcp-server@0.42.0"
+    environment:
+      SENTRY_ACCESS_TOKEN: env:SENTRY_ACCESS_TOKEN
+      SENTRY_HOST: env:SENTRY_HOST
+    required_environment:
+      - SENTRY_ACCESS_TOKEN
+    state: native
+    policy: locked
+
   # Conditional SCM integrations активируются по remotes logical project.
   - id: github
     description: Access GitHub repositories, issues, pull requests, and related source-control workflows

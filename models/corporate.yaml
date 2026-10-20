@@ -1,5 +1,7 @@
 # Корпоративный allowlist определяет переносимые model dependencies repository.
 version: 1
+# По умолчанию корпоративное ограничение выключено; fork может включить его и изменить allowlist.
+enabled: false
 
 # Реестр provider нужен для проверки опечаток и неявного vendor coupling.
 providers:

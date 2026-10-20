@@ -47,6 +47,21 @@ servers:
     capabilities:
       - {id: documentation.read, mode: read, tool_cost: 2, data_classes: [public]}
 
+  # Sentry по умолчанию запускается только со skill inspect и не изменяет issues или projects.
+  - id: sentry
+    owner: observability-platform
+    trust: trusted
+    data_classes: [internal, confidential]
+    auth: {method: environment, reference: env:SENTRY_ACCESS_TOKEN}
+    boundaries:
+      # Фактический SaaS/self-hosted hostname задаётся локально через SENTRY_HOST.
+      allowed_hosts: []
+      read_only: true
+      model_endpoint: approved-only
+    audit: {decisions: true, arguments: redacted, results: metadata-only}
+    capabilities:
+      - {id: observability.read, mode: read, tool_cost: 2, data_classes: [internal, confidential]}
+
   # SCM-сервер целиком подключается только профилем, разрешающим весь объявленный surface.
   - id: github
     owner: developer-platform

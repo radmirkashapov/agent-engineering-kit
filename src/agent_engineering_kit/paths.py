@@ -49,10 +49,24 @@ def _source_repository() -> Path | None:
     return None
 
 
+def _registered_repository(data: Path) -> Path | None:
+    """Прочитать checkout, зарегистрированный bootstrap-установщиком."""
+    pointer = data / "state" / "repository-path"
+    if not pointer.is_file():
+        return None
+    # utf-8-sig также читает pointer от старого Windows PowerShell, который добавлял BOM.
+    value = pointer.read_text(encoding="utf-8-sig").strip()
+    return Path(value).expanduser().resolve() if value else None
+
+
 def resolve_paths(environ: dict[str, str] | None = None) -> KitPaths:
     env = dict(os.environ if environ is None else environ)
     data = _data_home(env).resolve()
-    repository = Path(env["AGENT_KIT_REPOSITORY"]).expanduser().resolve() if env.get("AGENT_KIT_REPOSITORY") else (_source_repository() or data / "repository")
+    repository = (
+        Path(env["AGENT_KIT_REPOSITORY"]).expanduser().resolve()
+        if env.get("AGENT_KIT_REPOSITORY")
+        else (_source_repository() or _registered_repository(data) or data / "repository")
+    )
     return KitPaths(
         repository=repository,
         data=data,
