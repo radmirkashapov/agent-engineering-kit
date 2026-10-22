@@ -8,11 +8,10 @@ from pathlib import Path
 from .errors import AgentKitError
 from .io import load_yaml
 from .result import ValidationResult
-from .schema import validate_instance
+from .schema import repository_schema_path, validate_instance
 
 
 ACCESS_KINDS = frozenset({"mcp", "skills"})
-_SCHEMA_PATH = Path(__file__).resolve().parents[2] / "schemas" / "access.schema.json"
 
 
 @dataclass(frozen=True)
@@ -89,7 +88,7 @@ def validate_access(
         if not path.is_file():
             continue
         document = load_yaml(path)
-        result.extend(validate_instance(document, _SCHEMA_PATH, str(path)))
+        result.extend(validate_instance(document, repository_schema_path("access.schema.json"), str(path)))
         for kind in ACCESS_KINDS:
             allow, block = _access_lists(document, kind)
             known = identifiers_by_kind.get(kind, set())

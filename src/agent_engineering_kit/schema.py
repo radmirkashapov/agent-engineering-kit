@@ -8,6 +8,7 @@ from typing import Any
 from jsonschema import Draft202012Validator
 
 from .io import load_json
+from .paths import resolve_paths
 from .result import ValidationResult
 
 
@@ -23,6 +24,12 @@ SCHEMA_TARGETS = {
     "locks/mcp.lock.yaml": "schemas/lock.schema.json",
     "locks/security.lock.yaml": "schemas/lock.schema.json",
 }
+
+
+def repository_schema_path(name: str, repository: Path | None = None) -> Path:
+    """Разрешить schema относительно текущего канонического checkout Kit."""
+    root = repository.resolve() if repository is not None else resolve_paths().repository
+    return root / "schemas" / name
 
 
 def validate_instance(instance: Any, schema_path: Path, label: str) -> ValidationResult:

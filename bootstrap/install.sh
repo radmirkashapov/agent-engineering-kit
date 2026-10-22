@@ -30,4 +30,4 @@ mv "$POINTER_TMP" "$POINTER"
 
 printf '%s\n' "agent-kit установлен. Канонический repository: $REPOSITORY"
 printf '%s\n' "Не перемещайте checkout без повторного запуска bootstrap/install.sh."
-printf '%s\n' "Запустите: agent-kit validate --ci && agent-kit resync --no-update && agent-kit doctor"
+printf '%s\n' "Запустите: agent-kit resync --no-update && agent-kit validate --ci && agent-kit doctor"

@@ -46,8 +46,8 @@ git remote -v
 
 ```bash
 ./bootstrap/install.sh
-agent-kit validate --ci
 agent-kit resync --no-update
+agent-kit validate --ci
 agent-kit doctor
 ```
 
@@ -64,6 +64,10 @@ agent-kit resync --no-update
 Не сохраняйте token в Git или shell profile.
 
 Если checkout перенесён в другой каталог, сменился корпоративный fork или pointer остался от прежней установки, повторный запуск bootstrap безопасно обновит `<data>/state/repository-path`.
+
+Для постоянного переключения на новый checkout выполните bootstrap из нового каталога, затем запустите `agent-kit resync --no-update`, `agent-kit validate --ci` и `agent-kit doctor`. По умолчанию на Unix текущий указатель можно проверить командой `cat ~/.local/share/agent-engineering-kit/state/repository-path`; на Windows файл находится в `%LOCALAPPDATA%\agent-engineering-kit\state\repository-path`. `AGENT_KIT_DATA_HOME` меняет каталог данных на любой платформе, а `XDG_DATA_HOME` — в Unix. Не удаляйте прежний checkout до успешной проверки нового. После переключения перезапустите долго работающие AI-клиенты и агентные процессы.
+
+Для временной проверки можно задать `AGENT_KIT_REPOSITORY` абсолютным путём к другой рабочей копии. Эта переменная имеет приоритет над сохранённым указателем; удалите её после проверки. При обычном переключении ветки в том же checkout указатель остаётся корректным, но bootstrap нужно повторить, чтобы переустановленный Python-пакет соответствовал выбранной ревизии.
 
 Установщик размещает Python-пакет в пользовательском окружении. Если shell не находит `agent-kit`, добавьте каталог пользовательских исполняемых файлов Python в `PATH` и откройте новый терминал:
 
@@ -146,8 +150,8 @@ git push -u origin chore/20-10-2026-sync-upstream
 git switch main
 git pull --ff-only origin main
 ./bootstrap/install.sh
-agent-kit validate --ci
 agent-kit resync --no-update
+agent-kit validate --ci
 agent-kit doctor
 ```
 

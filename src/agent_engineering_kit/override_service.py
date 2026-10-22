@@ -18,13 +18,9 @@ from .errors import AgentKitError
 from .io import atomic_write, load_yaml, markdown_frontmatter
 from .paths import KitPaths
 from .projects import find_project
-from .schema import validate_instance
+from .schema import repository_schema_path, validate_instance
 
 
-_ACCESS_SCHEMA = Path(__file__).resolve().parents[2] / "schemas" / "access.schema.json"
-_MCP_SCHEMA = Path(__file__).resolve().parents[2] / "schemas" / "mcp.schema.json"
-_OVERRIDE_SCHEMA = Path(__file__).resolve().parents[2] / "schemas" / "override.schema.json"
-_SKILL_SCHEMA = Path(__file__).resolve().parents[2] / "schemas" / "skill.schema.json"
 _IDENTIFIER_PATTERN = re.compile(r"^[a-z][a-z0-9-]*$")
 GENERIC_OVERRIDE_KINDS = frozenset({
     "agents", "rules", "models", "skills", "mcp", "approvals", "sandbox", "network", "tools", "harness"
@@ -178,7 +174,7 @@ def _snapshot_existing(
 
 
 def _write_access(path: Path, document: dict[str, object]) -> None:
-    result = validate_instance(document, _ACCESS_SCHEMA, str(path))
+    result = validate_instance(document, repository_schema_path("access.schema.json"), str(path))
     if not result.ok:
         message = next(item.message for item in result.diagnostics if item.severity == "ERROR")
         raise AgentKitError(f"Некорректная политика доступа: {message}")
@@ -277,7 +273,7 @@ def install_skill_override(scope: OverrideScope, identifier: str, source: Path) 
     if not source.is_dir() or not skill_file.is_file():
         raise AgentKitError(f"Источник skill должен быть каталогом с SKILL.md: {source}")
     metadata = markdown_frontmatter(skill_file)
-    result = validate_instance(metadata, _SKILL_SCHEMA, str(skill_file))
+    result = validate_instance(metadata, repository_schema_path("skill.schema.json"), str(skill_file))
     if not result.ok:
         message = next(item.message for item in result.diagnostics if item.severity == "ERROR")
         raise AgentKitError(f"Некорректный SKILL.md: {message}")
@@ -297,7 +293,7 @@ def install_skill_override(scope: OverrideScope, identifier: str, source: Path) 
             "value": {"path": relative_source.as_posix()},
         },
     }
-    content = _validated_yaml(document, _OVERRIDE_SCHEMA, str(definition))
+    content = _validated_yaml(document, repository_schema_path("override.schema.json"), str(definition))
     _snapshot_existing(scope, [definition, copied_source])
     _replace_directory(source, copied_source, definition, content)
     return definition
@@ -328,7 +324,7 @@ def install_mcp_override(scope: OverrideScope, identifier: str, source: Path) ->
         effective = {**value, "id": identifier}
         result = validate_instance(
             {"version": 1, "servers": [effective]},
-            _MCP_SCHEMA,
+            repository_schema_path("mcp.schema.json"),
             f"итоговый MCP {identifier!r}",
         )
         if not result.ok:
@@ -340,7 +336,7 @@ def install_mcp_override(scope: OverrideScope, identifier: str, source: Path) ->
         "target": identifier,
         "override": {"mode": mode, "value": value},
     }
-    content = _validated_yaml(override, _OVERRIDE_SCHEMA, str(target))
+    content = _validated_yaml(override, repository_schema_path("override.schema.json"), str(target))
     _snapshot_existing(scope, [target])
     atomic_write(target, content)
     return target
@@ -372,7 +368,7 @@ def reset_component_override(
         block.discard(identifier)
         section["allow"] = sorted(allow)
         section["block"] = sorted(block)
-        result = validate_instance(access_document, _ACCESS_SCHEMA, str(access_path))
+        result = validate_instance(access_document, repository_schema_path("access.schema.json"), str(access_path))
         if not result.ok:
             message = next(item.message for item in result.diagnostics if item.severity == "ERROR")
             raise AgentKitError(f"Некорректная политика доступа: {message}")
@@ -450,7 +446,7 @@ def install_generic_override(
             "target": identifier,
             "override": {"mode": mode, "reason": reason, "value": value if isinstance(value, dict) else {}},
         }
-        content = _validated_yaml(payload, _OVERRIDE_SCHEMA, str(target))
+        content = _validated_yaml(payload, repository_schema_path("override.schema.json"), str(target))
     else:
         if mode != "replace":
             raise AgentKitError("Переопределения policy-параметров поддерживают только режим replace")
@@ -459,7 +455,7 @@ def install_generic_override(
             "version": 1,
             "overrides": [{"key": _policy_key(kind, identifier), "value": value, "reason": reason}],
         }
-        policy_schema = Path(__file__).resolve().parents[2] / "schemas" / "policy-override.schema.json"
+        policy_schema = repository_schema_path("policy-override.schema.json")
         content = _validated_yaml(payload, policy_schema, str(target))
     _snapshot_existing(scope, [target])
     atomic_write(target, content)

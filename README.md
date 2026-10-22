@@ -17,8 +17,8 @@
 ./bootstrap/install.sh
 
 # Проверить переносимую конфигурацию и подготовить локальное окружение.
-agent-kit validate --ci
 agent-kit resync --no-update
+agent-kit validate --ci
 agent-kit doctor
 
 # Открыть встроенную справку.
@@ -109,8 +109,8 @@ Kit необходимо клонировать через Git. ZIP-архив �
 git clone <адрес-репозитория> agent-engineering-kit
 cd agent-engineering-kit
 ./bootstrap/install.sh
-agent-kit validate --ci
 agent-kit resync --no-update
+agent-kit validate --ci
 agent-kit doctor
 ```
 
@@ -120,12 +120,31 @@ agent-kit doctor
 git clone <адрес-репозитория> agent-engineering-kit
 Set-Location agent-engineering-kit
 .\bootstrap\install.ps1
-agent-kit validate --ci
 agent-kit resync --no-update
+agent-kit validate --ci
 agent-kit doctor
 ```
 
 Bootstrap устанавливает Python CLI и атомарно записывает абсолютный путь текущего checkout в `<data>/state/repository-path`. Поэтому один и тот же сценарий подходит и для оригинального GitHub, и для корпоративной копии в GitLab: источником manifests становится репозиторий, из которого запущен bootstrap. После перемещения checkout либо переключения на другую корпоративную копию запустите bootstrap ещё раз.
+
+### Смена канонического checkout
+
+Чтобы переключить установленный Kit на другую рабочую копию, сначала полностью клонируйте нужный репозиторий, а затем запустите bootstrap именно из нового каталога:
+
+```bash
+git clone <адрес-нового-репозитория> agent-engineering-kit-corporate
+cd agent-engineering-kit-corporate
+./bootstrap/install.sh
+agent-kit resync --no-update
+agent-kit validate --ci
+agent-kit doctor
+```
+
+Bootstrap одновременно переустановит CLI из новой рабочей копии и заменит указатель. По умолчанию это `~/.local/share/agent-engineering-kit/state/repository-path` в Unix и `%LOCALAPPDATA%\agent-engineering-kit\state\repository-path` в Windows. `AGENT_KIT_DATA_HOME` меняет каталог данных на любой платформе, а `XDG_DATA_HOME` — в Unix. Старый checkout не удаляйте до успешного завершения `validate --ci` и `doctor`.
+
+Переменная `AGENT_KIT_REPOSITORY` имеет приоритет над сохранённым указателем и подходит для временной проверки другой рабочей копии. После проверки удалите переменную (`unset AGENT_KIT_REPOSITORY` в Unix), чтобы снова использовать зарегистрированный checkout. После постоянного переключения перезапустите долго работающие AI-клиенты и агентные процессы: новый процесс прочитает схемы и manifests из нового checkout.
+
+Если меняется только ветка внутри того же каталога, указатель менять не нужно. После обновления кода Kit всё равно повторно выполните bootstrap: Python-пакет устанавливается отдельно от Git checkout и должен соответствовать выбранной ревизии.
 
 Для разработки самого набора:
 
@@ -140,8 +159,8 @@ python -m pip install -e '.[dev]'
 ## Первый запуск
 
 ```bash
-agent-kit validate --ci
 agent-kit resync --no-update
+agent-kit validate --ci
 agent-kit doctor
 ```
 
