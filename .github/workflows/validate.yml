@@ -15,7 +15,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     env:
-      AGENT_KIT_DATA_HOME: ${{ runner.temp }}/agent-kit-data
+      AGENT_KIT_DATA_HOME: /tmp/agent-kit-data
     strategy:
       matrix:
         python-version: ["3.10", "3.12"]

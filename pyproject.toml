@@ -16,7 +16,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.3,<10", "pytest-cov>=6,<8"]
+dev = ["build>=1.2,<2", "pytest>=8.3,<10", "pytest-cov>=6,<8"]
 
 [project.scripts]
 agent-kit = "agent_engineering_kit.cli:main"

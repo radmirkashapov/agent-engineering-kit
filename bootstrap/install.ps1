@@ -30,4 +30,4 @@ Move-Item -Force -Path $PointerTemporary -Destination $Pointer
 
 Write-Output "agent-kit установлен. Канонический repository: $Repository"
 Write-Output "Не перемещайте checkout без повторного запуска bootstrap/install.ps1."
-Write-Output "Запустите: agent-kit validate --ci; agent-kit resync --no-update; agent-kit doctor"
+Write-Output "Запустите: agent-kit resync --no-update; agent-kit validate --ci; agent-kit doctor"
