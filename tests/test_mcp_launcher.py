@@ -71,21 +71,40 @@ def test_contract_rejects_literal_or_invalid_environment_sources(tmp_path, mappi
 
 
 def test_contract_replacement_is_atomic(tmp_path, monkeypatch):
-    import agent_engineering_kit.io as io_module
-
     paths = make_paths(tmp_path)
     contract = write_launch_contract(paths, sample_item(), Path("/opt/original"))
     previous = contract.read_bytes()
 
-    def fail_replace(*args):
+    def fail_replace(*args, **kwargs):
         raise OSError("private-error-value")
 
-    monkeypatch.setattr(io_module.os, "replace", fail_replace)
+    monkeypatch.setattr(launcher.os, "replace", fail_replace)
     with pytest.raises(AgentKitError) as raised:
         write_launch_contract(paths, sample_item(), Path("/opt/replacement"))
     assert contract.read_bytes() == previous
     assert list(contract.parent.iterdir()) == [contract]
     assert "private-error-value" not in str(raised.value)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX symlink boundary")
+@pytest.mark.parametrize("boundary", ["installations", "clients", "shared", "mcp-launchers"])
+def test_contract_write_rejects_symlinked_managed_directories(tmp_path, boundary):
+    paths = make_paths(tmp_path)
+    components = ["installations", "clients", "shared", "mcp-launchers"]
+    link = paths.data
+    for component in components:
+        link /= component
+        if component == boundary:
+            break
+        link.mkdir(parents=True, exist_ok=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    link.parent.mkdir(parents=True, exist_ok=True)
+    link.symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(AgentKitError):
+        write_launch_contract(paths, sample_item(), Path("/opt/sample-mcp"))
+    assert list(outside.iterdir()) == []
 
 
 @pytest.mark.parametrize("changes", [

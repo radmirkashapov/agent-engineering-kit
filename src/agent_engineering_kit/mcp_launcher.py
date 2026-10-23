@@ -7,12 +7,14 @@ import json
 import os
 import re
 import sys
+import uuid
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from .errors import AgentKitError
 from .io import atomic_write
+from .managed_paths import ManagedDirectory, managed_directory
 from .mcp_credentials import McpCredentialStore
 from .paths import KitPaths, resolve_paths
 
@@ -53,6 +55,38 @@ def _canonical_data_home(value: object) -> bool:
         return False
 
 
+def _atomic_write_contract(directory: ManagedDirectory, name: str, content: str) -> None:
+    """Атомарно записать контракт, не покидая закреплённый managed-каталог."""
+    directory.file_info(name)
+    if directory.descriptor is None:
+        atomic_write(directory.path / name, content)
+        return
+    temporary = f".{name}.{uuid.uuid4().hex}"
+    descriptor = os.open(
+        temporary,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+        0o600,
+        dir_fd=directory.descriptor,
+    )
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        directory.file_info(name)
+        os.replace(
+            temporary,
+            name,
+            src_dir_fd=directory.descriptor,
+            dst_dir_fd=directory.descriptor,
+        )
+    finally:
+        try:
+            os.unlink(temporary, dir_fd=directory.descriptor)
+        except FileNotFoundError:
+            pass
+
+
 def write_launch_contract(paths: KitPaths, item: dict[str, Any], executable: Path) -> Path:
     identifier = item.get("id")
     if not _safe_identifier(identifier):
@@ -86,7 +120,8 @@ def write_launch_contract(paths: KitPaths, item: dict[str, Any], executable: Pat
     )
     target = paths.installations / "clients" / "shared" / "mcp-launchers" / f"{identifier}.json"
     try:
-        atomic_write(target, json.dumps(asdict(contract), ensure_ascii=False, indent=2) + "\n")
+        with managed_directory(paths.data, target.parent, create=True) as directory:
+            _atomic_write_contract(directory, target.name, json.dumps(asdict(contract), ensure_ascii=False, indent=2) + "\n")
     except OSError:
         raise AgentKitError(f"Не удалось записать контракт запуска MCP {identifier}") from None
     return target
