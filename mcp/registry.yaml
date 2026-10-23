@@ -119,6 +119,7 @@ servers:
       image: ghcr.io/github/github-mcp-server@sha256:508a0857ec762b1ab1cece29193345b501fab1dd9d1228a7b617062954cecac6
     environment:
       GITHUB_PERSONAL_ACCESS_TOKEN: env:GITHUB_PERSONAL_ACCESS_TOKEN
+    required_environment: [GITHUB_PERSONAL_ACCESS_TOKEN]
     state: native
     policy: configurable
 
@@ -156,6 +157,7 @@ servers:
       image: sonarsource/sonarqube-mcp@sha256:25e9eabc440515651ae62e0dc8382ca2c41d243c2aca68759ddd721825d408bd
     environment:
       SONARQUBE_TOKEN: env:SONARQUBE_TOKEN
+    required_environment: [SONARQUBE_TOKEN]
     state: native
     policy: configurable
 

@@ -257,6 +257,8 @@ def register_native_mcp(
 ) -> Path:
     """Добавить namespaced core MCP, не изменяя чужие client entries."""
     from .mcp_manager import McpManager
+    from .mcp_credentials import McpCredentialStore
+    from .mcp_launcher import registration_command
     from .docker_mcp import confirmed_docker_routes
 
     manager = McpManager(repository, paths, runner=runner)
@@ -290,6 +292,16 @@ def register_native_mcp(
     available["docker-gateway"] = gateway
     if docker_routes:
         desired["docker-gateway"] = gateway
+    launcher_ids = {
+        identifier for identifier, item in desired.items()
+        if item["installation"]["type"] != "remote" and item.get("environment")
+    }
+    launcher_root = paths.installations / "clients" / "shared" / "mcp-launchers"
+    if launcher_root.is_dir() and not launcher_root.is_symlink():
+        for stale in launcher_root.glob("*.json"):
+            if stale.stem not in launcher_ids and (stale.is_file() or stale.is_symlink()):
+                stale.unlink()
+    credential_status = {row["name"]: row["status"] for row in McpCredentialStore(paths).status(desired.values())}
     target = paths.state / "client-mcp-registrations.json"
     previous_rows: list[dict] = []
     if target.is_file():
@@ -346,7 +358,20 @@ def register_native_mcp(
             )
             installation = item["installation"]
             binary = manager.executable(item) if installation["type"] != "remote" else None
-            expected_args = item.get("args", [])
+            registration_binary, expected_args = (
+                registration_command(paths, item, binary)
+                if binary and item.get("environment")
+                else (str(binary), list(item.get("args", [])))
+            )
+            missing_environment = sorted(
+                name for name in item.get("required_environment", [])
+                if credential_status.get(name) != "SET" and not os.environ.get(name)
+            ) if installation["type"] != "remote" else []
+            ready_status = (
+                "AUTH_REQUIRED" if installation.get("authentication") == "oauth"
+                else "CONFIG_REQUIRED" if missing_environment else "ACTIVE"
+            )
+            readiness = {"missing_environment": missing_environment} if missing_environment else {}
             matches = False
             if probe.ok and client == "codex":
                 try:
@@ -354,16 +379,15 @@ def register_native_mcp(
                     matches = (
                         transport.get("url") == installation.get("endpoint")
                         if installation["type"] == "remote"
-                        else transport.get("command") == str(binary) and transport.get("args", []) == expected_args
+                        else transport.get("command") == registration_binary and transport.get("args", []) == expected_args
                     )
                 except json.JSONDecodeError:
                     matches = False
             elif probe.ok:
-                expected_values = [installation["endpoint"]] if installation["type"] == "remote" else [str(binary), *expected_args]
+                expected_values = [installation["endpoint"]] if installation["type"] == "remote" else [registration_binary, *expected_args]
                 matches = all(value in probe.stdout for value in expected_values)
             if matches:
-                status = "AUTH_REQUIRED" if installation.get("authentication") == "oauth" else "ACTIVE"
-                rows.append({"client": client, "mcp": identifier, "status": status, "changed": False, "desired_verified": True})
+                rows.append({"client": client, "mcp": identifier, "status": ready_status, "changed": False, "desired_verified": True, **readiness})
                 continue
             if probe.ok:
                 remove = [executable, "mcp", "remove", name]
@@ -385,12 +409,12 @@ def register_native_mcp(
                     continue
                 command = [executable, "mcp", "add"]
                 if client == "claude-code":
-                    command.extend(["--scope", "user", name, "--", str(binary), *item.get("args", [])])
+                    command.extend(["--scope", "user", name, "--", registration_binary, *expected_args])
                 else:
-                    command.extend([name, "--", str(binary), *item.get("args", [])])
+                    command.extend([name, "--", registration_binary, *expected_args])
             added = runner(command, cwd=paths.state)
-            status = ("AUTH_REQUIRED" if installation.get("authentication") == "oauth" else "ACTIVE") if added.ok else "ERROR"
-            rows.append({"client": client, "mcp": identifier, "status": status, "changed": added.ok, "desired_verified": added.ok, "reason": "OAuth может потребовать интерактивного подтверждения при первом использовании" if status == "AUTH_REQUIRED" else ("" if added.ok else (added.stderr or added.stdout)[-1000:])})
+            status = ready_status if added.ok else "ERROR"
+            rows.append({"client": client, "mcp": identifier, "status": status, "changed": added.ok, "desired_verified": added.ok, **readiness, "reason": "OAuth может потребовать интерактивного подтверждения при первом использовании" if status == "AUTH_REQUIRED" else ("" if added.ok else "не удалось зарегистрировать managed MCP")})
     for client in ("claude-desktop", "opencode", "cline"):
         for identifier, item in desired.items():
             rows.append({
