@@ -9,8 +9,10 @@ from pathlib import Path
 
 from .models import load_policy
 from .mcp_manager import McpManager
+from .mcp_credentials import McpCredentialStore
 from .paths import KitPaths, ensure_runtime
 from .policy import effective_policy
+from .projects import find_project
 from .result import ValidationResult
 from .security_tools import SecurityToolManager
 
@@ -36,8 +38,16 @@ def doctor(repository: Path, paths: KitPaths) -> ValidationResult:
         result.error("doctor", f"Runtime недоступен для записи: {error}")
     policy = load_policy(repository, local_path=paths.overrides / "models.yaml")
     result.info("doctor", f"Corporate models: {len(policy.corporate)}; user-local models: {len(policy.local)}")
-    access_profile = str(effective_policy(repository, paths, None).values["mcp.access_profile"])
-    result.extend(McpManager(repository, paths).doctor(access_profile=access_profile))
+    project = find_project(Path.cwd())
+    access_profile = str(effective_policy(repository, paths, project).values["mcp.access_profile"])
+    credentials = McpCredentialStore(paths).load()
+    result.extend(
+        McpManager(repository, paths).doctor(
+            project,
+            access_profile=access_profile,
+            credential_values=credentials,
+        )
+    )
     registrations = paths.state / "client-mcp-registrations.json"
     if registrations.is_file():
         try:

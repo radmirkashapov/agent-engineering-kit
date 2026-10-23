@@ -17,6 +17,7 @@ from .component_state import Lifecycle, read_state, write_state
 from .definitions import url_contains_credentials
 from .errors import AgentKitError
 from .io import load_yaml
+from .mcp_credentials import McpCredentialStore
 from .paths import KitPaths, ensure_runtime
 from .overrides import apply_local_overrides
 from .process import CommandResult, run_command
@@ -198,8 +199,10 @@ class McpManager:
 
     def _project_signals(self, project: LogicalProject | None) -> set[str]:
         signals: set[str] = set()
+        environment_names = {name for name, value in os.environ.items() if value}
+        environment_names.update(name for name, value in McpCredentialStore(self.paths).load().items() if value)
         # Наличие token является локальным сигналом готовности опционального Sentry MCP.
-        if os.environ.get("SENTRY_ACCESS_TOKEN"):
+        if "SENTRY_ACCESS_TOKEN" in environment_names:
             signals.add("sentry")
         if not project:
             return signals
@@ -215,7 +218,7 @@ class McpManager:
                 signals.add("sonar")
             if any(root.rglob("package.json")):
                 signals.add("web")
-        if any(os.environ.get(name) for name in ("JIRA_URL", "ATLASSIAN_SITE_URL", "CONFLUENCE_URL")):
+        if environment_names & {"JIRA_URL", "ATLASSIAN_SITE_URL", "CONFLUENCE_URL"}:
             signals.add("atlassian")
         return signals
 
@@ -375,8 +378,10 @@ class McpManager:
         project: LogicalProject | None = None,
         *,
         access_profile: str = "readonly",
+        credential_values: dict[str, str] | None = None,
     ) -> ValidationResult:
         result = ValidationResult()
+        vault = McpCredentialStore(self.paths).load() if credential_values is None else credential_values
         desired_by_id = {
             item["id"]: item
             for item, _ in self.desired(project, access_profile=access_profile)
@@ -387,7 +392,9 @@ class McpManager:
                 missing = [
                     name
                     for name in desired.get("required_environment", [])
-                    if not os.environ.get(name)
+                    if desired.get("transport") == "stdio"
+                    and not os.environ.get(name)
+                    and not vault.get(name)
                 ]
                 if missing:
                     for name in missing:
@@ -396,7 +403,7 @@ class McpManager:
                             f"{state['id']}: отсутствует обязательная переменная окружения {name}",
                         )
                     continue
-                if state["id"] == "sentry" and (host := os.environ.get("SENTRY_HOST")):
+                if state["id"] == "sentry" and (host := (os.environ.get("SENTRY_HOST") or vault.get("SENTRY_HOST"))):
                     if not re.fullmatch(r"[A-Za-z0-9.-]+(?::[0-9]{1,5})?", host):
                         result.error(
                             "mcp-doctor",

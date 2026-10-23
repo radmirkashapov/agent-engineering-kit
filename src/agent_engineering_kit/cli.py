@@ -19,6 +19,8 @@ from .explain import explain
 from .external_skills import ExternalSkillManager
 from .mcp_manager import McpManager
 from .mcp_client import McpToolClient
+from .mcp_credentials import McpCredentialStore
+from .mcp_launcher import registration_command
 from .events import read_events
 from .harness import resolve_harness
 from .io import markdown_frontmatter
@@ -125,6 +127,19 @@ def _parser() -> argparse.ArgumentParser:
     mcp_override.add_argument("--resync", action="store_true", help="Выполнить resync после успешного изменения")
     mcp_explain = mcp.add_parser("explain", help="Объяснить итоговое состояние MCP")
     mcp_explain.add_argument("id")
+    launch_command = mcp.add_parser(
+        "launch-command",
+        help="Создать команду для ручной регистрации stdio MCP",
+        description="Создать контракт без значений секретов и JSON command/args для ручной регистрации stdio MCP без Codex и Claude Code.",
+    )
+    launch_command.add_argument("id", help="ID включённого stdio MCP")
+    creds = mcp.add_parser("creds", help="Управлять локальными credentials MCP")
+    creds_commands = creds.add_subparsers(dest="creds_command", required=True)
+    import_command = creds_commands.add_parser("import", help="Импортировать credentials из env-файла")
+    import_command.add_argument("--from", dest="source", required=True, type=Path)
+    creds_commands.add_parser("status", help="Показать статус credentials MCP")
+    clear_command = creds_commands.add_parser("clear", help="Удалить локальные credentials MCP")
+    clear_command.add_argument("--yes", action="store_true", help="Подтвердить удаление")
     docker_mcp = mcp.add_parser("docker", help="Управлять выделенным профилем Docker MCP Toolkit").add_subparsers(dest="docker_command", required=True)
     for name, help_text in (
         ("status", "Показать состояние Docker MCP Toolkit"),
@@ -445,6 +460,33 @@ def _available_resources(
     return McpManager(repository, paths).available(project, access_profile=access_profile)
 
 
+def _handle_mcp_credentials(
+    args: argparse.Namespace,
+    repository: Path,
+    paths: KitPaths,
+    project: LogicalProject | None,
+) -> int:
+    """Управлять локальным vault, не раскрывая значения credentials."""
+    store = McpCredentialStore(paths)
+    if args.creds_command == "clear":
+        if not args.yes:
+            print("Удаление credentials требует --yes", file=sys.stderr)
+            return 2
+        store.clear()
+        print("Credentials MCP удалены.")
+        return 0
+
+    servers = _available_resources("mcp", repository, paths, project)
+    if args.creds_command == "import":
+        target = store.import_file(args.source, servers)
+        print(f"Credentials MCP сохранены: {target}")
+        return 0
+
+    for row in store.status(servers):
+        print(json.dumps(row, ensure_ascii=False))
+    return 0
+
+
 def _mutate_resource(
     kind: Literal["skills", "mcp"],
     args: argparse.Namespace,
@@ -592,6 +634,9 @@ def run(argv: list[str] | None = None) -> int:
                 return _mutate_resource("skills", args, repository, paths, project)
             return 0
         if args.command == "mcp":
+            if args.mcp_command == "creds":
+                project = find_project(Path.cwd())
+                return _handle_mcp_credentials(args, repository, paths, project)
             if args.mcp_command == "docker":
                 project = (
                     _current_or_explicit_project(args.project_reference, paths)
@@ -634,6 +679,21 @@ def run(argv: list[str] | None = None) -> int:
                 if not selected:
                     raise AgentKitError(f"MCP не найден: {args.id}")
                 print(json.dumps(selected[0], ensure_ascii=False, indent=2))
+            elif args.mcp_command == "launch-command":
+                item = next((item for item in manager.available(project, access_profile=access_profile) if item["id"] == args.id), None)
+                if item is None:
+                    raise AgentKitError(f"MCP не найден: {args.id}")
+                if item.get("transport") != "stdio" or not item.get("enabled"):
+                    raise AgentKitError("Команда ручной регистрации доступна только для включённого stdio MCP; remote OAuth настраивается в клиенте")
+                executable = manager.executable(item)
+                if executable is None:
+                    raise AgentKitError("Исполняемый файл MCP не установлен; выполните agent-kit resync --no-update")
+                command, arguments = (
+                    registration_command(paths, item, executable)
+                    if item.get("environment") or item.get("required_environment")
+                    else (str(executable.resolve()), list(item.get("args", [])))
+                )
+                print(json.dumps({"command": command, "args": arguments}, ensure_ascii=False, indent=2))
             else:
                 return _mutate_resource("mcp", args, repository, paths, project)
             return 0

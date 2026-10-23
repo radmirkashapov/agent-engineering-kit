@@ -5,10 +5,14 @@ from pathlib import Path
 import json
 import pytest
 import shutil
+import sys
 import yaml
 
 from agent_engineering_kit.clients import CLIENTS, expose_native_instructions, expose_native_skills, register_native_mcp, sync_clients, validate_clients
 from agent_engineering_kit.paths import KitPaths
+from agent_engineering_kit.mcp_credentials import McpCredentialStore
+from agent_engineering_kit.mcp_manager import McpManager
+from agent_engineering_kit.projects import LogicalProject
 from agent_engineering_kit.errors import AgentKitError
 from agent_engineering_kit.process import CommandResult
 from agent_engineering_kit.explain import explain
@@ -89,6 +93,225 @@ def test_core_mcp_registration_is_namespaced_and_oauth_safe(tmp_path: Path, monk
     assert sum("https://mcp.context7.com/mcp/oauth" in args for args in additions) == 2
     registrations = json.loads(state_path.read_text(encoding="utf-8"))["registrations"]
     assert sum(item.get("mcp") == "context7" and item["status"] == "AUTH_REQUIRED" for item in registrations) == 2
+
+
+@pytest.mark.parametrize("credential_source", ["missing", "vault", "shell"])
+@pytest.mark.parametrize("server,variable", [("github", "GITHUB_PERSONAL_ACCESS_TOKEN"), ("sonarqube", "SONARQUBE_TOKEN")])
+@pytest.mark.parametrize("required_only", [False, True])
+def test_stdio_mcp_with_environment_is_registered_through_launcher(
+    tmp_path: Path, monkeypatch, credential_source: str, server: str, variable: str, required_only: bool,
+) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    data = tmp_path / "data"
+    paths = KitPaths(repository, data, data / "runtime", data / "projects", data / "overrides")
+    root = tmp_path / "project"
+    (root / ".git").mkdir(parents=True)
+    (root / "sonar-project.properties").write_text("sonar.projectKey=fixture\n", encoding="utf-8")
+    project = LogicalProject(root, root / ".ai-team/project.yaml", {
+        "id": "project", "repositories": [{"id": "root", "path": "."}],
+    })
+    write_yaml(paths.overrides / "global/access.yaml", {
+        "version": 1, "mcp": {"allow": [server, "context7"], "block": []},
+    })
+    if required_only:
+        registry = yaml.safe_load((repository / "mcp/registry.yaml").read_text(encoding="utf-8"))
+        definition = next(item for item in registry["servers"] if item["id"] == server)
+        definition.pop("environment")
+        write_yaml(paths.overrides / f"global/mcp/{server}.yaml", {"target": server, "override": {"mode": "replace", "value": definition}})
+    monkeypatch.delenv(variable, raising=False)
+    monkeypatch.setattr("agent_engineering_kit.clients.shutil.which", lambda name: f"/usr/bin/{name}" if name in {"codex", "claude", "docker"} else None)
+    if credential_source == "vault":
+        source = tmp_path / "credentials.env"
+        source.write_text(f"{variable}=fixture-secret\n", encoding="utf-8")
+        McpCredentialStore(paths).import_file(source, McpManager(repository, paths).available())
+    elif credential_source == "shell":
+        monkeypatch.setenv(variable, "fixture-secret")
+    calls: list[list[str]] = []
+    client_commands: dict[str, list[str]] = {
+        "/usr/bin/codex": ["/usr/bin/docker", "run"],
+        "/usr/bin/claude": ["/usr/bin/docker", "run"],
+    }
+
+    def runner(args, **kwargs):
+        calls.append(list(args))
+        if list(args[:3]) == ["git", "remote", "-v"]:
+            return CommandResult(tuple(args), 0, "origin https://github.com/acme/repo.git (fetch)\n", "")
+        if "add" in args and f"agent-kit-{server}" in args:
+            client_commands[args[0]] = list(args[args.index("--") + 1:])
+        if "get" in args and f"agent-kit-{server}" in args and args[0] in client_commands:
+            command = client_commands[args[0]]
+            output = json.dumps({"transport": {"type": "stdio", "command": command[0], "args": command[1:]}}) if Path(args[0]).name == "codex" else " ".join(command)
+            return CommandResult(tuple(args), 0, output, "")
+        return CommandResult(tuple(args), 1 if "get" in args else 0, "", "")
+
+    state_path = register_native_mcp(repository, paths, project=project, access_profile="administrator", runner=runner)
+
+    additions = [call for call in calls if "add" in call and f"agent-kit-{server}" in call]
+    contract_path = paths.installations / "clients/shared/mcp-launchers" / f"{server}.json"
+    assert len(additions) == 2
+    assert sum("remove" in call and f"agent-kit-{server}" in call for call in calls) == 2
+    assert all(call[call.index("--") + 1:] == [sys.executable, "-m", "agent_engineering_kit.mcp_launcher", str(contract_path.resolve())] for call in additions)
+    assert variable not in json.dumps(additions)
+    contract = json.loads(contract_path.read_text(encoding="utf-8"))
+    assert contract["required_environment"] == [variable]
+    assert contract["command"] == str(Path("/usr/bin/docker").resolve())
+    state_text = state_path.read_text(encoding="utf-8")
+    assert "fixture-secret" not in json.dumps(calls) + state_text + contract_path.read_text(encoding="utf-8")
+    server_rows = [row for row in json.loads(state_text)["registrations"] if row.get("mcp") == server and row["client"] in {"codex", "claude-code"}]
+    assert len(server_rows) == 2
+    assert all(row["desired_verified"] for row in server_rows)
+    assert all(row["status"] == ("CONFIG_REQUIRED" if credential_source == "missing" else "ACTIVE") for row in server_rows)
+    if credential_source == "missing":
+        assert all(row["missing_environment"] == [variable] for row in server_rows)
+
+    calls.clear()
+    register_native_mcp(repository, paths, project=project, access_profile="administrator", runner=runner)
+    assert not any(("add" in call or "remove" in call) and f"agent-kit-{server}" in call for call in calls)
+    server_rows = [row for row in json.loads(state_path.read_text(encoding="utf-8"))["registrations"] if row.get("mcp") == server and row["client"] in {"codex", "claude-code"}]
+    assert all(row["changed"] is False and row["desired_verified"] for row in server_rows)
+    assert all(row["status"] == ("CONFIG_REQUIRED" if credential_source == "missing" else "ACTIVE") for row in server_rows)
+    if credential_source == "missing":
+        assert all(row["missing_environment"] == [variable] for row in server_rows)
+
+
+def test_stale_launcher_cleanup_is_limited_to_managed_directory(tmp_path: Path, monkeypatch) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    data = tmp_path / "data"
+    paths = KitPaths(repository, data, data / "runtime", data / "projects", data / "overrides")
+    launcher_root = paths.installations / "clients/shared/mcp-launchers"
+    launcher_root.mkdir(parents=True)
+    stale = [launcher_root / f"{name}.json" for name in ("removed-server", "context7", "sentry")]
+    for path in stale:
+        path.write_text("{}", encoding="utf-8")
+    outside = paths.state / "outside.json"
+    outside.parent.mkdir(parents=True)
+    outside.write_text("preserve", encoding="utf-8")
+    (launcher_root / "external.json").symlink_to(outside)
+    notes = launcher_root / "notes.txt"
+    notes.write_text("preserve", encoding="utf-8")
+    nested = launcher_root / "nested/server.json"
+    nested.parent.mkdir()
+    nested.write_text("preserve", encoding="utf-8")
+    monkeypatch.delenv("SENTRY_ACCESS_TOKEN", raising=False)
+    monkeypatch.setattr("agent_engineering_kit.clients.shutil.which", lambda _: None)
+
+    register_native_mcp(repository, paths)
+
+    assert all(not path.exists() for path in stale)
+    assert not (launcher_root / "external.json").is_symlink()
+    assert outside.read_text(encoding="utf-8") == "preserve"
+    assert notes.read_text(encoding="utf-8") == "preserve"
+    assert nested.read_text(encoding="utf-8") == "preserve"
+
+
+def test_launcher_cleanup_does_not_follow_symlinked_directory(tmp_path: Path, monkeypatch) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    data = tmp_path / "data"
+    paths = KitPaths(repository, data, data / "runtime", data / "projects", data / "overrides")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    contract = outside / "user-owned.json"
+    contract.write_text("preserve", encoding="utf-8")
+    launcher_root = paths.installations / "clients/shared/mcp-launchers"
+    launcher_root.parent.mkdir(parents=True)
+    launcher_root.symlink_to(outside, target_is_directory=True)
+    monkeypatch.setattr("agent_engineering_kit.clients.shutil.which", lambda _: None)
+
+    register_native_mcp(repository, paths)
+
+    assert contract.read_text(encoding="utf-8") == "preserve"
+
+
+@pytest.mark.parametrize("linked_parent", ["clients", "shared"])
+def test_launcher_cleanup_does_not_follow_symlinked_parent(tmp_path: Path, monkeypatch, linked_parent: str) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    data = tmp_path / "data"
+    paths = KitPaths(repository, data, data / "runtime", data / "projects", data / "overrides")
+    outside = tmp_path / "outside"
+    external_launchers = outside / ("shared/mcp-launchers" if linked_parent == "clients" else "mcp-launchers")
+    external_launchers.mkdir(parents=True)
+    foreign = external_launchers / "foreign.json"
+    foreign.write_text("preserve", encoding="utf-8")
+    link = paths.installations / "clients"
+    if linked_parent == "shared":
+        link /= "shared"
+    link.parent.mkdir(parents=True)
+    link.symlink_to(outside, target_is_directory=True)
+    monkeypatch.setattr("agent_engineering_kit.clients.shutil.which", lambda _: None)
+
+    register_native_mcp(repository, paths)
+
+    assert foreign.read_text(encoding="utf-8") == "preserve"
+    assert link.is_symlink()
+
+
+@pytest.mark.parametrize("route", ["disabled", "direct", "docker"])
+def test_launcher_contract_is_removed_when_server_no_longer_needs_it(tmp_path: Path, monkeypatch, route: str) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    data = tmp_path / "data"
+    paths = KitPaths(repository, data, data / "runtime", data / "projects", data / "overrides")
+    monkeypatch.setenv("SENTRY_ACCESS_TOKEN", "fixture-secret")
+    monkeypatch.setattr("agent_engineering_kit.clients.shutil.which", lambda name: f"/usr/bin/{name}" if name in {"codex", "claude", "npx", "docker"} else None)
+    calls: list[list[str]] = []
+
+    def runner(args, **kwargs):
+        calls.append(list(args))
+        return CommandResult(tuple(args), 1 if "get" in args else 0, "", "")
+
+    state_path = register_native_mcp(repository, paths, runner=runner)
+    contract = paths.installations / "clients/shared/mcp-launchers/sentry.json"
+    assert contract.is_file()
+    if route == "disabled":
+        write_yaml(paths.overrides / "global/access.yaml", {"version": 1, "mcp": {"allow": [], "block": ["sentry"]}})
+    elif route == "direct":
+        registry = yaml.safe_load((repository / "mcp/registry.yaml").read_text(encoding="utf-8"))
+        sentry = next(item for item in registry["servers"] if item["id"] == "sentry")
+        sentry.pop("environment")
+        sentry.pop("required_environment")
+        write_yaml(paths.overrides / "global/mcp/sentry.yaml", {"target": "sentry", "override": {"mode": "replace", "value": sentry}})
+    else:
+        (paths.state / "docker-mcp-toolkit.json").write_text(json.dumps({
+            "version": 1, "status": "SYNCED", "project_id": None,
+            "profile": "agent-engineering-kit", "gateway_registration": "agent-kit-docker",
+            "routes": {"sentry": "docker"}, "managed_servers": {"sentry": "catalog://sentry"},
+        }), encoding="utf-8")
+
+    calls.clear()
+    register_native_mcp(repository, paths, runner=runner)
+
+    assert not contract.exists()
+    additions = [call for call in calls if "add" in call]
+    if route == "direct":
+        sentry = [call for call in additions if "agent-kit-sentry" in call]
+        assert len(sentry) == 2
+        assert all(call[call.index("--") + 1:] == ["/usr/bin/npx", "-y", "@sentry/mcp-server@0.42.0", "--skills=inspect", "--sentry-dsn="] for call in sentry)
+    else:
+        assert not any("agent-kit-sentry" in call for call in additions)
+    if route == "docker":
+        gateway = [call for call in additions if "agent-kit-docker" in call]
+        assert len(gateway) == 2
+        assert all(call[call.index("--") + 1:] == ["/usr/bin/docker", "mcp", "gateway", "run", "--profile", "agent-engineering-kit"] for call in gateway)
+        rows = json.loads(state_path.read_text(encoding="utf-8"))["registrations"]
+        assert sum(row.get("mcp") == "sentry" and row["status"] == "DOCKER_ROUTED" for row in rows) == 2
+
+
+def test_registration_failure_does_not_persist_client_output_with_credentials(tmp_path: Path, monkeypatch) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    data = tmp_path / "data"
+    paths = KitPaths(repository, data, data / "runtime", data / "projects", data / "overrides")
+    monkeypatch.setenv("SENTRY_ACCESS_TOKEN", "fixture-private-value")
+    monkeypatch.setattr("agent_engineering_kit.clients.shutil.which", lambda name: f"/usr/bin/{name}" if name in {"codex", "claude", "npx"} else None)
+
+    def runner(args, **kwargs):
+        return CommandResult(tuple(args), 1, "client echo fixture-private-value", "failure fixture-private-value")
+
+    state_path = register_native_mcp(repository, paths, runner=runner)
+
+    text = state_path.read_text(encoding="utf-8")
+    assert "fixture-private-value" not in text
+    rows = [row for row in json.loads(text)["registrations"] if row.get("mcp") == "sentry" and row["client"] in {"codex", "claude-code"}]
+    assert len(rows) == 2
+    assert all(row["status"] == "ERROR" and row["desired_verified"] is False for row in rows)
 
 
 def test_confirmed_docker_route_replaces_native_server_with_one_gateway(

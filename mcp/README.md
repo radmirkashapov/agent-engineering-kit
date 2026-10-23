@@ -4,6 +4,18 @@
 
 Нативное состояние остаётся в хранилище самого MCP. В частности, базы codebase-memory, память Serena и сеансы клиентов не переносятся в память проекта. Набор хранит только связь логического проекта с интеграциями в локальном каталоге `projects/<project-id>/integrations/`.
 
+## Учётные данные и OAuth
+
+Для stdio MCP используйте `mcp-creds.example.env` как шаблон: он перечисляет базовые имена переменных пустыми значениями. Скопируйте его в `mcp-creds.env`, заполните нужные поля и импортируйте через `agent-kit mcp creds import --from ./mcp-creds.env`. Значения попадают в machine-local хранилище Kit. Не записывайте literal credentials в registry, нативные конфигурации клиента, Git или аргументы команды. `.env.example` сохранён для совместимости со старыми проверками.
+
+Remote OAuth — отдельный поток: Atlassian, GitLab и Context7 проходят авторизацию в интерфейсе конкретного клиента. OAuth-состояние принадлежит каждому клиенту и профилю отдельно. Если все клиенты намеренно подключены к одному Docker MCP Gateway, авторизацией и OAuth-состоянием владеет Docker Desktop; сами клиенты используют этот gateway.
+
+При `AUTH_REQUIRED` для stdio проверьте `agent-kit mcp creds status`, импортируйте отсутствующие значения и перезапустите клиент. Для remote MCP заново завершите OAuth в соответствующем клиенте и профиле. Ротация credentials выполняется повторным импортом и действует при следующем запуске MCP без `resync`. Изменение определения сервера или команды требует `resync`. `agent-kit mcp creds clear --yes` очищает только локальное хранилище credentials Kit, не OAuth-состояние клиента или Docker Desktop. После настройки выполните `agent-kit security scan`.
+
+`agent-kit mcp launch-command <id>` выводит JSON `command`/`args` для включённого установленного stdio MCP: при наличии credential-переменных создаёт launcher-контракт, иначе возвращает прямую команду. Пути executable и контракта абсолютные. Codex и Claude Code для этой команды не требуются. Команда применяет текущий профиль доступа и отказывает для remote MCP: OAuth остаётся нативным. Примеры ручной регистрации: [Claude Desktop](../clients/claude-desktop/README.md), [OpenCode](../clients/opencode/README.md), [Cline](../clients/cline/README.md).
+
+Контракт v2 привязан к canonical data home при регистрации; он не зависит от переменных `AGENT_KIT_DATA_HOME`/`XDG_DATA_HOME` в GUI-клиенте и не содержит credential values. После переноса data home повторите `mcp launch-command <id>` и замените регистрацию. Контракт v1 читается для совместимости, но использует прежний выбор data home из окружения; `resync --no-update` или повторная ручная генерация обновляет его до v2. Импорт, чтение и удаление vault/metadata запрещают symlink и Windows reparse points. POSIX операции используют удерживаемые directory descriptors, Windows — handles с запретом подмены; проверки не ослабляют приватные права vault.
+
 Ядро: Codebase Memory отвечает за граф кода и анализ влияния, Serena — за символы и рефакторинг, Context7 — за актуальную документацию, Sentry — за read-only исследование ошибок, issues, traces и release health. Эти инструменты не взаимозаменяемы. Условные GitHub, GitLab, SonarQube, Playwright и Atlassian активируются по признакам проекта; проект из нескольких репозиториев может одновременно включить несколько систем управления исходным кодом.
 
 ## Границы и маршрутизация

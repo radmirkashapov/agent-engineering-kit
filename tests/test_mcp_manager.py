@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from agent_engineering_kit.mcp_manager import McpManager
+from agent_engineering_kit.mcp_credentials import McpCredentialStore
 from agent_engineering_kit.component_state import Lifecycle, read_state, write_state
 from agent_engineering_kit.paths import KitPaths
 from agent_engineering_kit.process import CommandResult
@@ -77,6 +78,47 @@ def test_sentry_without_token_is_inactive_and_does_not_fail_doctor(
     assert sentry["enabled"] is False
     assert sentry["status"] == "inactive"
     assert result.ok
+
+
+def test_sentry_vault_token_is_an_activation_signal(tmp_path: Path, monkeypatch) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    data = tmp_path / "data"
+    paths = KitPaths(repository, data, data / "runtime", data / "projects", data / "overrides")
+    monkeypatch.delenv("SENTRY_ACCESS_TOKEN", raising=False)
+    manager = McpManager(repository, paths)
+    source = tmp_path / "credentials.env"
+    source.write_text("SENTRY_ACCESS_TOKEN=fixture-token\n", encoding="utf-8")
+    McpCredentialStore(paths).import_file(source, manager.available())
+
+    sentry = next(item for item in manager.list() if item["id"] == "sentry")
+
+    assert sentry["enabled"] is True
+    assert sentry["status"] != "inactive"
+
+
+def test_vault_scm_and_sonar_tokens_still_require_project_signals(tmp_path: Path) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    data = tmp_path / "data"
+    paths = KitPaths(repository, data, data / "runtime", data / "projects", data / "overrides")
+
+    def runner(args, **kwargs):
+        return CommandResult(tuple(args), 0, "origin https://github.com/acme/repo.git (fetch)\nmirror https://gitlab.com/acme/repo.git (fetch)\n", "")
+
+    manager = McpManager(repository, paths, runner=runner)
+    source = tmp_path / "credentials.env"
+    source.write_text("GITHUB_PERSONAL_ACCESS_TOKEN=fixture-token\nSONARQUBE_TOKEN=fixture-token\n", encoding="utf-8")
+    McpCredentialStore(paths).import_file(source, manager.available())
+    servers = [item for item in manager.available() if item["id"] in {"github", "gitlab", "sonarqube"}]
+    assert len(servers) == 3
+    assert all(manager.is_enabled(item) is False for item in servers)
+
+    root = tmp_path / "project"
+    (root / ".git").mkdir(parents=True)
+    (root / "sonar-project.properties").write_text("sonar.projectKey=fixture\n", encoding="utf-8")
+    project = LogicalProject(root, root / ".ai-team/project.yaml", {
+        "id": "project", "repositories": [{"id": "root", "path": "."}],
+    })
+    assert all(manager.is_enabled(item, project) for item in servers)
 
 
 def test_sentry_can_be_enabled_from_default_access_policy(

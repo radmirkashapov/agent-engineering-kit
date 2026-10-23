@@ -7,6 +7,9 @@ import platform
 from dataclasses import dataclass
 from pathlib import Path
 
+from .errors import AgentKitError
+from .managed_paths import managed_directory
+
 
 @dataclass(frozen=True)
 class KitPaths:
@@ -19,6 +22,7 @@ class KitPaths:
     state: Path | None = None
     locks: Path | None = None
     logs: Path | None = None
+    secrets: Path | None = None
 
     def __post_init__(self) -> None:
         defaults = {
@@ -26,6 +30,7 @@ class KitPaths:
             "state": self.data / "state",
             "locks": self.data / "locks",
             "logs": self.data / "logs",
+            "secrets": self.data / "secrets",
         }
         for name, value in defaults.items():
             if getattr(self, name) is None:
@@ -81,6 +86,11 @@ def resolve_paths(environ: dict[str, str] | None = None) -> KitPaths:
 
 
 def ensure_runtime(paths: KitPaths) -> None:
+    try:
+        with managed_directory(paths.data, paths.secrets, create=True, private=True):
+            pass
+    except OSError:
+        raise AgentKitError("Не удалось подготовить хранилище credentials MCP") from None
     directories = (
         paths.runtime,
         paths.projects,
