@@ -165,7 +165,7 @@ def test_import_failure_keeps_old_vault_and_cleans_temporary_files(tmp_path, mon
     old_metadata = store.metadata_path.read_bytes()
     source.write_text("TOKEN=private-new\n", encoding="utf-8")
 
-    def fail(*args):
+    def fail(*args, **kwargs):
         raise OSError("private-new")
 
     monkeypatch.setattr(credentials_module.os, failure, fail)
@@ -256,6 +256,157 @@ def test_ensure_runtime_creates_private_secrets_directory_and_preserves_position
         paths.secrets.chmod(0o755)
         ensure_runtime(paths)
         assert stat.S_IMODE(paths.secrets.stat().st_mode) == 0o700
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX symlink; Windows reparse проверяется отдельной моделью")
+@pytest.mark.parametrize("boundary,operation", [
+    ("secrets", "import"), ("secrets", "load"), ("secrets", "clear"), ("secrets", "runtime"),
+    ("vault", "import"), ("vault", "load"), ("vault", "clear"),
+    ("state", "import"), ("state", "clear"),
+])
+def test_managed_credentials_reject_symlink_boundaries(tmp_path, operation, boundary):
+    paths = make_paths(tmp_path)
+    paths.data.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir(mode=0o755)
+    external = outside / ("mcp-credentials.json" if boundary == "state" else "mcp-creds.env")
+    external.write_text("TOKEN=outside-value\n")
+    external.chmod(0o600)
+    if boundary == "vault":
+        paths.secrets.mkdir()
+        (paths.secrets / "mcp-creds.env").symlink_to(external)
+    else:
+        getattr(paths, boundary).symlink_to(outside, target_is_directory=True)
+    source = tmp_path / "source.env"
+    source.write_text("TOKEN=new-value\n")
+    store = credentials_module.McpCredentialStore(paths)
+    with pytest.raises(AgentKitError):
+        if operation == "import":
+            store.import_file(source, sample_servers())
+        elif operation == "load":
+            store.load()
+        elif operation == "clear":
+            store.clear()
+        else:
+            ensure_runtime(paths)
+    assert external.read_text() == "TOKEN=outside-value\n"
+    assert stat.S_IMODE(outside.stat().st_mode) == 0o755
+    assert sorted(path.name for path in outside.iterdir()) == [external.name]
+
+
+@pytest.mark.parametrize("operation", ["import", "load", "clear", "runtime"])
+def test_managed_credentials_reject_windows_reparse_directory(tmp_path, monkeypatch, operation):
+    paths = make_paths(tmp_path)
+    paths.secrets.mkdir(parents=True)
+    source = tmp_path / "source.env"
+    source.write_text("TOKEN=new-value\n")
+    original_lstat = Path.lstat
+
+    def reparse_lstat(path):
+        observed = original_lstat(path)
+        if path == paths.secrets:
+            return SimpleNamespace(st_mode=observed.st_mode, st_file_attributes=0x400)
+        return observed
+
+    monkeypatch.setattr(Path, "lstat", reparse_lstat)
+    store = credentials_module.McpCredentialStore(paths)
+    with pytest.raises(AgentKitError):
+        if operation == "import":
+            store.import_file(source, sample_servers())
+        elif operation == "runtime":
+            ensure_runtime(paths)
+        else:
+            getattr(store, operation)()
+    assert list(paths.secrets.iterdir()) == []
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX directory descriptors")
+def test_import_does_not_follow_directory_swap_before_chmod(tmp_path, monkeypatch):
+    paths = make_paths(tmp_path)
+    paths.secrets.mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir(mode=0o755)
+    moved = paths.data / "original-secrets"
+    source = tmp_path / "source.env"
+    source.write_text("TOKEN=new-value\n")
+    original_fchmod = os.fchmod
+    secrets_inode = paths.secrets.stat().st_ino
+
+    def swap_directory(descriptor, mode):
+        if os.fstat(descriptor).st_ino == secrets_inode and not moved.exists():
+            paths.secrets.rename(moved)
+            paths.secrets.symlink_to(outside, target_is_directory=True)
+        original_fchmod(descriptor, mode)
+
+    monkeypatch.setattr(os, "fchmod", swap_directory)
+    credentials_module.McpCredentialStore(paths).import_file(source, sample_servers())
+    assert paths.secrets.is_symlink()
+    assert list(outside.iterdir()) == []
+    assert stat.S_IMODE(outside.stat().st_mode) == 0o755
+    assert (moved / "mcp-creds.env").read_text() == "TOKEN=new-value\n"
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Модель Windows file attributes поверх POSIX dir_fd")
+@pytest.mark.parametrize("operation", ["import", "load", "clear"])
+def test_managed_credentials_reject_windows_reparse_file(tmp_path, monkeypatch, operation):
+    paths = make_paths(tmp_path)
+    source = tmp_path / "source.env"
+    source.write_text("TOKEN=original\n")
+    store = credentials_module.McpCredentialStore(paths)
+    store.import_file(source, sample_servers())
+    original_stat = os.stat
+
+    def reparse_stat(path, *args, **kwargs):
+        observed = original_stat(path, *args, **kwargs)
+        if path == "mcp-creds.env" and kwargs.get("dir_fd") is not None:
+            return SimpleNamespace(st_mode=observed.st_mode, st_file_attributes=0x400)
+        return observed
+
+    monkeypatch.setattr(os, "stat", reparse_stat)
+    with pytest.raises(AgentKitError):
+        if operation == "import":
+            store.import_file(source, sample_servers())
+        else:
+            getattr(store, operation)()
+    assert store.vault_path.read_text() == "TOKEN=original\n"
+
+
+@pytest.mark.parametrize("attributes,query_ok", [(0, True), (0x400, True), (0, False)])
+def test_windows_boundary_checks_open_handle_reparse_tag_and_pins_object(tmp_path, monkeypatch, attributes, query_ok):
+    import ctypes
+    from ctypes import wintypes
+    from agent_engineering_kit.managed_paths import _windows_pin
+
+    opened, closed = [], []
+
+    class WinFunction:
+        def __init__(self, function):
+            self.function = function
+
+        def __call__(self, *args):
+            return self.function(*args)
+
+    def create(*args):
+        opened.append(args)
+        return 123
+
+    def inspect(handle, kind, info, size):
+        assert handle == 123 and kind == 9
+        ctypes.cast(info, ctypes.POINTER(wintypes.DWORD))[0] = attributes
+        return query_ok
+
+    kernel = SimpleNamespace(CreateFileW=WinFunction(create), GetFileInformationByHandleEx=WinFunction(inspect), CloseHandle=WinFunction(closed.append))
+    monkeypatch.setattr(ctypes, "WinDLL", lambda *args, **kwargs: kernel, raising=False)
+    if attributes or not query_ok:
+        with pytest.raises(AgentKitError):
+            with _windows_pin(tmp_path):
+                pytest.fail("Небезопасный handle разрешён")
+    else:
+        with _windows_pin(tmp_path):
+            assert closed == []
+    assert opened[0][1:3] == (0x80, 1)  # READ_ATTRIBUTES; только SHARE_READ.
+    assert opened[0][4:6] == (3, 0x02200000)  # OPEN_EXISTING; OPEN_REPARSE_POINT.
+    assert closed == [123]
 
 
 class WindowsSecurityBoundary:

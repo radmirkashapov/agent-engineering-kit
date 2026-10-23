@@ -84,3 +84,26 @@ def test_git_hygiene_accepts_mcp_credential_example(repository: Path) -> None:
 
 def test_clean_repository_passes(repository: Path) -> None:
     assert validate_git_hygiene(repository).ok
+
+
+@pytest.mark.parametrize("name", ["nested/mcp-creds.env", "nested/deep/mcp-creds.work.env"])
+@pytest.mark.parametrize("state", ["tracked", "staged", "staged-deleted"])
+def test_nested_credentials_are_rejected_in_index(repository, name, state):
+    path = repository / name
+    path.parent.mkdir(parents=True)
+    path.write_text("TOKEN=fixture\n")
+    subprocess.run(["git", "-C", repository, "add", "-f", name], check=True)
+    if state == "tracked":
+        subprocess.run(["git", "-C", repository, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "fixture"], check=True)
+    elif state == "staged-deleted":
+        path.unlink()
+    result = validate_git_hygiene(repository)
+    assert any(f"Потенциальный secret tracked/staged: {name}" in row.message for row in result.diagnostics)
+
+
+def test_nested_credential_example_is_allowed(repository):
+    path = repository / "nested/mcp-creds.example.env"
+    path.parent.mkdir()
+    path.write_text("TOKEN=\n")
+    subprocess.run(["git", "-C", repository, "add", str(path)], check=True)
+    assert validate_git_hygiene(repository).ok

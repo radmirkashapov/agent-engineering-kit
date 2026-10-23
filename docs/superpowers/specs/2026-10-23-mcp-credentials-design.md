@@ -78,6 +78,10 @@ State хранит только имена переменных, время им
 
 Для stdio MCP с `environment` Kit генерирует стабильный launcher в `<data>/installations/clients/shared/mcp-launchers/`. Конфигурация клиента содержит абсолютный путь launcher и обычные аргументы MCP, но не значения secrets.
 
+Уточнение после итогового review: контракт v2 дополнительно сохраняет canonical абсолютный `data_home`, выбранный при регистрации. Launcher проверяет схему и путь и читает vault из этого data home независимо от окружения GUI-клиента. Контракт v1 остаётся читаемым с прежним разрешением пути из окружения; повторная регистрация обновляет его до v2. Импорт, чтение, удаление и подготовка `secrets` запрещают symlink/reparse points. POSIX удерживает directory descriptors и применяет no-follow операции, Windows удерживает handles, запрещающие подмену компонентов. Режимы доступа и Windows ACL сохраняют прежние гарантии.
+
+Для ручной регистрации предусмотрена `agent-kit mcp launch-command <id>`: она применяет effective access profile, требует включённый установленный stdio MCP и печатает только JSON `command`/`args`. При credential-переменных создаётся тот же launcher-контракт, иначе возвращается прямая команда. Установленные Codex и Claude Code не требуются; remote OAuth остаётся нативным. Исполняемые примеры преобразования результата в конфигурацию Claude Desktop, OpenCode и Cline находятся в соответствующих client runbooks.
+
 При запуске launcher:
 
 1. загружает effective definition по ID;

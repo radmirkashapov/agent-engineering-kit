@@ -55,7 +55,8 @@ def validate_git_hygiene(repository: Path, paths: KitPaths | None = None, *, req
     for path in candidates:
         if _matches(path, LOCAL_ONLY_PATTERNS):
             result.error("git-hygiene", f"Local-only файл tracked/staged: {path}")
-        if _matches(path, MCP_CREDENTIAL_PATTERNS) and path != "mcp-creds.example.env":
+        basename = Path(path).name
+        if _matches(basename, MCP_CREDENTIAL_PATTERNS) and basename != "mcp-creds.example.env":
             result.error("git-hygiene", f"Потенциальный secret tracked/staged: {path}")
         if _matches(path, SECRET_PATTERNS) and path != ".env.example":
             result.error("git-hygiene", f"Потенциальный secret tracked/staged: {path}")

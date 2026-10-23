@@ -20,6 +20,7 @@ from .external_skills import ExternalSkillManager
 from .mcp_manager import McpManager
 from .mcp_client import McpToolClient
 from .mcp_credentials import McpCredentialStore
+from .mcp_launcher import registration_command
 from .events import read_events
 from .harness import resolve_harness
 from .io import markdown_frontmatter
@@ -126,6 +127,12 @@ def _parser() -> argparse.ArgumentParser:
     mcp_override.add_argument("--resync", action="store_true", help="Выполнить resync после успешного изменения")
     mcp_explain = mcp.add_parser("explain", help="Объяснить итоговое состояние MCP")
     mcp_explain.add_argument("id")
+    launch_command = mcp.add_parser(
+        "launch-command",
+        help="Создать команду для ручной регистрации stdio MCP",
+        description="Создать контракт без значений секретов и JSON command/args для ручной регистрации stdio MCP без Codex и Claude Code.",
+    )
+    launch_command.add_argument("id", help="ID включённого stdio MCP")
     creds = mcp.add_parser("creds", help="Управлять локальными credentials MCP")
     creds_commands = creds.add_subparsers(dest="creds_command", required=True)
     import_command = creds_commands.add_parser("import", help="Импортировать credentials из env-файла")
@@ -672,6 +679,21 @@ def run(argv: list[str] | None = None) -> int:
                 if not selected:
                     raise AgentKitError(f"MCP не найден: {args.id}")
                 print(json.dumps(selected[0], ensure_ascii=False, indent=2))
+            elif args.mcp_command == "launch-command":
+                item = next((item for item in manager.available(project, access_profile=access_profile) if item["id"] == args.id), None)
+                if item is None:
+                    raise AgentKitError(f"MCP не найден: {args.id}")
+                if item.get("transport") != "stdio" or not item.get("enabled"):
+                    raise AgentKitError("Команда ручной регистрации доступна только для включённого stdio MCP; remote OAuth настраивается в клиенте")
+                executable = manager.executable(item)
+                if executable is None:
+                    raise AgentKitError("Исполняемый файл MCP не установлен; выполните agent-kit resync --no-update")
+                command, arguments = (
+                    registration_command(paths, item, executable)
+                    if item.get("environment") or item.get("required_environment")
+                    else (str(executable.resolve()), list(item.get("args", [])))
+                )
+                print(json.dumps({"command": command, "args": arguments}, ensure_ascii=False, indent=2))
             else:
                 return _mutate_resource("mcp", args, repository, paths, project)
             return 0

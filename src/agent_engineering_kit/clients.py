@@ -294,7 +294,7 @@ def register_native_mcp(
         desired["docker-gateway"] = gateway
     launcher_ids = {
         identifier for identifier, item in desired.items()
-        if item["installation"]["type"] != "remote" and item.get("environment")
+        if item["installation"]["type"] != "remote" and (item.get("environment") or item.get("required_environment"))
     }
     launcher_root = paths.installations / "clients" / "shared" / "mcp-launchers"
     launcher_directories = (
@@ -366,7 +366,7 @@ def register_native_mcp(
             binary = manager.executable(item) if installation["type"] != "remote" else None
             registration_binary, expected_args = (
                 registration_command(paths, item, binary)
-                if binary and item.get("environment")
+                if binary and (item.get("environment") or item.get("required_environment"))
                 else (str(binary), list(item.get("args", [])))
             )
             missing_environment = sorted(

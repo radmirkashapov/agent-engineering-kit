@@ -5,10 +5,9 @@ from __future__ import annotations
 import json
 import os
 import re
-import stat
 import sys
-import tempfile
 import uuid
+from contextlib import ExitStack, nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,6 +15,7 @@ from typing import Any, Iterable
 
 from .errors import AgentKitError
 from .paths import KitPaths
+from .managed_paths import ManagedDirectory, managed_directory
 
 
 class _WindowsSecurity:
@@ -236,16 +236,27 @@ class McpCredentialStore:
         except (OSError, UnicodeError):
             raise AgentKitError("Не удалось прочитать файл credentials MCP") from None
         values = parse_credentials(text, allowed=set(requirements))
+        # Проверить обе границы до первого изменения vault.
+        try:
+            for path in (self.vault_path, self.metadata_path):
+                with managed_directory(self.paths.data, path.parent) as directory:
+                    if directory is not None:
+                        directory.file_info(path.name)
+        except OSError:
+            raise AgentKitError("Не удалось проверить границы хранилища credentials MCP") from None
         self._write_private(values)
         self._write_metadata(names=sorted(name for name, value in values.items() if value))
         return self.vault_path
 
     def load(self) -> dict[str, str]:
         try:
-            if not self.vault_path.is_file():
-                return {}
-            self._validate_permissions()
-            text = self.vault_path.read_text(encoding="utf-8")
+            with managed_directory(self.paths.data, self.paths.secrets) as directory:
+                if directory is None:
+                    return {}
+                with directory.read(self.vault_path.name) as stream:
+                    if stream is None:
+                        return {}
+                    text = stream.read()
         except (OSError, UnicodeError):
             raise AgentKitError("Не удалось прочитать хранилище credentials MCP") from None
         return parse_credentials(text, allowed=None)
@@ -265,19 +276,25 @@ class McpCredentialStore:
 
     def clear(self) -> bool:
         try:
-            existed = self.vault_path.exists() or self.metadata_path.exists()
-            self.vault_path.unlink(missing_ok=True)
-            self.metadata_path.unlink(missing_ok=True)
+            with ExitStack() as stack:
+                targets = [(stack.enter_context(managed_directory(self.paths.data, path.parent)), path.name)
+                           for path in (self.vault_path, self.metadata_path)]
+                # Полный preflight до удаления любого из двух файлов.
+                for directory, name in targets:
+                    if directory is not None:
+                        directory.file_info(name)
+                existed = False
+                for directory, name in targets:
+                    if directory is not None:
+                        existed = directory.unlink(name) or existed
         except OSError:
             raise AgentKitError("Не удалось удалить хранилище credentials MCP") from None
         return existed
 
     def _write_private(self, values: dict[str, str]) -> None:
         try:
-            self.paths.secrets.mkdir(mode=0o700, parents=True, exist_ok=True)
-            if os.name == "posix":
-                self.paths.secrets.chmod(0o700)
-            self._atomic_write(self.vault_path, "".join(f"{name}={value}\n" for name, value in sorted(values.items())))
+            with managed_directory(self.paths.data, self.paths.secrets, create=True, private=True) as directory:
+                self._atomic_write(self.vault_path, "".join(f"{name}={value}\n" for name, value in sorted(values.items())), directory)
         except (OSError, UnicodeError):
             raise AgentKitError("Не удалось сохранить хранилище credentials MCP") from None
 
@@ -288,21 +305,23 @@ class McpCredentialStore:
             "names": names,
         }
         try:
-            self.metadata_path.parent.mkdir(parents=True, exist_ok=True)
-            self._atomic_write(self.metadata_path, json.dumps(metadata, ensure_ascii=False, indent=2) + "\n")
+            with managed_directory(self.paths.data, self.metadata_path.parent, create=True) as directory:
+                self._atomic_write(self.metadata_path, json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", directory)
         except (OSError, UnicodeError):
             raise AgentKitError("Не удалось сохранить метаданные credentials MCP") from None
 
-    def _validate_permissions(self) -> None:
-        if os.name == "posix" and stat.S_IMODE(self.vault_path.stat().st_mode) & 0o077:
-            raise AgentKitError("Небезопасные права хранилища credentials MCP: требуется 0600")
-
     @staticmethod
-    def _atomic_write(path: Path, content: str) -> None:
+    def _atomic_write(path: Path, content: str, directory: ManagedDirectory) -> None:
+        path = directory.path / path.name
+        directory.file_info(path.name)
         if sys.platform == "win32":
-            descriptor, temporary = _windows_private_temporary(path)
+            # Удерживаем существующий файл до копирования ACL и создания temp.
+            from .managed_paths import _windows_pin
+            with (_windows_pin(path) if os.name == "nt" and path.exists() else nullcontext()):
+                descriptor, temporary = _windows_private_temporary(path)
         else:
-            descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+            temporary = f".{path.name}.{uuid.uuid4().hex}"
+            descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=directory.descriptor)
         try:
             with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as stream:
                 if sys.platform != "win32" and os.name == "posix":
@@ -310,7 +329,16 @@ class McpCredentialStore:
                 stream.write(content)
                 stream.flush()
                 os.fsync(stream.fileno())
-            os.replace(temporary, path)
+            directory.file_info(path.name)
+            if sys.platform == "win32":
+                os.replace(temporary, path)
+            else:
+                os.replace(temporary, path.name, src_dir_fd=directory.descriptor, dst_dir_fd=directory.descriptor)
         finally:
-            if os.path.exists(temporary):
-                os.unlink(temporary)
+            try:
+                if sys.platform == "win32":
+                    os.unlink(temporary)
+                else:
+                    os.unlink(temporary, dir_fd=directory.descriptor)
+            except FileNotFoundError:
+                pass

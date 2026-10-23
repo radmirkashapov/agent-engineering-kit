@@ -7,6 +7,9 @@ import platform
 from dataclasses import dataclass
 from pathlib import Path
 
+from .errors import AgentKitError
+from .managed_paths import managed_directory
+
 
 @dataclass(frozen=True)
 class KitPaths:
@@ -83,6 +86,11 @@ def resolve_paths(environ: dict[str, str] | None = None) -> KitPaths:
 
 
 def ensure_runtime(paths: KitPaths) -> None:
+    try:
+        with managed_directory(paths.data, paths.secrets, create=True, private=True):
+            pass
+    except OSError:
+        raise AgentKitError("Не удалось подготовить хранилище credentials MCP") from None
     directories = (
         paths.runtime,
         paths.projects,
@@ -99,6 +107,3 @@ def ensure_runtime(paths: KitPaths) -> None:
     )
     for directory in directories:
         directory.mkdir(parents=True, exist_ok=True)
-    paths.secrets.mkdir(mode=0o700, parents=True, exist_ok=True)
-    if os.name == "posix":
-        paths.secrets.chmod(0o700)

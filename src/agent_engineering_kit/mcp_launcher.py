@@ -25,6 +25,7 @@ class McpLaunchContract:
     args: tuple[str, ...]
     environment: dict[str, str]
     required_environment: tuple[str, ...]
+    data_home: str | None = None
 
 
 def _safe_identifier(value: object) -> bool:
@@ -40,6 +41,16 @@ def _environment_name(value: object) -> bool:
 
 def _arguments_valid(value: object) -> bool:
     return isinstance(value, list) and all(isinstance(arg, str) and "\x00" not in arg for arg in value)
+
+
+def _canonical_data_home(value: object) -> bool:
+    if not isinstance(value, str) or "\x00" in value or not value:
+        return False
+    try:
+        path = Path(value)
+        return path.is_absolute() and str(path.resolve()) == value
+    except (OSError, ValueError):
+        return False
 
 
 def write_launch_contract(paths: KitPaths, item: dict[str, Any], executable: Path) -> Path:
@@ -61,15 +72,17 @@ def write_launch_contract(paths: KitPaths, item: dict[str, Any], executable: Pat
         raise AgentKitError(f"Некорректные поля контракта запуска MCP {identifier}")
     try:
         command = str(executable.resolve())
+        data_home = str(paths.data.resolve())
     except (OSError, ValueError):
         raise AgentKitError(f"Некорректный исполняемый файл MCP {identifier}") from None
     contract = McpLaunchContract(
-        version=1,
+        version=2,
         mcp_id=identifier,
         command=command,
         args=tuple(args),
         environment={target: reference[4:] for target, reference in environment.items()},
         required_environment=tuple(required),
+        data_home=data_home,
     )
     target = paths.installations / "clients" / "shared" / "mcp-launchers" / f"{identifier}.json"
     try:
@@ -90,10 +103,14 @@ def _load_contract(path: Path) -> McpLaunchContract:
     except (OSError, UnicodeError, ValueError):
         raise AgentKitError(f"Не удалось прочитать контракт запуска MCP: {path}") from None
     fields = {"version", "mcp_id", "command", "args", "environment", "required_environment"}
-    valid = isinstance(document, dict) and document.keys() == fields
+    valid = isinstance(document, dict) and (
+        document.get("version") == 1 and document.keys() == fields
+        or document.get("version") == 2 and document.keys() == fields | {"data_home"}
+        and _canonical_data_home(document.get("data_home"))
+    )
     if valid:
         valid = (
-            type(document["version"]) is int and document["version"] == 1
+            type(document["version"]) is int and document["version"] in {1, 2}
             and _safe_identifier(document["mcp_id"])
             and isinstance(document["command"], str) and "\x00" not in document["command"]
             and Path(document["command"]).is_absolute()
@@ -109,17 +126,23 @@ def _load_contract(path: Path) -> McpLaunchContract:
         version=document["version"], mcp_id=document["mcp_id"], command=document["command"],
         args=tuple(document["args"]), environment=document["environment"],
         required_environment=tuple(document["required_environment"]),
+        data_home=document.get("data_home"),
     )
 
 
 def launch(
     contract_path: Path,
     *,
-    paths: KitPaths,
+    paths: KitPaths | None = None,
     environ: Mapping[str, str] | None = None,
     exec_process: Callable = os.execvpe,
 ) -> None:
     contract = _load_contract(contract_path)
+    if contract.data_home is not None:
+        data = Path(contract.data_home)
+        paths = KitPaths(contract_path.parent, data, data / "runtime", data / "projects", data / "overrides")
+    elif paths is None:
+        paths = resolve_paths()  # Совместимость с уже зарегистрированными контрактами v1.
     inherited = dict(os.environ if environ is None else environ)
     vault = McpCredentialStore(paths).load()
     sources = set(contract.environment.values()) | set(contract.required_environment)
@@ -148,7 +171,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("contract", type=Path)
     args = parser.parse_args(argv)
     try:
-        launch(args.contract, paths=resolve_paths())
+        launch(args.contract)
     except AgentKitError as error:
         print(str(error), file=sys.stderr)
         return 1

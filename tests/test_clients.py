@@ -97,8 +97,9 @@ def test_core_mcp_registration_is_namespaced_and_oauth_safe(tmp_path: Path, monk
 
 @pytest.mark.parametrize("credential_source", ["missing", "vault", "shell"])
 @pytest.mark.parametrize("server,variable", [("github", "GITHUB_PERSONAL_ACCESS_TOKEN"), ("sonarqube", "SONARQUBE_TOKEN")])
+@pytest.mark.parametrize("required_only", [False, True])
 def test_stdio_mcp_with_environment_is_registered_through_launcher(
-    tmp_path: Path, monkeypatch, credential_source: str, server: str, variable: str,
+    tmp_path: Path, monkeypatch, credential_source: str, server: str, variable: str, required_only: bool,
 ) -> None:
     repository = Path(__file__).resolve().parents[1]
     data = tmp_path / "data"
@@ -112,6 +113,11 @@ def test_stdio_mcp_with_environment_is_registered_through_launcher(
     write_yaml(paths.overrides / "global/access.yaml", {
         "version": 1, "mcp": {"allow": [server, "context7"], "block": []},
     })
+    if required_only:
+        registry = yaml.safe_load((repository / "mcp/registry.yaml").read_text(encoding="utf-8"))
+        definition = next(item for item in registry["servers"] if item["id"] == server)
+        definition.pop("environment")
+        write_yaml(paths.overrides / f"global/mcp/{server}.yaml", {"target": server, "override": {"mode": "replace", "value": definition}})
     monkeypatch.delenv(variable, raising=False)
     monkeypatch.setattr("agent_engineering_kit.clients.shutil.which", lambda name: f"/usr/bin/{name}" if name in {"codex", "claude", "docker"} else None)
     if credential_source == "vault":

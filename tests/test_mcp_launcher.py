@@ -34,12 +34,13 @@ def test_contract_contains_references_but_never_secret_values(tmp_path, monkeypa
     contract = write_launch_contract(paths, sample_item(), Path("/opt/sample-mcp"))
     assert contract == paths.installations / "clients/shared/mcp-launchers/sample.json"
     assert json.loads(contract.read_text()) == {
-        "version": 1,
+        "version": 2,
         "mcp_id": "sample",
         "command": "/opt/sample-mcp",
         "args": ["serve"],
         "environment": {"TARGET": "SOURCE"},
         "required_environment": ["SOURCE"],
+        "data_home": str(paths.data.resolve()),
     }
     assert "private-inherited-value" not in contract.read_text()
 
@@ -183,7 +184,8 @@ def test_launch_uses_process_environment_by_default(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("changes", [
-    {"version": 2}, {"version": True}, {"version": "1"},
+    {"version": 3}, {"version": True}, {"version": "1"}, {"version": 1},
+    {"data_home": "relative"}, {"data_home": "/bad\x00value"}, {"data_home": None},
     {"mcp_id": "../escape"}, {"command": "relative-command"}, {"command": "bad\x00command"},
     {"args": "serve"}, {"args": ["bad\x00argument"]}, {"args": [1]},
     {"environment": {"TARGET": "private-value"}}, {"environment": {"BAD=NAME": "SOURCE"}},
@@ -238,6 +240,20 @@ def test_module_entry_point_launches_real_process_with_resolved_credentials(tmp_
     assert completed.stderr == ""
 
 
+@pytest.mark.parametrize("data_environment", [{}, {"AGENT_KIT_DATA_HOME": "other"}, {"XDG_DATA_HOME": "other"}])
+def test_module_launch_uses_registration_vault_when_gui_environment_changes(tmp_path, data_environment):
+    paths = make_paths(tmp_path)
+    item = sample_item() | {"args": ["-c", "import os,sys; assert os.environ['TARGET'] == sys.stdin.read(); assert 'SOURCE' not in os.environ"]}
+    command, args = registration_command(paths, item, Path(sys.executable))
+    write_private_vault(paths, "SOURCE=fixture-token\n")
+    environment = {key: value for key, value in os.environ.items() if key not in {"AGENT_KIT_DATA_HOME", "XDG_DATA_HOME", "SOURCE", "TARGET"}}
+    environment.update({key: str(tmp_path / value) for key, value in data_environment.items()})
+    assert "fixture-token" not in Path(args[2]).read_text()
+    completed = subprocess.run([command, *args], env=environment, input="fixture-token", capture_output=True, text=True)
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout == completed.stderr == ""
+
+
 def test_module_entry_point_reports_user_error_without_traceback(tmp_path):
     paths, contract = prepared_contract(tmp_path)
     completed = subprocess.run([sys.executable, "-m", "agent_engineering_kit.mcp_launcher", str(contract)],
@@ -246,3 +262,24 @@ def test_module_entry_point_reports_user_error_without_traceback(tmp_path):
     assert "SOURCE" in completed.stderr
     assert "Traceback" not in completed.stderr
     assert completed.stdout == ""
+
+
+def test_legacy_contract_uses_explicit_paths_without_data_home(tmp_path):
+    paths, contract = prepared_contract(tmp_path)
+    document = json.loads(contract.read_text())
+    document["version"] = 1
+    del document["data_home"]
+    contract.write_text(json.dumps(document))
+    write_private_vault(paths, "SOURCE=legacy-value\n")
+    calls = []
+    launcher.launch(contract, paths=paths, environ={}, exec_process=lambda *args: calls.append(args))
+    assert calls[0][2] == {"TARGET": "legacy-value"}
+
+
+def test_contract_rejects_noncanonical_data_home(tmp_path):
+    paths, contract = prepared_contract(tmp_path)
+    document = json.loads(contract.read_text())
+    document["data_home"] = str(paths.data) + "/../other"
+    contract.write_text(json.dumps(document))
+    with pytest.raises(AgentKitError):
+        launcher.launch(contract, paths=paths, exec_process=lambda *args: pytest.fail("exec called"))

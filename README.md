@@ -207,6 +207,7 @@ agent-kit project init --help
 | `agent-kit config explain` | Показать effective configuration, выбранный harness и происхождение решений. |
 | `agent-kit skills ...` | Просмотреть, включить, отключить или переопределить skills. |
 | `agent-kit mcp ...` | Просмотреть, включить, отключить или переопределить MCP. |
+| `agent-kit mcp launch-command <id>` | Создать контракт и JSON команды для ручной регистрации stdio MCP без Codex и Claude Code. |
 | `agent-kit mcp docker ...` | Управлять выделенным профилем Docker MCP Toolkit. |
 | `agent-kit override ...` | Управлять локальными overrides правил, ролей, policy, tools и harness. |
 | `agent-kit security ...` | Установить и запустить средства проверки skills и проекта. |
@@ -517,6 +518,10 @@ agent-kit security scan
 Если диагностика показывает `AUTH_REQUIRED`, сначала проверьте `agent-kit mcp creds status`. Для stdio MCP импортируйте недостающие credentials и перезапустите соответствующий клиент. Для remote OAuth завершите авторизацию в конкретном клиенте и профиле, затем повторите запрос. Atlassian, GitLab и Context7 хранят OAuth-состояние отдельно в каждом клиенте или профиле; авторизация в одном не переносится в другой. Исключение — выбранная схема, где все клиенты подключены к одному Docker MCP Gateway: в этом случае OAuth-состоянием владеет Docker Desktop.
 
 После ротации токена повторите `agent-kit mcp creds import --from ./mcp-creds.env`; новое значение применяется при следующем запуске MCP без `resync`. Изменение определения MCP или команды запуска требует `agent-kit mcp enable <id> --scope global --resync`. `agent-kit mcp creds clear --yes` удаляет только machine-local хранилище credentials Kit; он не удаляет OAuth-состояние клиентов или Docker Desktop. После настройки запускайте `agent-kit security scan`.
+
+Для ручных клиентов команда `agent-kit mcp launch-command <id>` печатает JSON с абсолютным `command` и списком `args`: для MCP с credential-переменными создаёт контракт launcher, для остальных возвращает прямую команду. Она работает без установленных Codex и Claude Code; нужны включённый stdio MCP и его установленный executable. Если executable отсутствует, выполните `agent-kit resync --no-update`. Учитывается текущий профиль доступа: сервер, запрещённый профилем, зарегистрировать этой командой нельзя. Готовые команды преобразования JSON для Claude Desktop, OpenCode и Cline приведены в их инструкциях выше.
+
+Новые контракты v2 содержат canonical data home, выбранный при регистрации, и только имена credential-переменных. Поэтому GUI-клиент найдёт vault даже без `AGENT_KIT_DATA_HOME` и `XDG_DATA_HOME` в своём окружении. При переносе data home заново получите команду регистрации и обновите конфигурацию клиента. Старые контракты v1 продолжают использовать окружение клиента; для обновления выполните `resync --no-update` либо `mcp launch-command <id>`. Vault, metadata и каталог `secrets` не могут быть symlink или Windows reparse point; Kit прекращает операцию, сохраняя внешние файлы.
 
 ## Правила и роли агентов
 
