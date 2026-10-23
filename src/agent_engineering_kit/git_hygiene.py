@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fnmatch
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -36,17 +37,25 @@ def _git(repository: Path, *arguments: str) -> tuple[int, list[str]]:
     return completed.returncode, [line for line in completed.stdout.splitlines() if line]
 
 
+def _git_paths(repository: Path, *arguments: str) -> tuple[int, list[str]]:
+    """Получить имена без Git quoting, сохранив произвольные filesystem bytes."""
+    completed = subprocess.run(
+        ["git", *arguments, "-z"], cwd=repository, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False
+    )
+    return completed.returncode, [os.fsdecode(value) for value in completed.stdout.split(b"\0") if value]
+
+
 def _matches(path: str, patterns: tuple[str, ...]) -> bool:
     return any(fnmatch.fnmatch(path, pattern) for pattern in patterns)
 
 
 def validate_git_hygiene(repository: Path, paths: KitPaths | None = None, *, require_gitleaks: bool = False) -> ValidationResult:
     result = ValidationResult()
-    returncode, tracked = _git(repository, "ls-files")
+    returncode, tracked = _git_paths(repository, "ls-files")
     if returncode != 0:
         result.error("git-hygiene", "Не удалось выполнить git ls-files")
         return result
-    _, staged = _git(repository, "diff", "--cached", "--name-only", "--diff-filter=ACMR")
+    _, staged = _git_paths(repository, "diff", "--cached", "--name-only", "--diff-filter=ACMR")
     staged_patch = subprocess.run(["git", "diff", "--cached", "--no-ext-diff", "--unified=0"], cwd=repository, text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=False).stdout
     if any(STAGED_SECRET.search(line) for line in staged_patch.splitlines()):
         result.error("git-hygiene", "В staged patch обнаружен возможный literal secret")

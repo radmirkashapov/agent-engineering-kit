@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 import agent_engineering_kit.mcp_credentials as credentials_module
+import agent_engineering_kit.managed_paths as managed_paths_module
 from agent_engineering_kit.errors import AgentKitError
 from agent_engineering_kit.mcp_credentials import credential_requirements, parse_credentials
 from agent_engineering_kit.paths import KitPaths, ensure_runtime
@@ -256,6 +257,38 @@ def test_ensure_runtime_creates_private_secrets_directory_and_preserves_position
         paths.secrets.chmod(0o755)
         ensure_runtime(paths)
         assert stat.S_IMODE(paths.secrets.stat().st_mode) == 0o700
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX descriptor walk")
+def test_load_rejects_ancestor_swap_before_data_root_open(tmp_path, monkeypatch):
+    owner = tmp_path / "owner"
+    paths = make_paths(owner)
+    store = credentials_module.McpCredentialStore(paths)
+    store.vault_path.parent.mkdir(parents=True)
+    store.vault_path.write_text("TOKEN=trusted\n", encoding="utf-8")
+    store.vault_path.chmod(0o600)
+
+    external = tmp_path / "external"
+    external.joinpath("data/secrets").mkdir(parents=True)
+    external_vault = external / "data/secrets/mcp-creds.env"
+    external_vault.write_text("TOKEN=outside\n", encoding="utf-8")
+    external_vault.chmod(0o600)
+
+    real_open = managed_paths_module.os.open
+    swapped = False
+
+    def swap_ancestor(path, flags, *args, **kwargs):
+        nonlocal swapped
+        if path == owner.name and kwargs.get("dir_fd") is not None and not swapped:
+            swapped = True
+            owner.rename(tmp_path / "owner-original")
+            owner.symlink_to(external, target_is_directory=True)
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(managed_paths_module.os, "open", swap_ancestor)
+    with pytest.raises((AgentKitError, OSError)):
+        store.load()
+    assert swapped
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX symlink; Windows reparse проверяется отдельной моделью")

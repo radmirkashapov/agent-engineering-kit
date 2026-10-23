@@ -105,20 +105,44 @@ def managed_directory(root: Path, directory: Path, *, create: bool = False, priv
         raise AgentKitError("Managed-хранилище MCP находится за пределами data home") from None
     if not relative.parts or ".." in relative.parts:
         raise AgentKitError("Некорректный путь managed-хранилища MCP")
-    canonical_root = root.resolve()
+    canonical_root = root.resolve(strict=False)
     with ExitStack() as stack:
-        if create:
-            canonical_root.mkdir(parents=True, exist_ok=True, mode=0o700)
-        elif not canonical_root.exists():
-            yield None
-            return
+        anchor = Path(canonical_root.anchor)
+        root_parts = canonical_root.relative_to(anchor).parts
         descriptor = None
-        current = canonical_root
+        current = anchor
         if sys.platform == "win32":
             stack.enter_context(_windows_pin(current))
+            for part in root_parts:
+                current = current / part
+                try:
+                    _reject_link(current.lstat())
+                except FileNotFoundError:
+                    if not create:
+                        yield None
+                        return
+                    current.mkdir(mode=0o700)
+                    _reject_link(current.lstat())
+                stack.enter_context(_windows_pin(current))
         else:
-            descriptor = os.open(current, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            descriptor = os.open(anchor, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
             stack.callback(os.close, descriptor)
+            for part in root_parts:
+                current = current / part
+                try:
+                    next_descriptor = os.open(
+                        part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor
+                    )
+                except FileNotFoundError:
+                    if not create:
+                        yield None
+                        return
+                    os.mkdir(part, mode=0o700, dir_fd=descriptor)
+                    next_descriptor = os.open(
+                        part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor
+                    )
+                descriptor = next_descriptor
+                stack.callback(os.close, descriptor)
         for part in relative.parts:
             current = current / part
             try:

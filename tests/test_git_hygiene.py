@@ -107,3 +107,19 @@ def test_nested_credential_example_is_allowed(repository):
     path.write_text("TOKEN=\n")
     subprocess.run(["git", "-C", repository, "add", str(path)], check=True)
     assert validate_git_hygiene(repository).ok
+
+
+@pytest.mark.parametrize("deleted", [False, True])
+def test_unicode_nested_credentials_are_rejected_with_default_git_quoting(repository, deleted):
+    name = "секреты/mcp-creds.env"
+    path = repository / name
+    path.parent.mkdir()
+    path.write_text("TOKEN=fixture\n", encoding="utf-8")
+    subprocess.run(["git", "-C", repository, "config", "core.quotePath", "true"], check=True)
+    subprocess.run(["git", "-C", repository, "add", "-f", name], check=True)
+    if deleted:
+        path.unlink()
+
+    result = validate_git_hygiene(repository)
+    assert not result.ok
+    assert any("mcp-creds.env" in row.message for row in result.diagnostics)
