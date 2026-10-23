@@ -59,7 +59,19 @@ def test_git_hygiene_rejects_tracked_mcp_credentials(repository: Path, name: str
     path = repository / name
     path.write_text("TOKEN=fixture-value\n", encoding="utf-8")
     subprocess.run(["git", "-C", repository, "add", "-f", name], check=True)
-    assert not validate_git_hygiene(repository).ok
+    result = validate_git_hygiene(repository)
+    assert any(f"Потенциальный secret tracked/staged: {name}" in diagnostic.message for diagnostic in result.diagnostics)
+
+
+def test_git_hygiene_rejects_deleted_staged_mcp_credentials(repository: Path) -> None:
+    path = repository / "mcp-creds.env"
+    path.write_text("TOKEN=fixture-value\n", encoding="utf-8")
+    subprocess.run(["git", "-C", repository, "add", "-f", path.name], check=True)
+    path.unlink()
+
+    result = validate_git_hygiene(repository)
+    assert not result.ok
+    assert any("Потенциальный secret tracked/staged: mcp-creds.env" in diagnostic.message for diagnostic in result.diagnostics)
 
 
 def test_git_hygiene_accepts_mcp_credential_example(repository: Path) -> None:

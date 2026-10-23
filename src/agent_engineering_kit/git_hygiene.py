@@ -53,8 +53,6 @@ def validate_git_hygiene(repository: Path, paths: KitPaths | None = None, *, req
     candidates = sorted(set(tracked + staged))
     forbidden_external_roots = ("vendor/", "upstream/superpowers/", "skills/external/")
     for path in candidates:
-        if not (repository / path).exists():
-            continue
         if _matches(path, LOCAL_ONLY_PATTERNS):
             result.error("git-hygiene", f"Local-only файл tracked/staged: {path}")
         if _matches(path, MCP_CREDENTIAL_PATTERNS) and path != "mcp-creds.example.env":
