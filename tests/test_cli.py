@@ -59,6 +59,77 @@ def test_available_does_not_require_scope() -> None:
     assert args.skills_command == "available"
 
 
+def test_mcp_creds_import_parser() -> None:
+    from pathlib import Path
+
+    args = _parser().parse_args(["mcp", "creds", "import", "--from", "local.env"])
+
+    assert args.mcp_command == "creds"
+    assert args.creds_command == "import"
+    assert args.source == Path("local.env")
+
+
+def test_mcp_creds_status_parser() -> None:
+    args = _parser().parse_args(["mcp", "creds", "status"])
+
+    assert args.mcp_command == "creds"
+    assert args.creds_command == "status"
+
+
+def test_mcp_creds_clear_requires_explicit_yes_flag_at_runtime(
+    isolated_data: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from agent_engineering_kit.paths import resolve_paths
+    from agent_engineering_kit.mcp_credentials import McpCredentialStore
+
+    store = McpCredentialStore(resolve_paths())
+    store.vault_path.parent.mkdir(parents=True, exist_ok=True)
+    store.vault_path.write_text("TOKEN=kept\n", encoding="utf-8")
+
+    assert run(["mcp", "creds", "clear"]) == 2
+
+    assert store.vault_path.read_text(encoding="utf-8") == "TOKEN=kept\n"
+    assert "--yes" in capsys.readouterr().err
+
+
+def test_mcp_creds_status_never_prints_value(
+    isolated_data: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    source = isolated_data / "credentials.env"
+    source.write_text("GITHUB_PERSONAL_ACCESS_TOKEN=top-secret\n", encoding="utf-8")
+
+    assert run(["mcp", "creds", "import", "--from", str(source)]) == 0
+    imported = capsys.readouterr().out
+    assert str(source) not in imported
+    assert "top-secret" not in imported
+
+    assert run(["mcp", "creds", "status"]) == 0
+    status = capsys.readouterr().out
+    assert "top-secret" not in status
+    assert "GITHUB_PERSONAL_ACCESS_TOKEN" in status
+
+
+def test_mcp_creds_clear_with_yes_removes_vault(
+    isolated_data: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from agent_engineering_kit.paths import resolve_paths
+    from agent_engineering_kit.mcp_credentials import McpCredentialStore
+
+    store = McpCredentialStore(resolve_paths())
+    store.vault_path.parent.mkdir(parents=True, exist_ok=True)
+    store.vault_path.write_text("TOKEN=kept\n", encoding="utf-8")
+
+    assert run(["mcp", "creds", "clear", "--yes"]) == 0
+
+    assert not store.vault_path.exists()
+    output = capsys.readouterr().out
+    assert "удалены" in output.lower()
+    assert "kept" not in output
+
+
 def test_help_prints_top_level_reference(capsys: pytest.CaptureFixture[str]) -> None:
     assert run(["help"]) == 0
 

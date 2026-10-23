@@ -378,8 +378,10 @@ class McpManager:
         project: LogicalProject | None = None,
         *,
         access_profile: str = "readonly",
+        credential_values: dict[str, str] | None = None,
     ) -> ValidationResult:
         result = ValidationResult()
+        vault = McpCredentialStore(self.paths).load() if credential_values is None else credential_values
         desired_by_id = {
             item["id"]: item
             for item, _ in self.desired(project, access_profile=access_profile)
@@ -390,7 +392,9 @@ class McpManager:
                 missing = [
                     name
                     for name in desired.get("required_environment", [])
-                    if not os.environ.get(name)
+                    if desired.get("transport") == "stdio"
+                    and not os.environ.get(name)
+                    and not vault.get(name)
                 ]
                 if missing:
                     for name in missing:
@@ -399,7 +403,7 @@ class McpManager:
                             f"{state['id']}: отсутствует обязательная переменная окружения {name}",
                         )
                     continue
-                if state["id"] == "sentry" and (host := os.environ.get("SENTRY_HOST")):
+                if state["id"] == "sentry" and (host := (os.environ.get("SENTRY_HOST") or vault.get("SENTRY_HOST"))):
                     if not re.fullmatch(r"[A-Za-z0-9.-]+(?::[0-9]{1,5})?", host):
                         result.error(
                             "mcp-doctor",
