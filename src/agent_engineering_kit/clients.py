@@ -297,9 +297,15 @@ def register_native_mcp(
         if item["installation"]["type"] != "remote" and item.get("environment")
     }
     launcher_root = paths.installations / "clients" / "shared" / "mcp-launchers"
-    if launcher_root.is_dir() and not launcher_root.is_symlink():
+    launcher_directories = (
+        paths.installations,
+        paths.installations / "clients",
+        paths.installations / "clients" / "shared",
+        launcher_root,
+    )
+    if all(not directory.is_symlink() for directory in launcher_directories) and launcher_root.is_dir():
         for stale in launcher_root.glob("*.json"):
-            if stale.stem not in launcher_ids and (stale.is_file() or stale.is_symlink()):
+            if stale.stem not in launcher_ids and (stale.is_symlink() or stale.is_file()):
                 stale.unlink()
     credential_status = {row["name"]: row["status"] for row in McpCredentialStore(paths).status(desired.values())}
     target = paths.state / "client-mcp-registrations.json"

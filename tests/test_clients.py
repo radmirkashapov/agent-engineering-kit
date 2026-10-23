@@ -216,6 +216,29 @@ def test_launcher_cleanup_does_not_follow_symlinked_directory(tmp_path: Path, mo
     assert contract.read_text(encoding="utf-8") == "preserve"
 
 
+@pytest.mark.parametrize("linked_parent", ["clients", "shared"])
+def test_launcher_cleanup_does_not_follow_symlinked_parent(tmp_path: Path, monkeypatch, linked_parent: str) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    data = tmp_path / "data"
+    paths = KitPaths(repository, data, data / "runtime", data / "projects", data / "overrides")
+    outside = tmp_path / "outside"
+    external_launchers = outside / ("shared/mcp-launchers" if linked_parent == "clients" else "mcp-launchers")
+    external_launchers.mkdir(parents=True)
+    foreign = external_launchers / "foreign.json"
+    foreign.write_text("preserve", encoding="utf-8")
+    link = paths.installations / "clients"
+    if linked_parent == "shared":
+        link /= "shared"
+    link.parent.mkdir(parents=True)
+    link.symlink_to(outside, target_is_directory=True)
+    monkeypatch.setattr("agent_engineering_kit.clients.shutil.which", lambda _: None)
+
+    register_native_mcp(repository, paths)
+
+    assert foreign.read_text(encoding="utf-8") == "preserve"
+    assert link.is_symlink()
+
+
 @pytest.mark.parametrize("route", ["disabled", "direct", "docker"])
 def test_launcher_contract_is_removed_when_server_no_longer_needs_it(tmp_path: Path, monkeypatch, route: str) -> None:
     repository = Path(__file__).resolve().parents[1]
