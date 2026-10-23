@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import stat
+from types import SimpleNamespace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -255,3 +256,118 @@ def test_ensure_runtime_creates_private_secrets_directory_and_preserves_position
         paths.secrets.chmod(0o755)
         ensure_runtime(paths)
         assert stat.S_IMODE(paths.secrets.stat().st_mode) == 0o700
+
+
+class WindowsSecurityBoundary:
+    """Модель файловой Win32-границы; orchestration остаётся настоящим."""
+
+    def __init__(self, *, invalid_acl=False, fail_create=False):
+        self.acls = {}
+        self.handles = {}
+        self.invalid_acl = invalid_acl
+        self.fail_create = fail_create
+        self.validation_contents = []
+
+    def read_descriptor(self, path):
+        return self.acls[path]
+
+    def private_descriptor(self):
+        return "owner-only"
+
+    def protect(self, descriptor):
+        return descriptor
+
+    def create_file(self, path, descriptor):
+        if self.fail_create:
+            raise OSError("test Win32 failure")
+        handle = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        self.handles[handle] = path
+        self.acls[path] = descriptor
+        return handle
+
+    def validate(self, handle, descriptor, *, preserve_owner):
+        self.validation_contents.append(self.handles[handle].read_bytes())
+        if self.invalid_acl:
+            raise OSError("test Win32 ACL mismatch")
+        if self.acls[self.handles[handle]] != descriptor:
+            raise OSError("test Win32 ACL mismatch")
+
+    def detach_fd(self, handle):
+        return handle
+
+    def close_handle(self, handle):
+        os.close(handle)
+
+
+@pytest.mark.parametrize("existing", [False, True])
+def test_windows_acl_import_uses_private_descriptor_and_preserves_existing_restrictions(tmp_path, monkeypatch, existing):
+    store = credentials_module.McpCredentialStore(make_paths(tmp_path))
+    store.vault_path.parent.mkdir(parents=True)
+    boundary = WindowsSecurityBoundary()
+    if existing:
+        store.vault_path.write_text("TOKEN=original\n", encoding="utf-8")
+        boundary.acls[store.vault_path] = "explicit-owner-and-deny"
+    expected = "explicit-owner-and-deny" if existing else "owner-only"
+    source = tmp_path / "source.env"
+    source.write_text("TOKEN=private-new\n", encoding="utf-8")
+    real_replace = os.replace
+
+    def replace(temporary, target):
+        temporary = Path(temporary)
+        assert boundary.acls[temporary] == (expected if target == store.vault_path else "owner-only")
+        assert temporary.read_text(encoding="utf-8")
+        real_replace(temporary, target)
+        boundary.acls[target] = boundary.acls.pop(temporary)
+
+    monkeypatch.setattr(credentials_module, "sys", SimpleNamespace(platform="win32"), raising=False)
+    monkeypatch.setattr(credentials_module, "_WindowsSecurity", lambda: boundary, raising=False)
+    monkeypatch.setattr(credentials_module.os, "replace", replace)
+    store.import_file(source, sample_servers())
+    assert boundary.acls[store.vault_path] == expected
+    assert store.load() == {"TOKEN": "private-new"}
+
+
+@pytest.mark.parametrize("failure", ["create", "validate"])
+def test_windows_acl_import_fails_before_writing_secrets_when_security_is_unavailable(tmp_path, monkeypatch, failure):
+    store = credentials_module.McpCredentialStore(make_paths(tmp_path))
+    store.vault_path.parent.mkdir(parents=True)
+    store.vault_path.write_text("TOKEN=original\n", encoding="utf-8")
+    boundary = WindowsSecurityBoundary(invalid_acl=failure == "validate", fail_create=failure == "create")
+    boundary.acls[store.vault_path] = "explicit-owner-and-deny"
+    source = tmp_path / "source.env"
+    source.write_text("TOKEN=private-new\n", encoding="utf-8")
+    monkeypatch.setattr(credentials_module, "sys", SimpleNamespace(platform="win32"), raising=False)
+    monkeypatch.setattr(credentials_module, "_WindowsSecurity", lambda: boundary, raising=False)
+    with pytest.raises(AgentKitError) as raised:
+        store.import_file(source, sample_servers())
+    assert "private-new" not in str(raised.value)
+    assert store.vault_path.read_text(encoding="utf-8") == "TOKEN=original\n"
+    assert list(store.vault_path.parent.iterdir()) == [store.vault_path]
+    for path in boundary.handles.values():
+        assert not path.exists()
+    assert boundary.validation_contents == ([b""] if failure == "validate" else [])
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Native Windows security descriptors")
+@pytest.mark.parametrize("dacl", ["D:P(A;;FA;;;OW)", "D:P(D;;GR;;;BG)(A;;FA;;;OW)"])
+def test_windows_acl_native_rotation_preserves_explicit_dacl(tmp_path, dacl):
+    store = credentials_module.McpCredentialStore(make_paths(tmp_path))
+    source = tmp_path / "source.env"
+    source.write_text("TOKEN=original\n", encoding="utf-8")
+    store.import_file(source, sample_servers())
+    security = credentials_module._WindowsSecurity()
+    ctypes = security.ctypes
+    descriptor = ctypes.c_void_p()
+    assert security.advapi.ConvertStringSecurityDescriptorToSecurityDescriptorW(dacl, 1, ctypes.byref(descriptor), None)
+    setter = security.advapi.SetFileSecurityW
+    setter.argtypes = [security.types.LPCWSTR, security.types.DWORD, ctypes.c_void_p]
+    setter.restype = security.types.BOOL
+    try:
+        assert setter(str(store.vault_path), 0x80000004, descriptor)
+    finally:
+        security.kernel.LocalFree(descriptor)
+    original = security.read_descriptor(store.vault_path)
+    source.write_text("TOKEN=private-new\n", encoding="utf-8")
+    store.import_file(source, sample_servers())
+    assert security.access_components(security.read_descriptor(store.vault_path)) == security.access_components(original)
+    assert store.load() == {"TOKEN": "private-new"}
