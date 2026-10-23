@@ -18,6 +18,9 @@ projects/
 .env
 .env.*
 !.env.example
+mcp-creds.env
+mcp-creds.*.env
+!mcp-creds.example.env
 secrets/
 *.token
 *.secret

@@ -25,6 +25,7 @@ LOCAL_ONLY_PATTERNS = (
     "projects/**",
 )
 SECRET_PATTERNS = (".env", ".env.*", "secrets/**", "*.token", "*.secret", "*.pem", "*.key")
+MCP_CREDENTIAL_PATTERNS = ("mcp-creds.env", "mcp-creds.*.env")
 STAGED_SECRET = re.compile(r"(?i)^\+.*(token|secret|password|api[_-]?key)\s*[:=]\s*['\"]?[A-Za-z0-9_./+=-]{16,}")
 
 
@@ -56,12 +57,21 @@ def validate_git_hygiene(repository: Path, paths: KitPaths | None = None, *, req
             continue
         if _matches(path, LOCAL_ONLY_PATTERNS):
             result.error("git-hygiene", f"Local-only файл tracked/staged: {path}")
+        if _matches(path, MCP_CREDENTIAL_PATTERNS) and path != "mcp-creds.example.env":
+            result.error("git-hygiene", f"Потенциальный secret tracked/staged: {path}")
         if _matches(path, SECRET_PATTERNS) and path != ".env.example":
             result.error("git-hygiene", f"Потенциальный secret tracked/staged: {path}")
         if path.startswith(forbidden_external_roots):
             result.error("git-hygiene", f"Запрещён vendored external source: {path}")
 
-    checks = ("models/user.local.yaml", "overrides/local/probe.yaml", ".runtime/probe", "clients/codex/generated/probe")
+    checks = (
+        "models/user.local.yaml",
+        "overrides/local/probe.yaml",
+        ".runtime/probe",
+        "clients/codex/generated/probe",
+        "mcp-creds.env",
+        "mcp-creds.work.env",
+    )
     for path in checks:
         code, _ = _git(repository, "check-ignore", "-q", path)
         if code != 0:

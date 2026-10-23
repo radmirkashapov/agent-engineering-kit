@@ -116,11 +116,16 @@ def validate_mcp(repository: Path) -> ValidationResult:
     document = load_yaml(repository / "mcp" / "registry.yaml")
     result = validate_instance(document, repository / "schemas" / "mcp.schema.json", "mcp/registry.yaml")
     identifiers: set[str] = set()
-    example_variables = {
-        line.split("=", 1)[0]
-        for line in (repository / ".env.example").read_text(encoding="utf-8").splitlines()
-        if line and not line.startswith("#") and "=" in line
-    }
+    credential_template = repository / "mcp-creds.example.env"
+    if not credential_template.is_file():
+        result.error("mcp", "Отсутствует шаблон credentials mcp-creds.example.env")
+        example_variables: set[str] = set()
+    else:
+        example_variables = {
+            line.split("=", 1)[0]
+            for line in credential_template.read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#") and "=" in line
+        }
     for server in document.get("servers", []):
         identifier = server.get("id")
         if identifier in identifiers:
@@ -131,11 +136,13 @@ def validate_mcp(repository: Path) -> ValidationResult:
             if not isinstance(source, str) or not source.startswith("env:"):
                 result.error("mcp", f"MCP {identifier}: environment.{name} должен использовать env:VARIABLE")
             elif source.removeprefix("env:") not in example_variables:
-                result.error("mcp", f"MCP {identifier}: {source} отсутствует в .env.example")
+                result.error("mcp", f"MCP {identifier}: {source} отсутствует в mcp-creds.example.env")
         environment_names = set((server.get("environment") or {}).keys())
         for name in server.get("required_environment", []) or []:
             if name not in environment_names:
                 result.error("mcp", f"MCP {identifier}: required_environment {name} отсутствует в environment")
+            if name not in example_variables:
+                result.error("mcp", f"MCP {identifier}: required_environment {name} отсутствует в mcp-creds.example.env")
         image = (server.get("installation") or {}).get("image")
         if image and not re.search(r"@sha256:[0-9a-f]{64}$", image):
             result.error("mcp", f"MCP {identifier}: container image должен быть закреплён immutable digest")

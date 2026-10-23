@@ -17,6 +17,9 @@ clients/**/generated/
 .env
 .env.*
 !.env.example
+mcp-creds.env
+mcp-creds.*.env
+!mcp-creds.example.env
 secrets/
 *.token
 *.secret
@@ -49,6 +52,22 @@ def test_secret_tracked_fails(repository: Path) -> None:
     (repository / "credentials.token").write_text("not-a-real-secret", encoding="utf-8")
     subprocess.run(["git", "-C", repository, "add", "-f", "credentials.token"], check=True)
     assert not validate_git_hygiene(repository).ok
+
+
+@pytest.mark.parametrize("name", ["mcp-creds.env", "mcp-creds.work.env"])
+def test_git_hygiene_rejects_tracked_mcp_credentials(repository: Path, name: str) -> None:
+    path = repository / name
+    path.write_text("TOKEN=fixture-value\n", encoding="utf-8")
+    subprocess.run(["git", "-C", repository, "add", "-f", name], check=True)
+    assert not validate_git_hygiene(repository).ok
+
+
+def test_git_hygiene_accepts_mcp_credential_example(repository: Path) -> None:
+    path = repository / "mcp-creds.example.env"
+    path.write_text("TOKEN=\n", encoding="utf-8")
+    subprocess.run(["git", "-C", repository, "add", "mcp-creds.example.env"], check=True)
+    assert validate_git_hygiene(repository).ok
+    assert subprocess.run(["git", "-C", repository, "check-ignore", "-q", "mcp-creds.example.env"]).returncode == 1
 
 
 def test_clean_repository_passes(repository: Path) -> None:

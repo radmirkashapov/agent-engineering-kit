@@ -488,6 +488,36 @@ agent-kit task gc my-project TASK-123
 
 Используются `AGENTS.md`, Cline Rules и нативные настройки MCP. Набор не перезаписывает недокументированные пользовательские пути.
 
+Подробные шаги подключения, ручной регистрации и восстановления `AUTH_REQUIRED` приведены в [инструкциях клиентов](clients/).
+
+## Credentials и OAuth для MCP
+
+Для stdio MCP скопируйте шаблон и заполните только те значения, которые нужны включённым интеграциям. Импорт сохраняет значения в machine-local хранилище; исходный файл остаётся у вас.
+
+```bash
+cp mcp-creds.example.env mcp-creds.env
+# Заполнить только нужные значения.
+agent-kit mcp creds import --from ./mcp-creds.env
+agent-kit mcp creds status
+agent-kit mcp enable github --scope global --resync
+agent-kit doctor
+agent-kit security scan
+```
+
+Не вставляйте literal credentials в `mcp/registry.yaml`, конфигурации клиентов, команды или Git. В конфигурации указываются только имена переменных окружения; секреты вводятся через файл-шаблон и команду импорта. Локальные `mcp-creds.env` и `mcp-creds.*.env` исключены из Git, а `mcp-creds.example.env` содержит только пустые значения.
+
+| Клиент | Регистрация MCP | Подключение |
+|---|---|---|
+| Codex CLI и Codex Desktop | Автоматическая через Kit и launcher; используется общее пространство Codex. | `agent-kit mcp enable <id> --scope global --resync` |
+| Claude Code | Автоматическая через Kit и launcher в конфигурации клиента. | `agent-kit mcp enable <id> --scope global --resync` |
+| Claude Desktop | Ручная в разделе MCP / Developer Settings клиента. | Следуйте [инструкции Claude Desktop](clients/claude-desktop/README.md). |
+| OpenCode | Требуется ручная регистрация в конфигурации OpenCode. | Следуйте [инструкции OpenCode](clients/opencode/README.md). |
+| Cline | Требуется ручная регистрация в MCP Servers настройках расширения. | Следуйте [инструкции Cline](clients/cline/README.md). |
+
+Если диагностика показывает `AUTH_REQUIRED`, сначала проверьте `agent-kit mcp creds status`. Для stdio MCP импортируйте недостающие credentials и перезапустите соответствующий клиент. Для remote OAuth завершите авторизацию в конкретном клиенте и профиле, затем повторите запрос. Atlassian, GitLab и Context7 хранят OAuth-состояние отдельно в каждом клиенте или профиле; авторизация в одном не переносится в другой. Исключение — выбранная схема, где все клиенты подключены к одному Docker MCP Gateway: в этом случае OAuth-состоянием владеет Docker Desktop.
+
+После ротации токена повторите `agent-kit mcp creds import --from ./mcp-creds.env`; новое значение применяется при следующем запуске MCP без `resync`. Изменение определения MCP или команды запуска требует `agent-kit mcp enable <id> --scope global --resync`. `agent-kit mcp creds clear --yes` удаляет только machine-local хранилище credentials Kit; он не удаляет OAuth-состояние клиентов или Docker Desktop. После настройки запускайте `agent-kit security scan`.
+
 ## Правила и роли агентов
 
 Каталог `rules/` содержит обязательные правила разработки, Git, тестирования, проверки, документации, безопасности, контекста, моделей и внешних инструментов. Конфигурация проекта может их уточнять, но не ослаблять обязательные ограничения.
@@ -508,7 +538,7 @@ agent-kit task gc my-project TASK-123
 
 ## Безопасность
 
-Секреты хранятся только в переменных окружения или внешнем хранилище секретов; их имена перечислены в `.env.example`. Набор инструментов безопасности включает SkillEvaluator, SkillSpector, Semgrep, Gitleaks и Bumblebee. В CI используется закреплённая версия Gitleaks.
+Секреты хранятся только в machine-local credentials или внешнем хранилище секретов; их имена перечислены в `mcp-creds.example.env`. Файл `.env.example` оставлен для совместимости. Набор инструментов безопасности включает SkillEvaluator, SkillSpector, Semgrep, Gitleaks и Bumblebee. В CI используется закреплённая версия Gitleaks.
 
 ```bash
 agent-kit security status

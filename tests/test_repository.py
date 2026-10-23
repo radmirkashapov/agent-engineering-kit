@@ -23,6 +23,26 @@ def test_repository_passes_ci_validation(tmp_path: Path) -> None:
     assert result.ok, "\n".join(item.render() for item in result.diagnostics)
 
 
+def test_mcp_credential_template_covers_registry_environment_references() -> None:
+    repository = Path(__file__).resolve().parents[1]
+    result = validate_mcp(repository)
+    assert result.ok, "\n".join(item.render() for item in result.diagnostics)
+
+
+def test_mcp_validation_rejects_missing_specialized_credential_template(tmp_path: Path) -> None:
+    from shutil import copytree
+
+    repository = Path(__file__).resolve().parents[1]
+    copytree(repository / "mcp", tmp_path / "mcp")
+    copytree(repository / "schemas", tmp_path / "schemas")
+    (tmp_path / ".env.example").write_text((repository / ".env.example").read_text(encoding="utf-8"), encoding="utf-8")
+
+    result = validate_mcp(tmp_path)
+
+    assert not result.ok
+    assert any("mcp-creds.example.env" in diagnostic.message for diagnostic in result.diagnostics)
+
+
 def test_all_tracked_yaml_files_have_explanatory_comments() -> None:
     repository = Path(__file__).resolve().parents[1]
     completed = subprocess.run(
@@ -128,6 +148,7 @@ def test_mcp_validation_rejects_url_credentials(tmp_path: Path, field: str) -> N
     copytree(repository / "mcp", tmp_path / "mcp")
     copytree(repository / "schemas", tmp_path / "schemas")
     (tmp_path / ".env.example").write_text((repository / ".env.example").read_text(encoding="utf-8"), encoding="utf-8")
+    (tmp_path / "mcp-creds.example.env").write_text((repository / "mcp-creds.example.env").read_text(encoding="utf-8"), encoding="utf-8")
     registry = load_yaml(tmp_path / "mcp" / "registry.yaml")
     target = registry["servers"][0][field]
     target["repository" if field == "source" else "endpoint"] = "https://operator:credential@example.com/mcp"
@@ -149,6 +170,7 @@ def test_mcp_validation_rejects_query_and_fragment_urls(tmp_path: Path, suffix: 
     copytree(repository / "mcp", tmp_path / "mcp")
     copytree(repository / "schemas", tmp_path / "schemas")
     (tmp_path / ".env.example").write_text((repository / ".env.example").read_text(encoding="utf-8"), encoding="utf-8")
+    (tmp_path / "mcp-creds.example.env").write_text((repository / "mcp-creds.example.env").read_text(encoding="utf-8"), encoding="utf-8")
     registry = load_yaml(tmp_path / "mcp" / "registry.yaml")
     registry["servers"][0]["source"]["repository"] += suffix
     write_yaml(tmp_path / "mcp" / "registry.yaml", registry)
@@ -169,6 +191,7 @@ def test_mcp_validation_requires_policy_for_every_registered_server(tmp_path: Pa
     copytree(repository / "schemas", tmp_path / "schemas")
     copytree(repository / "catalog" / "corporate", tmp_path / "catalog" / "corporate")
     (tmp_path / ".env.example").write_text((repository / ".env.example").read_text(encoding="utf-8"), encoding="utf-8")
+    (tmp_path / "mcp-creds.example.env").write_text((repository / "mcp-creds.example.env").read_text(encoding="utf-8"), encoding="utf-8")
     path = tmp_path / "catalog/corporate/mcp.yaml"
     catalog = load_yaml(path)
     catalog["servers"] = [entry for entry in catalog["servers"] if entry["id"] != "context7"]
@@ -190,6 +213,7 @@ def test_mcp_validation_rejects_unknown_access_profile_mode(tmp_path: Path) -> N
     copytree(repository / "schemas", tmp_path / "schemas")
     copytree(repository / "catalog" / "corporate", tmp_path / "catalog" / "corporate")
     (tmp_path / ".env.example").write_text((repository / ".env.example").read_text(encoding="utf-8"), encoding="utf-8")
+    (tmp_path / "mcp-creds.example.env").write_text((repository / "mcp-creds.example.env").read_text(encoding="utf-8"), encoding="utf-8")
     path = tmp_path / "catalog" / "corporate" / "access-profiles.yaml"
     profiles = load_yaml(path)
     profiles["profiles"][0]["allowed_modes"] = ["destroy"]
@@ -211,6 +235,7 @@ def test_mcp_validation_rejects_endpoint_outside_boundary(tmp_path: Path) -> Non
     copytree(repository / "schemas", tmp_path / "schemas")
     copytree(repository / "catalog" / "corporate", tmp_path / "catalog" / "corporate")
     (tmp_path / ".env.example").write_text((repository / ".env.example").read_text(encoding="utf-8"), encoding="utf-8")
+    (tmp_path / "mcp-creds.example.env").write_text((repository / "mcp-creds.example.env").read_text(encoding="utf-8"), encoding="utf-8")
     path = tmp_path / "catalog" / "corporate" / "mcp.yaml"
     catalog = load_yaml(path)
     next(entry for entry in catalog["servers"] if entry["id"] == "context7")["boundaries"]["allowed_hosts"] = ["unrelated.example"]
@@ -232,6 +257,7 @@ def test_mcp_validation_rejects_write_on_read_only_server(tmp_path: Path) -> Non
     copytree(repository / "schemas", tmp_path / "schemas")
     copytree(repository / "catalog" / "corporate", tmp_path / "catalog" / "corporate")
     (tmp_path / ".env.example").write_text((repository / ".env.example").read_text(encoding="utf-8"), encoding="utf-8")
+    (tmp_path / "mcp-creds.example.env").write_text((repository / "mcp-creds.example.env").read_text(encoding="utf-8"), encoding="utf-8")
     path = tmp_path / "catalog" / "corporate" / "mcp.yaml"
     catalog = load_yaml(path)
     next(entry for entry in catalog["servers"] if entry["id"] == "context7")["capabilities"][0]["mode"] = "write"
@@ -253,6 +279,7 @@ def test_mcp_validation_rejects_raw_corporate_logging(tmp_path: Path) -> None:
     copytree(repository / "schemas", tmp_path / "schemas")
     copytree(repository / "catalog" / "corporate", tmp_path / "catalog" / "corporate")
     (tmp_path / ".env.example").write_text((repository / ".env.example").read_text(encoding="utf-8"), encoding="utf-8")
+    (tmp_path / "mcp-creds.example.env").write_text((repository / "mcp-creds.example.env").read_text(encoding="utf-8"), encoding="utf-8")
     path = tmp_path / "catalog" / "corporate" / "data-classification.yaml"
     classes = load_yaml(path)
     classes["classes"][0]["logging"] = "raw"
