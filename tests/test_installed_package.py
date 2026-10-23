@@ -20,6 +20,7 @@ def _installed_wheel(tmp_path: Path) -> Path:
             "-m",
             "build",
             "--wheel",
+            "--no-isolation",
             "--outdir",
             str(wheel_directory),
             str(REPOSITORY),
