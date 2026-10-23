@@ -44,7 +44,7 @@
 - `tests/test_mcp_launcher.py` — contract, precedence, process environment и отказ до запуска.
 - `tests/test_clients.py`, `tests/test_cli.py`, `tests/test_doctor.py`, `tests/test_git_hygiene.py`, `tests/test_repository.py` — интеграционные контракты.
 
-### Задача 1: Список разрешённых переменных, разбор и хранилище
+### Task 1: Список разрешённых переменных, разбор и хранилище
 
 **Файлы:**
 - Создать: `src/agent_engineering_kit/mcp_credentials.py`
@@ -239,7 +239,7 @@ git add app.version src/agent_engineering_kit/__init__.py src/agent_engineering_
 git commit -m "feat(mcp): add secure credential vault"
 ```
 
-### Задача 2: Контракты запуска stdio MCP
+### Task 2: Контракты запуска stdio MCP
 
 **Файлы:**
 - Создать: `src/agent_engineering_kit/mcp_launcher.py`
@@ -398,7 +398,7 @@ git add app.version src/agent_engineering_kit/__init__.py src/agent_engineering_
 git commit -m "feat(mcp): add credential-aware launcher"
 ```
 
-### Задача 3: Интеграция с нативной регистрацией клиентов
+### Task 3: Интеграция с нативной регистрацией клиентов
 
 **Файлы:**
 - Изменить: `src/agent_engineering_kit/clients.py`
@@ -526,7 +526,7 @@ git add app.version src/agent_engineering_kit/__init__.py src/agent_engineering_
 git commit -m "feat(clients): register credential-aware mcp launchers"
 ```
 
-### Задача 4: Жизненный цикл CLI и диагностика doctor
+### Task 4: Жизненный цикл CLI и диагностика doctor
 
 **Файлы:**
 - Изменить: `src/agent_engineering_kit/cli.py`
@@ -618,7 +618,7 @@ git add app.version src/agent_engineering_kit/__init__.py src/agent_engineering_
 git commit -m "feat(cli): manage mcp credentials safely"
 ```
 
-### Задача 5: Контракт репозитория, git hygiene и русские инструкции
+### Task 5: Контракт репозитория, git hygiene и русские инструкции
 
 **Файлы:**
 - Создать: `mcp-creds.example.env`
@@ -731,7 +731,7 @@ git add .gitignore .env.example mcp-creds.example.env app.version src/agent_engi
 git commit -m "docs(mcp): document credential and oauth workflows"
 ```
 
-### Задача 6: Полная проверка, аудит безопасности и готовность PR
+### Task 6: Полная проверка, аудит безопасности и готовность PR
 
 **Файлы:**
 - Изменять только файлы, необходимые для исправления упавшего приёмочного теста.

@@ -19,6 +19,7 @@ class KitPaths:
     state: Path | None = None
     locks: Path | None = None
     logs: Path | None = None
+    secrets: Path | None = None
 
     def __post_init__(self) -> None:
         defaults = {
@@ -26,6 +27,7 @@ class KitPaths:
             "state": self.data / "state",
             "locks": self.data / "locks",
             "logs": self.data / "logs",
+            "secrets": self.data / "secrets",
         }
         for name, value in defaults.items():
             if getattr(self, name) is None:
@@ -97,3 +99,6 @@ def ensure_runtime(paths: KitPaths) -> None:
     )
     for directory in directories:
         directory.mkdir(parents=True, exist_ok=True)
+    paths.secrets.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if os.name == "posix":
+        paths.secrets.chmod(0o700)
