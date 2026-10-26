@@ -18,6 +18,7 @@ from .mcp_manager import McpManager
 from .override_service import initialize_override_workspace
 from .paths import KitPaths, ensure_runtime
 from .policy import effective_policy as resolve_effective_policy
+from .project_skills import ProjectSkillRepositoryManager
 from .projects import LogicalProject
 from .overrides import validate_overrides
 from .security_tools import SecurityToolManager
@@ -34,6 +35,7 @@ class ResyncReport:
     clients: list[str]
     changed: bool
     incomplete: list[str]
+    project_skills: dict[str, object] | None = None
 
 
 def build_session_manifest(
@@ -47,6 +49,7 @@ def build_session_manifest(
     harness: dict[str, object],
     effective_policy: Path,
     recorded_at: str,
+    project_skills: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """Собрать воспроизводимый снимок control plane для текущего сеанса."""
     return {
@@ -58,6 +61,7 @@ def build_session_manifest(
         "effective_policy_sha256": hashlib.sha256(effective_policy.read_bytes()).hexdigest(),
         "security": security,
         "skills": skills,
+        "project_skills": project_skills,
         "mcp": mcp,
         "clients": clients,
     }
@@ -114,16 +118,18 @@ def resync(
         raise AgentKitError(f"Resync остановлен MCP installation: {messages}")
     mcp_state = mcp_manager.list(project, access_profile=mcp_access_profile)
 
+    project_skills = ProjectSkillRepositoryManager(repository, paths, project).resync().as_dict() if project else None
     project_id = project.identifier if project else None
     generated = sync_clients(
         repository,
         paths,
+        project=project,
         project_id=project_id,
         capability_policy=capability_resolution.as_dict(),
     )
     incomplete: list[str] = []
     if expose_native:
-        generated.extend(expose_native_skills(repository, paths, project_id=project_id))
+        generated.extend(expose_native_skills(repository, paths, project=project, project_id=project_id))
         generated.extend(expose_native_instructions(repository, paths))
         registration_path = register_native_mcp(
             repository,
@@ -171,6 +177,7 @@ def resync(
         ),
         effective_policy=paths.installations / "clients" / "shared" / "effective-policy.json",
         recorded_at=datetime.now(timezone.utc).isoformat(),
+        project_skills=project_skills,
     )
     serialized = json.dumps(effective, ensure_ascii=False, indent=2) + "\n"
     comparable_previous = ""
@@ -189,4 +196,7 @@ def resync(
         paths.state / "session-revision.json",
         json.dumps({"revision": current_revision, "immutable_for_session": True}, ensure_ascii=False, indent=2) + "\n",
     )
-    return ResyncReport(current_revision, security_state, skill_state, mcp_state, [str(path) for path in generated], changed, incomplete)
+    return ResyncReport(
+        current_revision, security_state, skill_state, mcp_state,
+        [str(path) for path in generated], changed, incomplete, project_skills,
+    )
