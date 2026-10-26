@@ -40,3 +40,27 @@ def test_docs_index_is_deterministic(tmp_path: Path) -> None:
     assert rendered.startswith("# Документация Demo\n")
     assert rendered.index("ADR: Решение") < rendered.index("Руководство")
     assert "INDEX.md" not in rendered
+
+
+def test_readme_documents_project_skills_workflow() -> None:
+    repository = Path(__file__).resolve().parents[1]
+    readme = (repository / "README.md").read_text(encoding="utf-8")
+    required_commands = (
+        "agent-kit project skills use-branch",
+        "agent-kit project skills use-main",
+        "agent-kit project skills status",
+        "agent-kit resync",
+    )
+    required_states = ("ACTIVE", "STALE", "UPDATE_REJECTED", "NOT_CONFIGURED")
+
+    assert all(command in readme for command in required_commands)
+    assert all(state in readme for state in required_states)
+    assert "skills/<id>/SKILL.md" in readme
+
+
+def test_release_version_is_synchronized() -> None:
+    repository = Path(__file__).resolve().parents[1]
+    package = (repository / "src/agent_engineering_kit/__init__.py").read_text(encoding="utf-8")
+
+    assert (repository / "app.version").read_text(encoding="utf-8").strip() == "0.10.0"
+    assert '__version__ = "0.10.0"' in package

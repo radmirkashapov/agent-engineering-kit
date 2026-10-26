@@ -541,6 +541,100 @@ agent-kit security scan
 
 `catalog/skills.yaml` и `locks/skills.lock.yaml` управляют сторонними skills без копирования их исходного кода. Superpowers закреплён на проверенной ревизии и устанавливается только в `<data>/installations/skills/`. До состояния `ACTIVE` кандидат проходит проверку источника, сканирование безопасности, политику моделей и проверку совместимости с клиентами.
 
+## Единый репозиторий проектных skills
+
+Команда может хранить общие для логического проекта skills в отдельном обычном Git-репозитории `project-skills`. Это не специальный формат хранилища и не зеркало продуктового кода: разработчики клонируют его, создают ветки, делают commit и push, открывают PR/MR и объединяют изменения привычными средствами Git-платформы. Agent Engineering Kit только загружает выбранную удалённую ревизию, проверяет её и публикует skills клиентам.
+
+Минимальная структура репозитория:
+
+```text
+project-skills/
+├── README.md
+└── skills/
+    ├── api-review/
+    │   └── SKILL.md
+    └── release-check/
+        └── SKILL.md
+```
+
+Каждый skill располагается по пути `skills/<id>/SKILL.md`. Его переносимое поле `description`, как и описания встроенных ролей и MCP, пишется на английском:
+
+```markdown
+---
+version: 1
+name: api-review
+description: Review API changes for compatibility and migration risks
+---
+
+# Проверка изменений API
+
+Проверь обратную совместимость, миграцию клиентов и обновление контракта.
+```
+
+### Подключение к logical project
+
+После `agent-kit project init` укажите источник в `.ai-team/project.yaml`. Секция необязательна: её отсутствие означает, что проектные skills не настроены.
+
+```yaml
+# Один и тот же id объединяет локальное состояние нескольких продуктовых репозиториев.
+id: delivery-platform
+skills:
+  # Kit читает только удалённые ревизии этого отдельного Git-репозитория.
+  repository:
+    # Используйте SSH URL или HTTPS без встроенных логина, токена и query-параметров.
+    url: git@gitlab.company.example:delivery/project-skills.git
+    # Эту ветку получают по умолчанию; для командного процесса рекомендуется main.
+    default_branch: main
+```
+
+Аутентификацией владеет Git. Для SSH URL добавьте ключ в SSH agent и проверьте доступ обычной командой `git ls-remote`. Для HTTPS настройте системный Git credential helper. Токены, пароли и URL с credentials нельзя записывать в `.ai-team/project.yaml`: Kit не переносит Git credentials в manifests, status или настройки AI-клиентов.
+
+Первое получение и последующие обновления согласованной ветки выполняются одной командой:
+
+```bash
+agent-kit resync
+agent-kit project skills status
+```
+
+Без локального выбора ветки `resync` всегда берёт `default_branch`, обычно `main`. Candidate сначала проходит структурную проверку и действующий security pipeline. Только после успешной проверки Kit атомарно делает новую ревизию активной и публикует её через thin adapters.
+
+### Проверка ветки перед PR/MR
+
+Чтобы испытать удалённую ветку `project-skills` до merge, выберите её только для текущего компьютера:
+
+```bash
+agent-kit project skills use-branch feat/26-10-2026-api-review
+agent-kit resync
+agent-kit project skills status
+```
+
+После проверки вернитесь к ветке из manifest:
+
+```bash
+agent-kit project skills use-main
+agent-kit resync
+agent-kit project skills status
+```
+
+`use-branch` не подключает произвольный локальный checkout и не меняет `.ai-team/project.yaml`. Выбор хранится в machine-local состоянии, применяется ко всем локальным продуктовым репозиториям с тем же `project.id` и игнорируется при `agent-kit validate --ci`.
+
+Если logical project состоит из нескольких репозиториев, во всех их manifests укажите одинаковый стабильный `project.id` и один и тот же URL `project-skills`. Тогда они используют общий managed checkout, одну активную ревизию и один локальный выбор ветки. Разработчику, у которого клонирована только часть продуктовых репозиториев, достаточно manifest этой части: копии skills в каждый репозиторий не нужны.
+
+### Состояния и безопасный откат
+
+`agent-kit project skills status` показывает запрошенную ветку, активный commit SHA, происхождение skills и одно из четырёх состояний:
+
+| Состояние | Что означает | Что делать |
+|---|---|---|
+| `ACTIVE` | Последний candidate проверен и атомарно активирован. | Продолжать работу; SHA в status задаёт фактическую ревизию. |
+| `STALE` | Remote временно недоступен, но ранее проверенная ревизия остаётся активной. | Проверить сеть и Git-аутентификацию, затем повторить `agent-kit resync`. |
+| `UPDATE_REJECTED` | Новая ревизия загружена, но не прошла структурную или security-проверку. | Исправить ветку `project-skills`; текущая last-known-good ревизия продолжает работать. |
+| `NOT_CONFIGURED` | В manifest нет секции `skills.repository`. | Добавить безопасный URL и `default_branch`, если проекту нужны общие skills. |
+
+Candidate никогда не становится исполняемым частично. При сетевой ошибке или отклонении небезопасного обновления Kit сохраняет last-known-good ревизию. Если первая синхронизация не удалась и проверенной ревизии ещё нет, команда завершится ошибкой, а непроверенные файлы не будут опубликованы клиентам.
+
+Kit намеренно не делает commit, push, merge, не создаёт PR/MR и не копирует project skills в продуктовые репозитории. Изменения самого `project-skills` проходят обычный Git workflow, а `agent-kit resync` только читает удалённую ветку и обновляет проверенное machine-local состояние.
+
 ## Безопасность
 
 Секреты хранятся только в machine-local credentials или внешнем хранилище секретов; их имена перечислены в `mcp-creds.example.env`. Файл `.env.example` оставлен для совместимости. Набор инструментов безопасности включает SkillEvaluator, SkillSpector, Semgrep, Gitleaks и Bumblebee. В CI используется закреплённая версия Gitleaks.
