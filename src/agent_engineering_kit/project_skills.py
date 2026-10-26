@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterator, Literal
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urlsplit
 
 from .errors import AgentKitError
 from .external_skills import SkillValidator
@@ -69,40 +69,39 @@ class ProjectSkillsStatus:
 
 
 def redact_url(value: str | None) -> str | None:
-    """Убрать userinfo, query и fragment из URL, в том числе в Git diagnostic."""
-    url_start = r"\b[a-zA-Z][a-zA-Z0-9+.-]*://"
-
-    def redact(match: re.Match[str]) -> str:
-        raw = match.group()
-        # Compact JSON может содержать несколько URL без пробела. URL внутри
-        # query/fragment остаётся частью секрета и удаляется целиком.
-        boundary = min((raw.index(mark) for mark in "?#" if mark in raw), default=len(raw))
-        starts = [item.start() for item in re.finditer(url_start, raw[:boundary])]
-        if len(starts) > 1:
-            return "".join(redact_url(raw[start:end]) for start, end in zip(starts, starts[1:] + [len(raw)]))
-        try:
-            parsed = urlsplit(raw)
-            if "@" not in parsed.netloc and "@" in parsed.path and re.search(r'''['"]''', parsed.netloc):
-                raise ValueError("malformed quoted authority")
-            authority = parsed.netloc.rsplit("@", 1)[-1]
-            # urlsplit сам не проверяет port: malformed authority без @
-            # иначе способна вернуть credential-like текст. Кавычки после
-            # authority могут принадлежать окружающему prose/JSON.
-            host = re.split(r'''['"]''', authority, maxsplit=1)[0]
-            urlsplit(f"{parsed.scheme}://{host}").port
-            return urlunsplit((parsed.scheme, authority, parsed.path, "", ""))
-        except ValueError:
-            return raw.split("://", 1)[0] + "://<redacted>"
-
+    """Построчно закрыть URL и весь его хвост при признаках секрета."""
     if value is None:
         return None
-    # Кавычка может быть частью недоверенного userinfo/token, а не границей
-    # prose/JSON. При кавычках в sensitive token поглощаем остаток строки:
-    # даже закрывшаяся кавычка не доказывает конец malformed секрета.
-    return re.sub(
-        url_start + r'''(?:(?=[^\s]*['"])(?=[^\s]*[?#@:])[^\r\n]+|(?:[^\s'"]+|'[^'\r\n]*(?:'|(?=[\r\n]|$))|"[^"\r\n]*(?:"|(?=[\r\n]|$)))+)''',
-        redact, value,
-    )
+    scheme = r"[a-zA-Z][a-zA-Z0-9+.-]*://"
+    rendered: list[str] = []
+    for line in value.splitlines(keepends=True):
+        first = re.search(scheme, line)
+        if first is None:
+            rendered.append(line)
+            continue
+        content = line.rstrip("\r\n")
+        ending = line[len(content):]
+        remainder = content[first.start():]
+        # Маркеры проверяются во всём остатке строки, до любой токенизации:
+        # пробелы и кавычки не могут оставить фрагмент секрета снаружи.
+        unsafe = any(marker in remainder for marker in "@?#")
+        if not unsafe:
+            try:
+                for token in re.finditer(scheme + r'''[^\s'"<>]*''', remainder):
+                    parsed = urlsplit(token.group().rstrip(".,;)}"))
+                    port = parsed.port
+                    if (not parsed.netloc and not (parsed.scheme == "file" and parsed.path)) or parsed.netloc.endswith(":"):
+                        raise ValueError("malformed authority")
+                    tail = remainder[token.end():]
+                    if port is not None:
+                        tail = tail.lstrip()
+                    if (not parsed.path and len(tail) > 1 and tail[0] in "'\""
+                            and not tail[1].isspace() and tail[1] not in "'\",;.)]}>:"):
+                        raise ValueError("malformed quoted authority")
+            except ValueError:
+                unsafe = True
+        rendered.append(content[:first.start()] + "<redacted-url>" + ending if unsafe else line)
+    return "".join(rendered)
 
 
 def _redacted(value: Any) -> Any:

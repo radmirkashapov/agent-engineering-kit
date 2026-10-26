@@ -75,7 +75,7 @@ def test_skill_precedence_selects_one_directory_with_shadowed_provenance(tmp_pat
     assert [item["source"] for item in row["shadowed"]] == expected_shadowed
     if layer != "built-in":
         external_row = row if layer == "external-catalog" else row["shadowed"][1]
-        assert external_row["source_url"] == "https://example.invalid/skills.git"
+        assert external_row["source_url"] == "<redacted-url>"
         assert external_row["revision"] == "a" * 40
     assert all(secret not in text for secret in ("password", "token=private", "#secret", "user:"))
 

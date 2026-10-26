@@ -341,7 +341,7 @@ def test_status_masks_credential_bearing_runtime_remote(fixture):
     diagnostic.write_text(json.dumps({**active.as_dict(), "reason": secret_url, "state": "STALE",
                                      "default_branch": secret_url}))
     rendered = json.dumps(manager.status().as_dict())
-    assert "example.invalid/skills.git" in rendered
+    assert "<redacted-url>" in rendered
     assert all(secret not in rendered for secret in ("runtime-user", "runtime-password", "runtime-token", "runtime-fragment"))
 
 
@@ -440,7 +440,7 @@ def test_fetch_candidate_errors_and_selection_redact_url_credentials(fixture):
     for output in (str(caught.value), json.dumps(status), redact_url(secret_url)):
         for secret in ("alice", "password", "secret", "private"):
             assert secret not in output
-        assert "example.invalid/repo.git" in output
+        assert "<redacted-url>" in output
 
 
 @pytest.mark.parametrize("unsafe", [
@@ -461,7 +461,7 @@ def test_fetch_candidate_errors_and_selection_redact_url_credentials(fixture):
 def test_redact_url_masks_quoted_and_malformed_secret_text(unsafe, wrapper):
     rendered = redact_url(wrapper.format(unsafe))
     assert all(secret not in rendered for secret in ("alice", "secret", "part", "private"))
-    assert "https://" in rendered
+    assert "<redacted-url>" in rendered
 
 
 @pytest.mark.parametrize("text", [
@@ -475,6 +475,24 @@ def test_redact_url_preserves_safe_url_and_surrounding_text(text):
     assert redact_url(text) == text
 
 
+@pytest.mark.parametrize("unsafe", [
+    "https://alice: secret'part@example.invalid/repo",
+    "https://alice:secret 'part@example.invalid/repo",
+    'https://alice: secret"part@example.invalid/repo',
+    'https://alice:secret "part@example.invalid/repo',
+    "https://example.invalid/repo token ? 'secret part'",
+    'https://example.invalid/repo token # "secret part"',
+])
+def test_redact_url_applies_fail_closed_line_rule(unsafe):
+    text = "before " + unsafe + " diagnostic tail\r\nafter https://safe.example.invalid/repo\n"
+    assert redact_url(text) == "before <redacted-url>\r\nafter https://safe.example.invalid/repo\n"
+
+
+@pytest.mark.parametrize("prefix", ["label_", "Ошибка", "value="])
+def test_redact_url_line_rule_detects_scheme_after_diagnostic_prefix(prefix):
+    assert redact_url(prefix + "https://alice: secret'part@example.invalid/repo") == prefix + "<redacted-url>"
+
+
 @pytest.mark.parametrize("first_path", ["/one", ""])
 @pytest.mark.parametrize("second_path", ["/two", ""])
 def test_redact_url_masks_multiple_compact_json_urls(first_path, second_path):
@@ -482,8 +500,7 @@ def test_redact_url_masks_multiple_compact_json_urls(first_path, second_path):
             + '","two":"https://bob:private\"part@two.example.invalid' + second_path + '"}')
     rendered = redact_url(text)
     assert all(secret not in rendered for secret in ("alice", "secret", "bob", "private", "part"))
-    assert "one.example.invalid" in rendered
-    assert "two.example.invalid" in rendered
+    assert rendered == '{"one":"<redacted-url>'
 
 
 @pytest.mark.parametrize("unsafe", [
@@ -491,6 +508,8 @@ def test_redact_url_masks_multiple_compact_json_urls(first_path, second_path):
     'https://alice:secret"part@example.invalid/repo',
     "https://example.invalid/repo?token='secret part'",
     'https://example.invalid/repo#"secret part"',
+    "https://alice: secret'part@example.invalid/repo",
+    "https://alice:secret 'part@example.invalid/repo",
 ])
 def test_public_inspection_and_git_errors_mask_quoted_url_secrets(fixture, unsafe):
     fixture.project.manifest["skills"]["repository"]["url"] = unsafe
@@ -785,15 +804,17 @@ def test_failed_activation_keeps_exact_last_known_good_pointer(fixture, monkeypa
     'https://alice:secret"part@example.invalid/repo.git',
     "https://example.invalid/repo.git?token='secret part'",
     'https://example.invalid/repo.git#"secret part"',
+    "https://alice: secret'part@example.invalid/repo.git",
+    "https://alice:secret 'part@example.invalid/repo.git",
 ])
 def test_status_and_evidence_redact_source_and_validator_errors(fixture, secret_url):
     manager = fixture.manager(validator=lambda _: (False, [{"check": "fixture", "status": "FAIL", "url": secret_url}]))
     with pytest.raises(AgentKitError):
         manager.resync()
-    assert "example.invalid/repo.git" in (manager.root / "status.json").read_text()
+    assert "<redacted-url>" in (manager.root / "status.json").read_text()
     status = replace(manager.status(), source_url=secret_url, reason=secret_url)
     for text in ((manager.root / "status.json").read_text(), json.dumps(status.as_dict())):
-        assert "example.invalid/repo.git" in text
+        assert "<redacted-url>" in text
         assert all(secret not in text for secret in ("alice", "password", "secret", "#private", "part"))
 
 
@@ -803,7 +824,7 @@ def test_rejected_evidence_masks_urls_in_diagnostic_keys(fixture):
     with pytest.raises(AgentKitError):
         manager.resync()
     rendered = (manager.root / "status.json").read_text()
-    assert "example.invalid/check" in rendered
+    assert "<redacted-url>" in rendered
     assert all(secret not in rendered for secret in ("evidence-user", "evidence-password", "evidence-token", "evidence-fragment"))
 
 

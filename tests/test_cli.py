@@ -284,7 +284,7 @@ def test_project_skills_dispatch_outputs_safe_json_without_resync(skills_project
     document = json.loads(output.out)
     assert document["project_id"] == "cli-project"
     assert document["requested_branch"] == branch
-    assert document["source_url"] == "https://example.test/skills.git"
+    assert document["source_url"] == ("<redacted-url>" if command == ["status"] else "https://example.test/skills.git")
     assert output.err == ""
     assert "\\u" not in output.out
     assert all(value not in output.out for value in ("fixture-user", "fixture-secret", "fixture-token"))

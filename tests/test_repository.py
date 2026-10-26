@@ -51,6 +51,8 @@ def test_project_skills_validation_reports_default_without_remote_verification(t
     'https://manifest-user:manifest-password"part@example.invalid/skills.git',
     "https://example.invalid/skills.git?token='manifest-token part'",
     'https://example.invalid/skills.git#"manifest-fragment part"',
+    "https://manifest-user: manifest-password'part@example.invalid/skills.git",
+    "https://manifest-user:manifest-password 'part@example.invalid/skills.git",
 ])
 def test_project_skills_validation_redacts_invalid_manifest_diagnostics(tmp_path, monkeypatch, secret_url):
     from conftest import write_yaml
