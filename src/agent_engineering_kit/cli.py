@@ -42,10 +42,12 @@ from .profiles import compile_permission_profile, load_profiles
 from .pull_requests import PullRequestService
 from .project_templates import load_project_templates
 from .project_memory import ProjectMemoryManager
+from .project_skills import ProjectSkillRepositoryManager
 from .projects import LogicalProject, detect_project, find_project, init_project, validate_project_definition
 from .runs import build_run_request, canonical_digest, record_run_result, run_events_path, write_run_request
 from .resync import ResyncReport, resync
 from .security_tools import SecurityToolManager
+from .schema import validate_instance
 from .sync import record_sync, revision, update_repository
 from .tasks import (
     acquire_lease,
@@ -197,6 +199,13 @@ def _parser() -> argparse.ArgumentParser:
         "project",
         help="Инициализировать и обслуживать logical project",
     ).add_subparsers(dest="project_command", required=True)
+    project_skills = project.add_parser(
+        "skills", help="Управлять Git-источником skills logical project"
+    ).add_subparsers(dest="project_skills_command", required=True)
+    use_branch = project_skills.add_parser("use-branch", help="Выбрать удалённую ветку локально")
+    use_branch.add_argument("branch")
+    project_skills.add_parser("use-main", help="Вернуться к default branch")
+    project_skills.add_parser("status", help="Показать источник и активную ревизию")
     project_init = project.add_parser("init", help="Инициализировать проект по выбранному шаблону")
     project_init.add_argument("path", nargs="?", default=".")
     project_init.add_argument("--id", dest="identifier")
@@ -720,6 +729,25 @@ def run(argv: list[str] | None = None) -> int:
             ok, evidence = manager.validate_skill(Path(args.path).resolve())
             print(json.dumps(evidence, ensure_ascii=False, indent=2))
             return 0 if ok else 1
+        if args.command == "project" and args.project_command == "skills":
+            try:
+                project = find_project(Path.cwd())
+            except AgentKitError:
+                raise AgentKitError("Некорректная конфигурация logical project") from None
+            if project is None:
+                raise AgentKitError("Logical project не найден; выполните agent-kit project init")
+            schema = validate_instance(project.manifest, repository / "schemas/project.schema.json", "logical project")
+            if not schema.ok or not validate_project_definition(project, repository).ok:
+                raise AgentKitError("Некорректная конфигурация logical project")
+            manager = ProjectSkillRepositoryManager(repository, paths, project)
+            if args.project_skills_command == "use-branch":
+                output = manager.set_branch(args.branch)
+            elif args.project_skills_command == "use-main":
+                output = manager.use_main()
+            else:
+                output = manager.status().as_dict()
+            print(json.dumps(output, ensure_ascii=False, indent=2))
+            return 1 if output.get("state") == "NOT_CONFIGURED" else 0
         if args.command == "project" and args.project_command == "init":
             setup: dict[str, object] = {
                 "template_id": args.template_id,
