@@ -141,6 +141,34 @@ def test_project_skills_url_rejects_credentials(tmp_path, kit_repository, url):
     assert not validate_project(project, kit_repository).ok
 
 
+@pytest.mark.parametrize("prior_identity", [False, True])
+@pytest.mark.parametrize("skills", [
+    {"repository": {"url": "https://user:secret@example.com/project-skills.git", "default_branch": "main"}},
+    {"repository": {"url": "https://example.com/project-skills.git?token=secret", "default_branch": "main"}},
+    {"repository": {"url": "https://example.com/project-skills.git#secret", "default_branch": "main"}},
+    None,
+    "invalid",
+    {"repository": "invalid"},
+    {"repository": {"default_branch": "main"}},
+])
+def test_project_skills_unsafe_existing_manifest_preserves_identity(tmp_path, kit_repository, prior_identity, skills):
+    kit_paths = paths(tmp_path, kit_repository)
+    project = _shared_project(tmp_path / "existing")
+    identity_path = kit_paths.projects / "shared/identity.json"
+    if prior_identity:
+        register_memory(project, kit_paths)
+    before = identity_path.read_bytes() if identity_path.exists() else None
+    project.manifest["skills"] = skills
+    project.manifest_path.parent.mkdir()
+    project.manifest_path.write_text(json.dumps(project.manifest), encoding="utf-8")
+
+    with pytest.raises(AgentKitError) as error:
+        init_project(project.root, kit_repository, kit_paths)
+
+    assert "secret" not in str(error.value)
+    assert (identity_path.read_bytes() if identity_path.exists() else None) == before
+
+
 @pytest.mark.parametrize("branch", ["", "feature/../bad", "bad branch", "bad~ref", "bad^ref", "bad:ref", "bad?ref", "bad*ref", "bad\\ref", "bad[ref"])
 def test_project_skills_rejects_invalid_branch(tmp_path, kit_repository, branch):
     project = _skills_source(_shared_project(tmp_path / "unsafe"))

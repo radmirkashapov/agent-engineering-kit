@@ -166,6 +166,9 @@ def detect_project(root: Path) -> dict[str, Any]:
 
 
 def register_memory(project: LogicalProject, paths: KitPaths) -> Path:
+    validation = validate_instance(project.manifest, paths.repository / "schemas" / "project.schema.json", "project")
+    if not validation.ok:
+        raise AgentKitError("Некорректный project manifest: регистрация namespace отклонена")
     ensure_runtime(paths)
     memory = paths.projects / project.identifier
     identity_path = memory / "identity.json"
