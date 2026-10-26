@@ -35,7 +35,7 @@
 
 ---
 
-### Задача 1: Контракт manifest и общий namespace проекта
+### Task 1: Контракт manifest и общий namespace проекта
 
 **Файлы:**
 - Изменить: `schemas/project.schema.json`
@@ -150,7 +150,7 @@ git add schemas/project.schema.json templates/project/project.yaml src/agent_eng
 git commit -m "feat(projects): declare shared project skills source"
 ```
 
-### Задача 2: Управляемый Git checkout и выбор ветки
+### Task 2: Управляемый Git checkout и выбор ветки
 
 **Файлы:**
 - Создать: `src/agent_engineering_kit/project_skills.py`
@@ -261,7 +261,7 @@ git add src/agent_engineering_kit/project_skills.py tests/test_project_skills.py
 git commit -m "feat(skills): manage project skills checkout"
 ```
 
-### Задача 3: Проверка candidate и активация last-known-good
+### Task 3: Проверка candidate и активация last-known-good
 
 **Файлы:**
 - Изменить: `src/agent_engineering_kit/project_skills.py`
@@ -352,7 +352,7 @@ git add src/agent_engineering_kit/project_skills.py tests/test_project_skills.py
 git commit -m "feat(skills): activate validated project skills"
 ```
 
-### Задача 4: Приоритет effective skills и публикация в клиенты
+### Task 4: Приоритет effective skills и публикация в клиенты
 
 **Файлы:**
 - Изменить: `src/agent_engineering_kit/clients.py`
@@ -422,7 +422,7 @@ git add src/agent_engineering_kit/clients.py tests/test_clients.py tests/test_pr
 git commit -m "feat(clients): publish project skills with provenance"
 ```
 
-### Задача 5: Интеграция с resync и session manifest
+### Task 5: Интеграция с resync и session manifest
 
 **Файлы:**
 - Изменить: `src/agent_engineering_kit/resync.py`
@@ -505,7 +505,7 @@ git add src/agent_engineering_kit/resync.py tests/test_resync.py
 git commit -m "feat(resync): refresh project skills repository"
 ```
 
-### Задача 6: CLI и help для project skills
+### Task 6: CLI и help для project skills
 
 **Файлы:**
 - Изменить: `src/agent_engineering_kit/cli.py`
@@ -566,7 +566,7 @@ git add src/agent_engineering_kit/cli.py tests/test_cli.py
 git commit -m "feat(cli): manage project skills branch"
 ```
 
-### Задача 7: Изоляция CI и сквозная безопасность
+### Task 7: Изоляция CI и сквозная безопасность
 
 **Файлы:**
 - Изменить: `src/agent_engineering_kit/project_skills.py`
@@ -624,7 +624,7 @@ git add src/agent_engineering_kit/project_skills.py src/agent_engineering_kit/va
 git commit -m "test(skills): enforce project skills isolation"
 ```
 
-### Задача 8: Русская пользовательская документация, версия и финальная проверка
+### Task 8: Русская пользовательская документация, версия и финальная проверка
 
 **Файлы:**
 - Изменить: `README.md`
