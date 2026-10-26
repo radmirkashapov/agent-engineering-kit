@@ -292,6 +292,59 @@ def test_branch_override_ci_ignores_malformed_local_file(fixture):
         manager.requested_branch()
 
 
+@pytest.mark.parametrize("activated", [False, True])
+def test_ci_validation_ignores_machine_branch_override_without_writes(fixture, monkeypatch, activated):
+    manager = fixture.manager(validator=lambda _: (True, []))
+    active = manager.resync() if activated else None
+    manager.set_branch("feat/new-check")
+    manager.override_path.write_text("malformed machine-local input")
+    before = {str(path): path.read_bytes() for path in manager.root.rglob("*") if path.is_file()}
+    product_before = fixture.product_snapshot()
+    original_read = Path.read_text
+
+    def guarded_read(path, *args, **kwargs):
+        if path == manager.override_path:
+            raise AssertionError("CI must not read the machine-local branch override")
+        return original_read(path, *args, **kwargs)
+
+    def read_only_git(args, **kwargs):
+        if "rev-parse" not in args and not ("status" in args and "--no-optional-locks" in args):
+            raise AssertionError(f"CI attempted Git mutation or network: {args}")
+        return run_command(args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", guarded_read)
+    manager.runner = read_only_git
+    observed = manager.inspect(ci=True)
+
+    assert observed["requested_branch"] == "main"
+    assert observed["local_override_applied"] is False
+    assert observed["active_revision"] == (active.active_revision if active else None)
+    assert observed["resolved_revision"] is None
+    assert {str(path): path.read_bytes() for path in manager.root.rglob("*") if path.is_file()} == before
+    assert fixture.product_snapshot() == product_before
+
+
+def test_inspection_preserves_explicit_local_branch_selection(fixture):
+    manager = fixture.manager()
+    manager.set_branch("feat/new-check")
+    observed = manager.inspect()
+    assert observed["requested_branch"] == "feat/new-check"
+    assert observed["local_override_applied"] is True
+
+
+def test_status_masks_credential_bearing_runtime_remote(fixture):
+    manager = fixture.manager(validator=lambda _: (True, []))
+    active = manager.resync()
+    secret_url = "https://runtime-user:runtime-password@example.invalid/skills.git?token=runtime-token#runtime-fragment"
+    git(manager.checkout, "remote", "set-url", "origin", secret_url)
+    diagnostic = manager.root / "status.json"
+    diagnostic.write_text(json.dumps({**active.as_dict(), "reason": secret_url, "state": "STALE",
+                                     "default_branch": secret_url}))
+    rendered = json.dumps(manager.status().as_dict())
+    assert "example.invalid/skills.git" in rendered
+    assert all(secret not in rendered for secret in ("runtime-user", "runtime-password", "runtime-token", "runtime-fragment"))
+
+
 @pytest.mark.parametrize("branch", ["bad branch", "--help", "../main", "main:other", "@{-1}", ""])
 def test_branch_override_rejects_invalid_refs_without_changing_selection(fixture, branch):
     manager = fixture.manager()
@@ -671,6 +724,16 @@ def test_status_and_evidence_redact_source_and_validator_errors(fixture):
     for text in ((manager.root / "status.json").read_text(), json.dumps(status.as_dict())):
         assert "example.invalid/repo.git" in text
         assert all(secret not in text for secret in ("alice", "password", "token=secret", "#private"))
+
+
+def test_rejected_evidence_masks_urls_in_diagnostic_keys(fixture):
+    secret_url = "https://evidence-user:evidence-password@example.invalid/check?token=evidence-token#evidence-fragment"
+    manager = fixture.manager(validator=lambda _: (False, [{secret_url: "rejected"}]))
+    with pytest.raises(AgentKitError):
+        manager.resync()
+    rendered = (manager.root / "status.json").read_text()
+    assert "example.invalid/check" in rendered
+    assert all(secret not in rendered for secret in ("evidence-user", "evidence-password", "evidence-token", "evidence-fragment"))
 
 
 @pytest.mark.parametrize("has_active", [False, True])

@@ -54,7 +54,7 @@ class ProjectSkillsStatus:
     skills: tuple[str, ...]
 
     def as_dict(self) -> dict[str, object]:
-        return {
+        return _redacted({
             "project_id": self.project_id,
             "source_url": redact_url(self.source_url),
             "default_branch": self.default_branch,
@@ -65,7 +65,7 @@ class ProjectSkillsStatus:
             "reason": redact_url(self.reason),
             "updated_at": self.updated_at,
             "skills": list(self.skills),
-        }
+        })
 
 
 def redact_url(value: str | None) -> str | None:
@@ -86,7 +86,7 @@ def _redacted(value: Any) -> Any:
     if isinstance(value, str):
         return redact_url(value)
     if isinstance(value, dict):
-        return {key: _redacted(item) for key, item in value.items()}
+        return {_redacted(key): _redacted(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
         return [_redacted(item) for item in value]
     return value
@@ -173,15 +173,24 @@ class ProjectSkillRepositoryManager:
         self._check_branch(branch)
         return branch
 
-    def _selection_dict(self) -> dict[str, object]:
+    def _selection_dict(self, *, ci: bool = False) -> dict[str, object]:
         source = self.source()
         return {
             "project_id": self.project.identifier,
             "source_url": redact_url(source.url),
             "default_branch": source.default_branch,
-            "requested_branch": self.requested_branch(),
-            "local_override_applied": self.override_path.is_file(),
+            "requested_branch": self.requested_branch(ci=ci),
+            "local_override_applied": not ci and self.override_path.is_file(),
         }
+
+    def inspect(self, *, ci: bool = False) -> dict[str, object]:
+        """Проверить только manifest и активный SHA без fetch и изменения Git."""
+        if self.project.skills_repository is None:
+            return {**self._not_configured().as_dict(), "local_override_applied": False}
+        selection = self._selection_dict(ci=ci)
+        active = self._active()
+        return _redacted({**selection, "active_revision": active.active_revision if active else None,
+                          "resolved_revision": None})
 
     def _check_storage(self) -> None:
         # Git -C не должен следовать ссылке в product checkout; проверяем также
@@ -362,7 +371,9 @@ class ProjectSkillRepositoryManager:
             raise AgentKitError("Ревизия project-skills не связана с managed worktree") from error
         if self._git(["-C", str(root), "rev-parse", "HEAD"]) != revision:
             raise AgentKitError("Ревизия project-skills не совпадает с сохранённым SHA")
-        if self._git(["-C", str(root), "status", "--porcelain", "--untracked-files=all", "--ignored"]):
+        # Даже read-only status обычно обновляет index stat cache; inspection
+        # и validate --ci не должны менять managed Git state.
+        if self._git(["--no-optional-locks", "-C", str(root), "status", "--porcelain", "--untracked-files=all", "--ignored"]):
             raise AgentKitError("Ревизия project-skills изменена после проверки")
 
     def _active(self) -> ProjectSkillsStatus | None:

@@ -79,7 +79,7 @@ def _parser() -> argparse.ArgumentParser:
     subs.add_parser("install", help="Установить desired-state environment без обновления checkout")
     check = subs.add_parser("validate", help="Проверить repository и effective policy")
     check.add_argument("target", nargs="?", default="all", choices=["all", *VALIDATORS])
-    check.add_argument("--ci", action="store_true", help="Исключить user-local inputs")
+    check.add_argument("--ci", action="store_true", help="Исключить user-local inputs; project-skills проверяются без fetch")
     subs.add_parser("doctor", help="Проверить installation и runtime")
     for name in ("sync", "resync"):
         command = subs.add_parser(name, help="Привести машину к desired state")
