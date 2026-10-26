@@ -493,6 +493,27 @@ def test_redact_url_line_rule_detects_scheme_after_diagnostic_prefix(prefix):
     assert redact_url(prefix + "https://alice: secret'part@example.invalid/repo") == prefix + "<redacted-url>"
 
 
+@pytest.mark.parametrize("separator", ["\v", "\f", "\x1c", "\u0085"])
+def test_redact_url_keeps_non_diagnostic_separators_inside_sensitive_line(separator):
+    unsafe = "https://alice:" + separator + "secret@example.invalid/repo"
+    text = "before " + unsafe + " diagnostic tail\r\nafter https://safe.example.invalid/repo\rfinal\n"
+    assert redact_url(text) == "before <redacted-url>\r\nafter https://safe.example.invalid/repo\rfinal\n"
+
+
+@pytest.mark.parametrize("separator", ["\v", "\f", "\x1c", "\u0085"])
+def test_public_outputs_mask_non_diagnostic_separators(fixture, separator):
+    from agent_engineering_kit.project_skills import ProjectSkillsStatus
+
+    unsafe = "https://alice:" + separator + "secret@example.invalid/repo"
+    text = "before " + unsafe + " diagnostic tail\r\nafter https://safe.example.invalid/repo\rfinal\n"
+    status = ProjectSkillsStatus("shared", unsafe, "main", "main", None, None, "STALE", text, None, ())
+    rendered = status.as_dict()
+    assert rendered["source_url"] == "<redacted-url>"
+    assert rendered["reason"] == "before <redacted-url>\r\nafter https://safe.example.invalid/repo\rfinal\n"
+    fixture.project.manifest["skills"]["repository"]["url"] = unsafe
+    assert fixture.manager().inspect(ci=True)["source_url"] == "<redacted-url>"
+
+
 @pytest.mark.parametrize("first_path", ["/one", ""])
 @pytest.mark.parametrize("second_path", ["/two", ""])
 def test_redact_url_masks_multiple_compact_json_urls(first_path, second_path):

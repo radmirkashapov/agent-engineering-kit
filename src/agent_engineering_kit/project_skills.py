@@ -74,13 +74,17 @@ def redact_url(value: str | None) -> str | None:
         return None
     scheme = r"[a-zA-Z][a-zA-Z0-9+.-]*://"
     rendered: list[str] = []
-    for line in value.splitlines(keepends=True):
-        first = re.search(scheme, line)
+    # Только CRLF/CR/LF разделяют diagnostic lines. Остальные control и
+    # Unicode whitespace должны остаться рядом с маркерами секрета.
+    parts = re.split(r"(\r\n|\r|\n)", value)
+    for index in range(0, len(parts), 2):
+        content = parts[index]
+        ending = parts[index + 1] if index + 1 < len(parts) else ""
+        line = content + ending
+        first = re.search(scheme, content)
         if first is None:
             rendered.append(line)
             continue
-        content = line.rstrip("\r\n")
-        ending = line[len(content):]
         remainder = content[first.start():]
         # Маркеры проверяются во всём остатке строки, до любой токенизации:
         # пробелы и кавычки не могут оставить фрагмент секрета снаружи.
