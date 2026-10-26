@@ -732,7 +732,7 @@ def run(argv: list[str] | None = None) -> int:
         if args.command == "project" and args.project_command == "skills":
             try:
                 project = find_project(Path.cwd())
-            except AgentKitError:
+            except (AgentKitError, UnicodeError):
                 raise AgentKitError("Некорректная конфигурация logical project") from None
             if project is None:
                 raise AgentKitError("Logical project не найден; выполните agent-kit project init")

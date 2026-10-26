@@ -375,6 +375,21 @@ def test_project_skills_malformed_manifest_is_safe_error(skills_project, monkeyp
     assert all(value not in output.err for value in ("fixture-user", "fixture-secret", "fixture-token"))
 
 
+def test_project_skills_invalid_utf8_manifest_is_safe_error(skills_project, monkeypatch, capsys):
+    manifest = skills_project / ".ai-team/project.yaml"
+    manifest.write_bytes(b"name: fixture-private-name\nnote: fixture-private-value\n\xff")
+    monkeypatch.chdir(skills_project)
+
+    assert run(["project", "skills", "status"]) == 1
+
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert "Некорректная конфигурация logical project" in output.err
+    assert all(value not in output.err for value in (
+        str(manifest), "fixture-private-name", "fixture-private-value", "0xff", "UnicodeDecodeError",
+    ))
+
+
 @pytest.mark.parametrize("resource", ["skills", "mcp"])
 def test_override_requires_source_and_scope(resource: str) -> None:
     with pytest.raises(SystemExit):
