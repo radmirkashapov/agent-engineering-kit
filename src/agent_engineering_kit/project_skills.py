@@ -9,13 +9,14 @@ import shutil
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Iterator
+from typing import Any, Callable, Iterator, Literal
 from urllib.parse import urlsplit, urlunsplit
 
 from .errors import AgentKitError
 from .external_skills import SkillValidator
-from .io import atomic_write, load_json
+from .io import atomic_write, load_json, markdown_frontmatter
 from .paths import KitPaths
 from .process import CommandResult, run_command
 from .projects import LogicalProject
@@ -39,7 +40,35 @@ class ProjectSkillsSource:
     default_branch: str
 
 
-def redact_url(value: str) -> str:
+@dataclass(frozen=True)
+class ProjectSkillsStatus:
+    project_id: str
+    source_url: str | None
+    default_branch: str | None
+    requested_branch: str | None
+    resolved_revision: str | None
+    active_revision: str | None
+    state: Literal["ACTIVE", "STALE", "UPDATE_REJECTED", "NOT_CONFIGURED"]
+    reason: str | None
+    updated_at: str | None
+    skills: tuple[str, ...]
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "project_id": self.project_id,
+            "source_url": redact_url(self.source_url),
+            "default_branch": self.default_branch,
+            "requested_branch": self.requested_branch,
+            "resolved_revision": self.resolved_revision,
+            "active_revision": self.active_revision,
+            "state": self.state,
+            "reason": redact_url(self.reason),
+            "updated_at": self.updated_at,
+            "skills": list(self.skills),
+        }
+
+
+def redact_url(value: str | None) -> str | None:
     """Убрать userinfo, query и fragment из URL, в том числе в Git diagnostic."""
     def redact(match: re.Match[str]) -> str:
         try:
@@ -48,7 +77,19 @@ def redact_url(value: str) -> str:
         except ValueError:
             return match.group().split("://", 1)[0] + "://<redacted>"
 
+    if value is None:
+        return None
     return re.sub(r"\b[a-zA-Z][a-zA-Z0-9+.-]*://[^\s'\"<>]+", redact, value)
+
+
+def _redacted(value: Any) -> Any:
+    if isinstance(value, str):
+        return redact_url(value)
+    if isinstance(value, dict):
+        return {key: _redacted(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_redacted(item) for item in value]
+    return value
 
 
 @contextmanager
@@ -146,7 +187,8 @@ class ProjectSkillRepositoryManager:
         # Git -C не должен следовать ссылке в product checkout; проверяем также
         # родителей, через которых создаются override и candidate.
         managed = [self.paths.projects, self.root.parent, self.root, self.checkout,
-                   self.checkout / ".git", self.root / "candidates"]
+                   self.checkout / ".git", self.root / "candidates", self.root / "revisions",
+                   self.root / "active.json", self.root / "status.json"]
         for path in managed:
             if path.is_symlink() or (path.exists() and getattr(path.lstat(), "st_file_attributes", 0) & 0x400):
                 raise AgentKitError("Небезопасная ссылка в managed-хранилище project-skills")
@@ -194,32 +236,241 @@ class ProjectSkillRepositoryManager:
             self._git(["-C", str(self.checkout), "worktree", "prune"])
 
     def fetch_candidate(self, *, ci: bool = False) -> tuple[Path, str]:
-        source = self.source()
+        self.source()
         self._check_storage()
         with _repository_lock(self.lock_path):
-            branch = self.requested_branch(ci=ci)
-            self._check_branch(branch)
-            self.root.mkdir(parents=True, exist_ok=True)
-            if not self.checkout.exists():
-                try:
-                    self._git(["clone", "--quiet", "--no-checkout", "--", source.url, str(self.checkout)])
-                except Exception:
-                    if self.checkout.exists():
-                        shutil.rmtree(self.checkout)
-                    raise
-            if not (self.checkout / ".git").is_dir():
-                raise AgentKitError("Некорректный managed checkout project-skills")
-            self._git(["-C", str(self.checkout), "remote", "set-url", "origin", source.url])
-            # Явный refspec обновляет remote ref также после force push/rewind.
-            remote_ref = f"refs/remotes/origin/{branch}"
-            self._git(["-C", str(self.checkout), "fetch", "--quiet", "--prune", "origin",
-                       f"+refs/heads/{branch}:{remote_ref}"])
-            revision = self._git(["-C", str(self.checkout), "rev-parse", "--verify", f"{remote_ref}^{{commit}}"])
-            candidate = self.root / "candidates" / str(uuid.uuid4())
-            candidate.parent.mkdir(parents=True, exist_ok=True)
+            return self._fetch_candidate(ci=ci)
+
+    def _fetch_candidate(self, *, ci: bool = False) -> tuple[Path, str]:
+        """Вызывается только под общей блокировкой fetch → validation → activation."""
+        source = self.source()
+        self._check_storage()
+        branch = self.requested_branch(ci=ci)
+        self._check_branch(branch)
+        self.root.mkdir(parents=True, exist_ok=True)
+        if not self.checkout.exists():
             try:
-                self._git(["-C", str(self.checkout), "worktree", "add", "--detach", str(candidate), revision])
+                self._git(["clone", "--quiet", "--no-checkout", "--", source.url, str(self.checkout)])
             except Exception:
-                self._discard_candidate(candidate)
+                if self.checkout.exists():
+                    shutil.rmtree(self.checkout)
                 raise
-            return candidate, revision
+        if not (self.checkout / ".git").is_dir():
+            raise AgentKitError("Некорректный managed checkout project-skills")
+        self._git(["-C", str(self.checkout), "remote", "set-url", "origin", source.url])
+        # Явный refspec обновляет remote ref также после force push/rewind.
+        remote_ref = f"refs/remotes/origin/{branch}"
+        self._git(["-C", str(self.checkout), "fetch", "--quiet", "--prune", "origin",
+                   f"+refs/heads/{branch}:{remote_ref}"])
+        revision = self._git(["-C", str(self.checkout), "rev-parse", "--verify", f"{remote_ref}^{{commit}}"])
+        candidate = self.root / "candidates" / str(uuid.uuid4())
+        candidate.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            self._git(["-C", str(self.checkout), "worktree", "add", "--detach", str(candidate), revision])
+        except Exception:
+            self._discard_candidate(candidate)
+            raise
+        return candidate, revision
+
+    def _not_configured(self) -> ProjectSkillsStatus:
+        return ProjectSkillsStatus(self.project.identifier, None, None, None, None, None,
+                                   "NOT_CONFIGURED", None, None, ())
+
+    def _structure(self, candidate: Path) -> dict[str, Path]:
+        boundary = candidate.resolve()
+        for path in candidate.rglob("*"):
+            if path.is_symlink() or getattr(path.lstat(), "st_file_attributes", 0) & 0x400:
+                if not path.resolve().is_relative_to(boundary):
+                    raise AgentKitError("Ссылка project-skills выходит за пределы candidate")
+        skills_root = candidate / "skills"
+        if not skills_root.is_dir():
+            raise AgentKitError("В project-skills отсутствует каталог skills/")
+        skills: dict[str, Path] = {}
+        for skill in sorted(skills_root.iterdir()):
+            if not skill.is_dir():
+                continue
+            document = skill / "SKILL.md"
+            if not document.is_file():
+                raise AgentKitError(f"Отсутствует SKILL.md: {skill.name}")
+            identifier = markdown_frontmatter(document).get("name")
+            if not isinstance(identifier, str) or not identifier:
+                raise AgentKitError(f"Отсутствует строковое имя skill: {skill.name}")
+            if identifier in skills:
+                raise AgentKitError(f"Повторяющийся skill id: {identifier}")
+            if identifier != skill.name:
+                raise AgentKitError(f"Имя skill не совпадает с каталогом: {skill.name}")
+            skills[identifier] = skill
+        if not skills:
+            raise AgentKitError("В project-skills нет дочерних каталогов skills")
+        return skills
+
+    def _validate_candidate(self, candidate: Path) -> tuple[dict[str, Path], list[dict[str, Any]]]:
+        evidence: list[dict[str, Any]] = []
+        try:
+            skills = self._structure(candidate)
+        except (AgentKitError, OSError, UnicodeError, RuntimeError) as error:
+            evidence.append({"check": "structure", "status": "FAIL", "reason": redact_url(str(error))})
+            return {}, evidence
+        evidence.append({"check": "structure", "status": "PASS", "skills": sorted(skills)})
+        accepted = True
+        for identifier, path in skills.items():
+            try:
+                passed, checks = self.validator(path)
+            except Exception as error:
+                passed, checks = False, [{"check": "security", "status": "FAIL", "reason": str(error)}]
+            evidence.append({"check": "security", "skill": identifier,
+                             "status": "PASS" if passed else "FAIL", "evidence": _redacted(checks)})
+            accepted = accepted and passed
+        return skills if accepted else {}, evidence
+
+    def _read_status(self, path: Path) -> ProjectSkillsStatus:
+        value = load_json(path)
+        if not isinstance(value.get("skills"), list):
+            raise AgentKitError("Некорректный состав project-skills")
+        try:
+            status = ProjectSkillsStatus(**{key: value[key] for key in ProjectSkillsStatus.__dataclass_fields__})
+            status = ProjectSkillsStatus(**{**status.__dict__, "skills": tuple(status.skills)})
+        except (KeyError, TypeError) as error:
+            raise AgentKitError("Некорректное состояние project-skills") from error
+        if (status.project_id != self.project.identifier
+                or not isinstance(status.state, str)
+                or status.state not in {"ACTIVE", "STALE", "UPDATE_REJECTED", "NOT_CONFIGURED"}
+                or any(item is not None and not isinstance(item, str) for item in (
+                    status.source_url, status.default_branch, status.requested_branch, status.resolved_revision,
+                    status.active_revision, status.reason, status.updated_at))
+                or any(not isinstance(item, str) or item in {"", ".", ".."} or "/" in item or "\\" in item
+                       for item in status.skills)
+                or len(status.skills) != len(set(status.skills))):
+            raise AgentKitError("Некорректное состояние project-skills")
+        return status
+
+    def _check_revision(self, root: Path, revision: str) -> None:
+        gitfile = root / ".git"
+        if (root.is_symlink() or not root.is_dir() or not gitfile.is_file() or gitfile.is_symlink()
+                or getattr(root.lstat(), "st_file_attributes", 0) & 0x400):
+            raise AgentKitError("Отсутствует безопасная ревизия project-skills")
+        try:
+            pointer = gitfile.read_text(encoding="utf-8").strip()
+            if not pointer.startswith("gitdir: "):
+                raise ValueError("gitfile")
+            metadata = (root / pointer.removeprefix("gitdir: ")).resolve()
+            backlink = Path((metadata / "gitdir").read_text(encoding="utf-8").strip())
+            if (metadata.parent != self.checkout.resolve() / ".git/worktrees"
+                    or backlink.resolve() != gitfile.resolve()):
+                raise ValueError("worktree metadata")
+        except (OSError, UnicodeError, ValueError) as error:
+            raise AgentKitError("Ревизия project-skills не связана с managed worktree") from error
+        if self._git(["-C", str(root), "rev-parse", "HEAD"]) != revision:
+            raise AgentKitError("Ревизия project-skills не совпадает с сохранённым SHA")
+        if self._git(["-C", str(root), "status", "--porcelain", "--untracked-files=all", "--ignored"]):
+            raise AgentKitError("Ревизия project-skills изменена после проверки")
+
+    def _active(self) -> ProjectSkillsStatus | None:
+        self._check_storage()
+        pointer = self.root / "active.json"
+        if not pointer.exists():
+            return None
+        active = self._read_status(pointer)
+        revision = active.active_revision
+        if (active.state != "ACTIVE" or not revision or not re.fullmatch(r"[0-9a-f]{40,64}", revision)
+                or active.resolved_revision != revision or not active.skills):
+            raise AgentKitError("Некорректный active pointer project-skills")
+        root = self.root / "revisions" / revision
+        self._check_revision(root, revision)
+        try:
+            skills = self._structure(root)
+        except (OSError, UnicodeError, RuntimeError) as error:
+            raise AgentKitError("Некорректная активная ревизия project-skills") from error
+        if tuple(skills) != active.skills:
+            raise AgentKitError("Состав активных project-skills не совпадает с active pointer")
+        return active
+
+    def active_skills(self) -> dict[str, Path]:
+        if self.project.skills_repository is None:
+            return {}
+        active = self._active()
+        if active is None:
+            return {}
+        return {identifier: self.root / "revisions" / active.active_revision / "skills" / identifier
+                for identifier in active.skills}
+
+    def status(self) -> ProjectSkillsStatus:
+        if self.project.skills_repository is None:
+            return self._not_configured()
+        active = self._active()
+        if (self.root / "status.json").is_file():
+            try:
+                recorded = self._read_status(self.root / "status.json")
+            except AgentKitError:
+                if active is None:
+                    raise
+                return active
+            if (active and recorded.active_revision == active.active_revision and recorded.skills == active.skills
+                    and recorded.state in {"ACTIVE", "STALE", "UPDATE_REJECTED"}):
+                return recorded
+            if (active is None and recorded.active_revision is None and not recorded.skills
+                    and recorded.state in {"STALE", "UPDATE_REJECTED"}):
+                return recorded
+        if active:
+            return active
+        raise AgentKitError("Project-skills ещё не синхронизированы")
+
+    def _record(self, status: ProjectSkillsStatus, evidence: list[dict[str, Any]]) -> None:
+        atomic_write(self.root / "status.json", json.dumps(_redacted({**status.as_dict(), "evidence": evidence}),
+                                                          ensure_ascii=False, indent=2) + "\n")
+
+    def resync(self, ci: bool = False) -> ProjectSkillsStatus:
+        if self.project.skills_repository is None:
+            return self._not_configured()
+        self._check_storage()
+        with _repository_lock(self.lock_path):
+            active = self._active()
+            source = self.source()
+            branch: str | None = None
+            revision: str | None = None
+            candidate: Path | None = None
+            evidence: list[dict[str, Any]] = []
+            state: Literal["STALE", "UPDATE_REJECTED"] = "STALE"
+            try:
+                branch = self.requested_branch(ci=ci)
+                candidate, revision = self._fetch_candidate(ci=ci)
+                state = "UPDATE_REJECTED"
+                skills, evidence = self._validate_candidate(candidate)
+                if not skills:
+                    raise AgentKitError("Candidate project-skills отклонён проверкой структуры или безопасности")
+                if active and revision == active.active_revision:
+                    self._discard_candidate(candidate)
+                    candidate = None
+                    # Та же ревизия сохраняет исходное время и atomic pointer.
+                    if (active.requested_branch == branch and active.source_url == redact_url(source.url)
+                            and active.default_branch == source.default_branch):
+                        self._record(active, evidence)
+                        return active
+                destination = self.root / "revisions" / revision
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                if destination.exists():
+                    self._check_revision(destination, revision)
+                    if candidate is not None:
+                        self._discard_candidate(candidate)
+                        candidate = None
+                else:
+                    self._git(["-C", str(self.checkout), "worktree", "move", str(candidate), str(destination)])
+                    candidate = None
+                result = ProjectSkillsStatus(self.project.identifier, redact_url(source.url), source.default_branch,
+                                             branch, revision, revision, "ACTIVE", None,
+                                             datetime.now(timezone.utc).isoformat(), tuple(skills))
+                self._record(result, evidence)
+                atomic_write(self.root / "active.json", json.dumps(result.as_dict(), ensure_ascii=False, indent=2) + "\n")
+                return result
+            except (AgentKitError, OSError, UnicodeError) as error:
+                result = ProjectSkillsStatus(self.project.identifier, redact_url(source.url), source.default_branch,
+                                             branch, revision, active.active_revision if active else None, state,
+                                             redact_url(str(error)), datetime.now(timezone.utc).isoformat(),
+                                             active.skills if active else ())
+                self._record(result, evidence)
+                if active is None:
+                    raise AgentKitError(result.reason) from None
+                return result
+            finally:
+                if candidate is not None:
+                    self._discard_candidate(candidate)

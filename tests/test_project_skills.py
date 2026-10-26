@@ -4,6 +4,7 @@ import json
 import os
 import stat
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -29,9 +30,22 @@ class RepositoryFixture:
     project: LogicalProject
     paths: KitPaths
 
-    def manager(self, *, second_root: bool = False, runner=run_command):
+    def manager(self, *, second_root: bool = False, runner=run_command, validator=None):
         project = replace(self.project, root=self.project.root.parent / "other") if second_root else self.project
-        return ProjectSkillRepositoryManager(self.paths.repository, self.paths, project, runner=runner)
+        return ProjectSkillRepositoryManager(self.paths.repository, self.paths, project, runner=runner, validator=validator)
+
+    def commit_skill(self, content: str, *, name: str = "example") -> str:
+        git(self.seed, "switch", "-q", "main")
+        skill = self.seed / "skills" / name / "SKILL.md"
+        skill.parent.mkdir(parents=True, exist_ok=True)
+        skill.write_text(content, encoding="utf-8")
+        git(self.seed, "add", ".")
+        git(self.seed, "commit", "-qm", "update skill")
+        git(self.seed, "push", "-q", str(self.upstream), "main")
+        return self.remote_revision("main")
+
+    def disable_remote(self) -> None:
+        self.upstream.rename(self.upstream.with_name("offline.git"))
 
     def remote_revision(self, branch: str) -> str:
         return git(self.upstream, "rev-parse", f"refs/heads/{branch}")
@@ -276,6 +290,304 @@ def test_fetch_candidate_hostile_git_environment_preserves_complete_product_stat
         except AgentKitError:
             pass  # Отказ безопасен, если никакое product state не изменилось.
     assert fixture.product_snapshot() == before
+
+
+def test_first_activation_is_last_known_good_git_worktree_and_idempotent(fixture):
+    before = fixture.product_snapshot()
+    manager = fixture.manager(validator=lambda _: (True, [{"check": "fixture", "status": "PASS"}]))
+    active = manager.resync()
+    assert active.state == "ACTIVE"
+    assert active.active_revision == fixture.remote_revision("main") == active.resolved_revision
+    assert active.skills == ("example",)
+    path = manager.active_skills()["example"]
+    assert path == manager.root / "revisions" / active.active_revision / "skills/example"
+    assert git(path, "rev-parse", "HEAD") == active.active_revision
+    assert str(path.parent.parent) in git(manager.checkout, "worktree", "list", "--porcelain")
+    pointer = (manager.root / "active.json").read_bytes()
+    assert manager.resync() == active
+    assert (manager.root / "active.json").read_bytes() == pointer
+    assert manager.status() == active
+    assert not list((manager.root / "candidates").iterdir())
+    assert fixture.product_snapshot() == before
+
+
+def test_rejected_update_keeps_last_known_good(fixture):
+    manager = fixture.manager(validator=lambda _: (True, []))
+    active = manager.resync()
+    pointer = (manager.root / "active.json").read_bytes()
+    old_path = manager.active_skills()["example"]
+    revision = fixture.commit_skill("---\nname: example\ndescription: rejected\n---\n# Rejected\n")
+    manager.validator = lambda _: (False, [{"check": "fixture", "status": "FAIL"}])
+    rejected = manager.resync()
+    assert rejected.state == "UPDATE_REJECTED"
+    assert rejected.resolved_revision == revision
+    assert rejected.active_revision == active.active_revision
+    assert rejected.reason
+    assert manager.active_skills()["example"] == old_path
+    assert (manager.root / "active.json").read_bytes() == pointer
+    assert manager.status() == rejected
+    assert not list((manager.root / "candidates").iterdir())
+    assert "FAIL" in (manager.root / "status.json").read_text()
+
+
+def test_offline_refresh_reports_stale_and_keeps_active_revision(fixture):
+    manager = fixture.manager(validator=lambda _: (True, []))
+    active = manager.resync()
+    pointer = (manager.root / "active.json").read_bytes()
+    fixture.disable_remote()
+    stale = manager.resync()
+    assert stale.state == "STALE"
+    assert stale.active_revision == active.active_revision
+    assert stale.resolved_revision is None
+    assert manager.status() == stale
+    assert manager.active_skills()["example"].joinpath("SKILL.md").is_file()
+    assert (manager.root / "active.json").read_bytes() == pointer
+
+
+@pytest.mark.parametrize("kind", ["offline", "security"])
+def test_first_failure_without_last_known_good_raises(fixture, kind):
+    manager = fixture.manager(validator=lambda _: (False, [{"check": "fixture", "status": "FAIL"}]))
+    if kind == "offline":
+        fixture.disable_remote()
+    with pytest.raises(AgentKitError):
+        manager.resync()
+    assert not (manager.root / "active.json").exists()
+    assert manager.active_skills() == {}
+
+
+@pytest.mark.parametrize("content", [
+    "# Missing frontmatter\n", "---\nname: example\n", "---\nname: [broken\n---\n",
+    "---\n- example\n---\n", "---\nname: other\n---\n", "---\nname: 123\n---\n",
+])
+def test_malformed_candidate_never_activates(fixture, content):
+    fixture.commit_skill(content)
+    manager = fixture.manager(validator=lambda _: (True, []))
+    with pytest.raises(AgentKitError):
+        manager.resync()
+    assert not (manager.root / "active.json").exists()
+    assert not list((manager.root / "candidates").iterdir())
+    assert "FAIL" in (manager.root / "status.json").read_text()
+
+
+@pytest.mark.parametrize("kind", ["missing-skills", "empty-skills", "missing-file", "outside-link", "duplicate-id"])
+def test_malformed_repository_structure_keeps_last_known_good(fixture, kind):
+    manager = fixture.manager(validator=lambda _: (True, []))
+    active = manager.resync()
+    git(fixture.seed, "switch", "-q", "main")
+    skill = fixture.seed / "skills/example/SKILL.md"
+    if kind in {"missing-skills", "empty-skills", "missing-file"}:
+        skill.unlink()
+        if kind == "missing-skills":
+            (fixture.seed / "skills/example").rmdir()
+            (fixture.seed / "skills").rmdir()
+        else:
+            marker = fixture.seed / ("skills/.keep" if kind == "empty-skills" else "skills/example/.keep")
+            marker.write_text("keep\n")
+    elif kind == "outside-link":
+        (skill.parent / "secret").symlink_to(fixture.project.root / "app.txt")
+    else:
+        duplicate = fixture.seed / "skills/duplicate/SKILL.md"
+        duplicate.parent.mkdir()
+        duplicate.write_text("---\nname: example\n---\n")
+    git(fixture.seed, "add", "-A")
+    git(fixture.seed, "commit", "-qm", "malformed structure")
+    git(fixture.seed, "push", "-q", str(fixture.upstream), "main")
+    rejected = manager.resync()
+    assert rejected.state == "UPDATE_REJECTED"
+    assert rejected.active_revision == active.active_revision
+    assert manager.active_skills()["example"].joinpath("SKILL.md").is_file()
+
+
+def test_concurrent_resync_serializes_validation_and_activation(fixture):
+    manager = fixture.manager(validator=lambda _: (True, []))
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        statuses = list(executor.map(lambda _: manager.resync(), range(4)))
+    assert all(status == statuses[0] for status in statuses)
+    assert statuses[0].state == "ACTIVE"
+    assert len(list((manager.root / "revisions").iterdir())) == 1
+    assert not list((manager.root / "candidates").iterdir())
+    assert git(manager.active_skills()["example"], "rev-parse", "HEAD") == statuses[0].active_revision
+
+
+def test_unconfigured_lifecycle_has_no_source_revision_or_state_writes(fixture):
+    fixture.project.manifest.pop("skills")
+    manager = fixture.manager()
+    status = manager.resync()
+    assert status.state == "NOT_CONFIGURED"
+    assert status.source_url is status.active_revision is status.resolved_revision is None
+    assert status.skills == ()
+    assert manager.status() == status
+    assert manager.active_skills() == {}
+    assert not manager.root.exists()
+
+
+@pytest.mark.parametrize("corruption", ["invalid-json", "missing-revision", "traversal", "missing-skill", "modified-file"])
+def test_corrupt_active_pointer_fails_closed(fixture, corruption):
+    manager = fixture.manager(validator=lambda _: (True, []))
+    manager.resync()
+    pointer = manager.root / "active.json"
+    value = json.loads(pointer.read_text())
+    if corruption == "invalid-json":
+        pointer.write_text("broken")
+    elif corruption == "modified-file":
+        manager.active_skills()["example"].joinpath("SKILL.md").write_text(
+            "---\nname: example\n---\n# Unvalidated modification\n")
+    else:
+        if corruption == "missing-revision":
+            value["active_revision"] = "0" * 40
+        elif corruption == "traversal":
+            value["skills"] = ["../../product"]
+        else:
+            value["skills"] = ["missing"]
+        pointer.write_text(json.dumps(value))
+    with pytest.raises(AgentKitError):
+        manager.active_skills()
+    with pytest.raises(AgentKitError):
+        manager.resync()
+
+
+def test_status_diagnostics_cannot_claim_activation_or_replace_pointer(fixture):
+    manager = fixture.manager(validator=lambda _: (True, []))
+    with pytest.raises(AgentKitError, match="синхронизированы"):
+        manager.status()
+    active = manager.resync()
+    pointer = manager.root / "active.json"
+    diagnostic = manager.root / "status.json"
+    diagnostic.write_text("broken")
+    assert manager.status() == active
+    diagnostic.write_text(json.dumps({**active.as_dict(), "skills": ["other"], "state": "STALE"}))
+    assert manager.status() == active
+    diagnostic.write_text(json.dumps(active.as_dict()))
+    pointer.unlink()
+    assert manager.active_skills() == {}
+    with pytest.raises(AgentKitError):
+        manager.status()
+
+
+@pytest.mark.parametrize("operation", ["move", "pointer"])
+def test_failed_activation_keeps_exact_last_known_good_pointer(fixture, monkeypatch, operation):
+    manager = fixture.manager(validator=lambda _: (True, []))
+    active = manager.resync()
+    pointer = (manager.root / "active.json").read_bytes()
+    fixture.commit_skill("---\nname: example\n---\n# Next revision\n")
+    if operation == "move":
+        def fail(args, **kwargs):
+            if "worktree" in args and "move" in args:
+                return CommandResult(tuple(args), 1, "", "move failed")
+            return run_command(args, **kwargs)
+        manager.runner = fail
+    else:
+        from agent_engineering_kit import project_skills
+        original = project_skills.atomic_write
+
+        def fail(path, content):
+            if path.name == "active.json":
+                raise OSError("pointer replacement failed")
+            original(path, content)
+        monkeypatch.setattr(project_skills, "atomic_write", fail)
+    rejected = manager.resync()
+    assert rejected.state == "UPDATE_REJECTED"
+    assert rejected.active_revision == active.active_revision
+    assert (manager.root / "active.json").read_bytes() == pointer
+    assert manager.active_skills()["example"].joinpath("SKILL.md").is_file()
+    assert not list((manager.root / "candidates").iterdir())
+
+
+def test_status_and_evidence_redact_source_and_validator_errors(fixture):
+    secret_url = "https://alice:password@example.invalid/repo.git?token=secret#private"
+    manager = fixture.manager(validator=lambda _: (False, [{"check": "fixture", "status": "FAIL", "url": secret_url}]))
+    with pytest.raises(AgentKitError):
+        manager.resync()
+    assert "example.invalid/repo.git" in (manager.root / "status.json").read_text()
+    status = replace(manager.status(), source_url=secret_url, reason=secret_url)
+    for text in ((manager.root / "status.json").read_text(), json.dumps(status.as_dict())):
+        assert "example.invalid/repo.git" in text
+        assert all(secret not in text for secret in ("alice", "password", "token=secret", "#private"))
+
+
+@pytest.mark.parametrize("has_active", [False, True])
+def test_validator_failure_is_rejection_with_candidate_cleanup(fixture, has_active):
+    manager = fixture.manager(validator=lambda _: (True, []))
+    active = manager.resync() if has_active else None
+    fixture.commit_skill("---\nname: example\n---\n# Security checker crashes\n")
+
+    def crash(_):
+        raise RuntimeError("security evaluator failed")
+
+    manager.validator = crash
+    if active:
+        rejected = manager.resync()
+        assert rejected.state == "UPDATE_REJECTED"
+        assert rejected.active_revision == active.active_revision
+    else:
+        with pytest.raises(AgentKitError):
+            manager.resync()
+    assert not list((manager.root / "candidates").iterdir())
+
+
+def test_successful_update_keeps_old_revision_and_can_return_to_it(fixture):
+    manager = fixture.manager(validator=lambda _: (True, []))
+    active = manager.resync()
+    old_path = manager.active_skills()["example"]
+    revision = fixture.commit_skill("---\nname: example\n---\n# Updated\n")
+    updated = manager.resync()
+    assert updated.active_revision == revision != active.active_revision
+    assert old_path.joinpath("SKILL.md").is_file()
+    assert manager.active_skills()["example"] != old_path
+    git(fixture.upstream, "update-ref", "refs/heads/main", active.active_revision)
+    restored = manager.resync()
+    assert restored.state == "ACTIVE"
+    assert restored.active_revision == active.active_revision
+    assert manager.active_skills()["example"] == old_path
+
+
+def test_resync_uses_configured_default_in_ci_without_changing_override(fixture):
+    manager = fixture.manager(validator=lambda _: (True, []))
+    fixture.commit_skill("---\nname: example\n---\n# Branch skill\n")
+    git(fixture.upstream, "update-ref", "refs/heads/feat/new-check", fixture.remote_revision("main"))
+    manager.set_branch("feat/new-check")
+    active = manager.resync()
+    assert active.requested_branch == "feat/new-check"
+    ci = manager.resync(ci=True)
+    assert ci.state == "ACTIVE"
+    assert ci.requested_branch == "main"
+    assert manager.requested_branch() == "feat/new-check"
+    assert manager.active_skills()["example"].joinpath("SKILL.md").is_file()
+
+
+def test_default_security_validator_is_required_for_activation(fixture, monkeypatch):
+    from agent_engineering_kit.security_tools import SecurityToolManager
+
+    def reject(self, skill):
+        return False, [{"check": "default-validator", "status": "FAIL"}]
+
+    monkeypatch.setattr(SecurityToolManager, "validate_skill", reject)
+    manager = fixture.manager()
+    with pytest.raises(AgentKitError):
+        manager.resync()
+    assert not (manager.root / "active.json").exists()
+    assert "default-validator" in (manager.root / "status.json").read_text()
+
+
+def test_changed_default_branch_updates_status_even_with_same_override_revision(fixture):
+    manager = fixture.manager(validator=lambda _: (True, []))
+    manager.set_branch("main")
+    manager.resync()
+    fixture.project.manifest["skills"]["repository"]["default_branch"] = "feat/new-check"
+    updated = manager.resync()
+    assert updated.default_branch == "feat/new-check"
+    assert updated.requested_branch == "main"
+
+
+def test_active_pointer_cannot_use_another_worktree_git_metadata(fixture):
+    manager = fixture.manager(validator=lambda _: (True, []))
+    active = manager.resync()
+    root = manager.active_skills()["example"].parent.parent
+    other = manager.root / "other"
+    git(manager.checkout, "worktree", "add", "--detach", str(other), active.active_revision)
+    (root / ".git").write_text((other / ".git").read_text())
+    with pytest.raises(AgentKitError):
+        manager.active_skills()
 
 
 @pytest.mark.parametrize("variable,value", [
