@@ -11,6 +11,7 @@
 - [Безопасная загрузка credentials для MCP и границы OAuth](superpowers/specs/2026-10-23-mcp-credentials-design.md).
 - [План безопасной загрузки credentials для MCP](superpowers/plans/2026-10-23-mcp-credentials.md).
 - [Дизайн единого Git-репозитория проектных skills](superpowers/specs/2026-10-26-project-skills-repository-design.md).
+- [План реализации единого Git-репозитория проектных skills](superpowers/plans/2026-10-26-project-skills-repository.md).
 - [Локальные переопределения](../README.md#локальные-переопределения).
 - [Kit как control plane для внешних agent harness](adr/0012-harness-control-plane.md).
 - [Capability kernel, multi-repo topology и безопасная параллельная работа](adr/0013-capability-kernel.md).
