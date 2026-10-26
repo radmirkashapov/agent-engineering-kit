@@ -23,6 +23,11 @@ documentation:
 memory:
   # Namespace связывает project с изолированной machine-local memory.
   namespace: example-project
+# Необязательный общий источник skills; без секции состояние — NOT_CONFIGURED.
+# skills:
+#   repository:
+#     url: git@gitlab.example.com:team/project-skills.git
+#     default_branch: main
 harness:
   # Auto выбирает первый adapter, покрывающий обязательные возможности проекта.
   preferred_client: auto
