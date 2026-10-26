@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import stat
+import shutil
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
@@ -15,6 +16,9 @@ from agent_engineering_kit.paths import KitPaths
 from agent_engineering_kit.process import CommandResult, run_command
 from agent_engineering_kit.projects import LogicalProject
 from agent_engineering_kit.project_skills import ProjectSkillRepositoryManager, redact_url
+from agent_engineering_kit.clients import sync_clients, expose_native_skills
+from agent_engineering_kit.component_state import Lifecycle, write_state
+from conftest import write_yaml
 
 
 def git(root: Path, *args: str) -> str:
@@ -96,6 +100,170 @@ def fixture(tmp_path: Path) -> RepositoryFixture:
         "id": "shared", "skills": {"repository": {"url": str(upstream), "default_branch": "main"}},
     })
     return RepositoryFixture(upstream, seed, project, paths)
+
+
+@pytest.fixture
+def publication_fixture(fixture):
+    real = Path(__file__).resolve().parents[1]
+    for directory in ("clients", "catalog", "locks", "schemas"):
+        shutil.copytree(real / directory, fixture.paths.repository / directory)
+    return fixture
+
+
+@pytest.mark.parametrize("local_override", [False, True])
+def test_project_skills_are_published_with_provenance(publication_fixture, monkeypatch, local_override):
+    fixture = publication_fixture
+    manager = fixture.manager(validator=lambda _: (True, []))
+    status = manager.resync()
+    repository, paths = fixture.paths.repository, fixture.paths
+    builtin = repository / "skills/first-party/example"
+    builtin.mkdir(parents=True)
+    (builtin / "SKILL.md").write_text("---\nname: example\n---\n", encoding="utf-8")
+    (builtin / "builtin-only.txt").touch()
+    external = paths.installations / "skills/superpowers/revisions" / ("b" * 40)
+    (external / "skills/example").mkdir(parents=True)
+    (external / "skills/example/SKILL.md").write_text("# External", encoding="utf-8")
+    write_state(paths, "skills", "superpowers", Lifecycle.ACTIVE,
+                installation_path=str(external), revision="b" * 40)
+    local = paths.overrides / "projects/shared/skills/local-example"
+    if local_override:
+        local.mkdir(parents=True)
+        (local / "SKILL.md").write_text(
+            "---\nversion: 1\nname: example\ndescription: Use this skill for testing publication.\n"
+            "requires:\n  model_capabilities: []\n---\n", encoding="utf-8",
+        )
+        write_yaml(local.parent / "example.yaml", {
+            "target": "example", "override": {"mode": "replace", "value": {"path": "local-example"}},
+        })
+
+    def no_fetch(*args, **kwargs):
+        raise AssertionError("client publication must never fetch project skills")
+
+    monkeypatch.setattr(ProjectSkillRepositoryManager, "_fetch_candidate", no_fetch)
+    fixture.disable_remote()
+    sync_clients(repository, paths, project=fixture.project)
+
+    shared = paths.installations / "clients/shared"
+    assert (shared / "skills/example").resolve() == (local if local_override else manager.active_skills()["example"].resolve())
+    assert not (shared / "skills/example/builtin-only.txt").exists()
+    row = json.loads((shared / "skills-provenance.json").read_text())["skills"]["example"]
+    assert row["source"] == ("local-override" if local_override else "project-skills")
+    project_row = row["shadowed"][2] if local_override else row
+    assert project_row["revision"] == status.active_revision
+    assert project_row["source_url"] == str(fixture.upstream)
+    assert [item["source"] for item in row["shadowed"]] == (
+        ["built-in", "external-catalog", "project-skills"] if local_override else ["built-in", "external-catalog"]
+    )
+
+
+@pytest.mark.parametrize("mode", ["replace", "disable", "block", "invalid"])
+def test_project_skills_obey_explicit_local_overrides(publication_fixture, mode):
+    fixture = publication_fixture
+    fixture.manager(validator=lambda _: (True, [])).resync()
+    paths = fixture.paths
+    local = paths.overrides / "projects/shared/skills/local-example"
+    local.mkdir(parents=True)
+    (local / "SKILL.md").write_text(
+        "---\nversion: 1\nname: example\ndescription: Use this skill for testing publication.\n"
+        "requires:\n  model_capabilities: []\n---\n" if mode != "invalid" else "# Invalid", encoding="utf-8",
+    )
+    write_yaml(paths.overrides / "projects/shared/skills/example.yaml", {
+        "target": "example", "override": {"mode": "disable" if mode == "disable" else "replace",
+        "value": {"path": "local-example"}},
+    })
+    if mode == "block":
+        write_yaml(paths.overrides / "projects/shared/access.yaml", {
+            "version": 1, "skills": {"allow": [], "block": ["example"]},
+        })
+    if mode == "invalid":
+        with pytest.raises(AgentKitError, match="local skill override"):
+            sync_clients(paths.repository, paths, project=fixture.project)
+        return
+
+    sync_clients(paths.repository, paths, project=fixture.project)
+
+    shared = paths.installations / "clients/shared"
+    rows = json.loads((shared / "skills-provenance.json").read_text())["skills"]
+    if mode in {"disable", "block"}:
+        assert not (shared / "skills/example").exists()
+        assert "example" not in rows
+    else:
+        assert (shared / "skills/example").resolve() == local
+        assert rows["example"]["source"] == "local-override"
+        assert rows["example"]["shadowed"][0]["source"] == "project-skills"
+
+
+@pytest.mark.parametrize("configured", [True, False])
+@pytest.mark.parametrize("artifact", ["candidate", "revision"])
+def test_client_sync_publishes_no_project_skills_without_active_pointer(publication_fixture, configured, artifact):
+    fixture = publication_fixture
+    manager = fixture.manager(validator=lambda _: (True, []))
+    if artifact == "candidate":
+        manager.fetch_candidate()
+    else:
+        manager.resync()
+        (manager.root / "active.json").unlink()
+    if not configured:
+        fixture.project.manifest.pop("skills")
+
+    sync_clients(fixture.paths.repository, fixture.paths, project=fixture.project)
+
+    assert not (fixture.paths.installations / "clients/shared/skills/example").exists()
+
+
+def test_native_project_skills_follow_new_active_revision_and_preserve_user_paths(publication_fixture):
+    fixture = publication_fixture
+    manager = fixture.manager(validator=lambda _: (True, []))
+    manager.resync()
+    native = fixture.project.root.parent / "native-skills"
+    expose_native_skills(fixture.paths.repository, fixture.paths, project=fixture.project, roots=(native,))
+    revision = fixture.commit_skill("---\nname: example\n---\n# Updated\n")
+    manager.resync()
+
+    expose_native_skills(fixture.paths.repository, fixture.paths, project=fixture.project, roots=(native,))
+
+    assert revision in str((native / "example").resolve())
+    assert "Updated" in (native / "example/SKILL.md").read_text()
+    (native / "example").unlink()
+    user = native.parent / "user-skill"
+    user.mkdir()
+    (native / "example").symlink_to(user, target_is_directory=True)
+    with pytest.raises(AgentKitError, match="пользовательским symlink"):
+        expose_native_skills(fixture.paths.repository, fixture.paths, project=fixture.project, roots=(native,))
+    assert (native / "example").resolve() == user
+
+
+def test_client_sync_rejects_project_pointer_changed_during_resolution(publication_fixture, monkeypatch):
+    fixture = publication_fixture
+    manager = fixture.manager(validator=lambda _: (True, []))
+    manager.resync()
+    old_skills = manager.active_skills()
+    fixture.commit_skill("---\nname: example\n---\n# New revision\n")
+    manager.resync()
+    # Моделируем смену atomic pointer между двумя read-only вызовами manager.
+    monkeypatch.setattr(ProjectSkillRepositoryManager, "active_skills", lambda _: old_skills)
+
+    with pytest.raises(AgentKitError, match="active pointer.*изменился"):
+        sync_clients(fixture.paths.repository, fixture.paths, project=fixture.project)
+
+    assert not (fixture.paths.installations / "clients/shared/skills/example").exists()
+
+
+def test_client_provenance_uses_active_source_after_failed_source_change(publication_fixture):
+    fixture = publication_fixture
+    manager = fixture.manager(validator=lambda _: (True, []))
+    active = manager.resync()
+    missing_source = str(fixture.upstream.with_name("missing.git"))
+    fixture.project.manifest["skills"]["repository"]["url"] = missing_source
+    assert manager.resync().state == "STALE"
+    assert manager.status().source_url == missing_source
+
+    sync_clients(fixture.paths.repository, fixture.paths, project=fixture.project)
+
+    provenance = fixture.paths.installations / "clients/shared/skills-provenance.json"
+    row = json.loads(provenance.read_text())["skills"]["example"]
+    assert row["source_url"] == str(fixture.upstream)
+    assert row["revision"] == active.active_revision
 
 
 def test_branch_override_is_machine_local_and_shared_by_project_id(fixture):

@@ -10,6 +10,7 @@ import yaml
 
 from agent_engineering_kit.clients import CLIENTS, expose_native_instructions, expose_native_skills, register_native_mcp, sync_clients, validate_clients
 from agent_engineering_kit.paths import KitPaths
+from agent_engineering_kit.component_state import Lifecycle, write_state
 from agent_engineering_kit.mcp_credentials import McpCredentialStore
 from agent_engineering_kit.mcp_manager import McpManager
 from agent_engineering_kit.projects import LogicalProject
@@ -17,6 +18,100 @@ from agent_engineering_kit.errors import AgentKitError
 from agent_engineering_kit.process import CommandResult
 from agent_engineering_kit.explain import explain
 from conftest import write_yaml
+
+
+def write_publication_skill(path: Path, identifier: str, marker: str) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+    (path / "SKILL.md").write_text(
+        f"---\nversion: 1\nname: {identifier}\ndescription: Use this skill for testing publication.\n"
+        "requires:\n  model_capabilities: []\n---\n", encoding="utf-8",
+    )
+    (path / f"{marker}.txt").write_text(marker, encoding="utf-8")
+
+
+@pytest.mark.parametrize("layer", ["built-in", "external-catalog", "local-override", "local-package-override"])
+def test_skill_precedence_selects_one_directory_with_shadowed_provenance(tmp_path: Path, layer: str) -> None:
+    real = Path(__file__).resolve().parents[1]
+    repository = tmp_path / "kit"
+    for directory in ("clients", "schemas"):
+        shutil.copytree(real / directory, repository / directory)
+    data = tmp_path / "data"
+    paths = KitPaths(repository, data, data / "runtime", data / "projects", data / "overrides")
+    builtin = repository / "skills/first-party/example"
+    write_publication_skill(builtin, "example", "builtin-only")
+    external = paths.installations / "skills/bundle/revisions" / ("a" * 40)
+    write_publication_skill(external / "skills/example", "example", "external-only")
+    package = "example" if layer == "local-package-override" else "bundle"
+    write_yaml(repository / "catalog/skills.yaml", {"version": 1, "skills": [{
+        "id": package, "source": {"repository": "https://user:password@example.invalid/skills.git?token=private#secret"},
+        "capabilities": ["example"],
+    }]})
+    write_yaml(repository / "locks/skills.lock.yaml", {"version": 1, "components": [{
+        "id": package, "version": "1", "revision": "a" * 40,
+    }]})
+    if layer != "built-in":
+        write_state(paths, "skills", package, Lifecycle.ACTIVE,
+                    installation_path=str(external), revision="a" * 40)
+    local = tmp_path / "local/example"
+    if layer.startswith("local-"):
+        write_publication_skill(local, "example", "local-only")
+        write_yaml(paths.overrides / "global/skills/example.yaml", {
+            "target": "example", "override": {"mode": "replace", "value": {"path": str(local)}},
+        })
+
+    sync_clients(repository, paths)
+
+    shared = paths.installations / "clients/shared"
+    selected = {"built-in": builtin, "external-catalog": external / "skills/example",
+                "local-override": local, "local-package-override": local}[layer]
+    assert (shared / "skills/example").resolve() == selected
+    assert sorted(path.name for path in (shared / "skills/example").iterdir()) == sorted(path.name for path in selected.iterdir())
+    text = (shared / "skills-provenance.json").read_text(encoding="utf-8")
+    row = json.loads(text)["skills"]["example"]
+    assert row["source"] == ("local-override" if layer.startswith("local-") else layer)
+    expected_shadowed = {"built-in": [], "external-catalog": ["built-in"],
+                         "local-override": ["built-in", "external-catalog"],
+                         "local-package-override": ["built-in", "external-catalog"]}[layer]
+    assert [item["source"] for item in row["shadowed"]] == expected_shadowed
+    if layer != "built-in":
+        external_row = row if layer == "external-catalog" else row["shadowed"][1]
+        assert external_row["source_url"] == "https://example.invalid/skills.git"
+        assert external_row["revision"] == "a" * 40
+    assert all(secret not in text for secret in ("password", "token=private", "#secret", "user:"))
+
+
+def test_sync_preserves_builtin_skill_validation(tmp_path: Path) -> None:
+    repository = tmp_path / "kit"
+    real = Path(__file__).resolve().parents[1]
+    for directory in ("clients", "catalog", "locks", "schemas"):
+        shutil.copytree(real / directory, repository / directory)
+    skill = repository / "skills/first-party/example"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("---\nname: example\n---\n# Invalid", encoding="utf-8")
+    data = tmp_path / "data"
+    paths = KitPaths(repository, data, data / "runtime", data / "projects", data / "overrides")
+
+    with pytest.raises(AgentKitError, match="local skill override"):
+        sync_clients(repository, paths)
+
+
+def test_external_package_allowlist_keeps_publishing_its_capabilities(tmp_path: Path) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    data = tmp_path / "data"
+    paths = KitPaths(repository, data, data / "runtime", data / "projects", data / "overrides")
+    external = paths.installations / "skills/superpowers/revisions" / ("a" * 40)
+    write_publication_skill(external / "skills/brainstorming", "brainstorming", "external-only")
+    write_state(paths, "skills", "superpowers", Lifecycle.ACTIVE,
+                installation_path=str(external), revision="a" * 40)
+    write_yaml(paths.overrides / "global/access.yaml", {
+        "version": 1, "skills": {"allow": ["superpowers"], "block": []},
+    })
+
+    sync_clients(repository, paths)
+
+    shared = paths.installations / "clients/shared/skills"
+    assert (shared / "brainstorming").resolve() == external / "skills/brainstorming"
+    assert not (shared / "verification").exists()
 
 
 def test_client_adapters_validate() -> None:
