@@ -42,6 +42,12 @@ class RepositoryFixture:
             ("diff", "--cached"), ("config", "--local", "--list"),
         ))
 
+    def product_snapshot(self) -> tuple[tuple[str, ...], dict[str, bytes]]:
+        state = self.product_state()
+        files = {str(path.relative_to(self.project.root)): path.read_bytes()
+                 for path in self.project.root.rglob("*") if path.is_file()}
+        return state, files
+
 
 @pytest.fixture
 def fixture(tmp_path: Path) -> RepositoryFixture:
@@ -254,3 +260,67 @@ def test_fetch_candidate_holds_project_lock_during_git_operations(fixture):
         return run_command(args, **kwargs)
 
     assert fixture.manager(runner=probe).fetch_candidate()[1] == fixture.remote_revision("main")
+
+
+def test_fetch_candidate_hostile_git_environment_preserves_complete_product_state(fixture, monkeypatch):
+    manager = fixture.manager()
+    manager.fetch_candidate()
+    before = fixture.product_snapshot()
+    with monkeypatch.context() as hostile:
+        hostile.setenv("GIT_DIR", str(fixture.project.root / ".git"))
+        hostile.setenv("GIT_WORK_TREE", str(fixture.project.root))
+        hostile.setenv("GIT_INDEX_FILE", str(fixture.project.root / ".git/index"))
+        hostile.setenv("GIT_OBJECT_DIRECTORY", str(fixture.project.root / ".git/objects"))
+        try:
+            manager.fetch_candidate()
+        except AgentKitError:
+            pass  # Отказ безопасен, если никакое product state не изменилось.
+    assert fixture.product_snapshot() == before
+
+
+@pytest.mark.parametrize("variable,value", [
+    ("GIT_DIR", "product/.git"),
+    ("GIT_WORK_TREE", "product"),
+    ("GIT_COMMON_DIR", "product/.git"),
+    ("GIT_INDEX_FILE", "product/.git/index"),
+    ("GIT_OBJECT_DIRECTORY", "product/.git/objects"),
+    ("GIT_ALTERNATE_OBJECT_DIRECTORIES", "product/.git/objects"),
+    ("GIT_GRAFT_FILE", "product/.git/info/grafts"),
+    ("GIT_SHALLOW_FILE", "product/.git/shallow"),
+    ("GIT_REPLACE_REF_BASE", "refs/product/"),
+    ("GIT_NAMESPACE", "product"),
+    ("GIT_IMPLICIT_WORK_TREE", "0"),
+    ("GIT_PREFIX", "product/"),
+    ("GIT_INTERNAL_SUPER_PREFIX", "product/"),
+    ("GIT_NO_REPLACE_OBJECTS", "1"),
+    ("GIT_CONFIG", "product/.git/config"),
+    ("GIT_CONFIG_SYSTEM", "product/.git/config"),
+    ("GIT_CONFIG_GLOBAL", "product/.git/config"),
+    ("GIT_CONFIG_PARAMETERS", "'core.bare=true'"),
+    ("GIT_CONFIG_COUNT", "0"),
+    ("GIT_CONFIG_KEY_0", "core.worktree"),
+    ("GIT_CONFIG_VALUE_0", "product"),
+])
+def test_git_state_selectors_are_rejected_before_managed_mutation(fixture, monkeypatch, variable, value):
+    manager = fixture.manager()
+    before = fixture.product_snapshot()
+    with monkeypatch.context() as hostile:
+        hostile.setenv(variable, value)
+        with pytest.raises(AgentKitError):
+            manager.fetch_candidate()
+    assert fixture.product_snapshot() == before
+    assert not manager.checkout.exists()
+
+
+def test_candidate_discard_rejects_hostile_repository_environment(fixture, monkeypatch):
+    manager = fixture.manager()
+    candidate, _ = manager.fetch_candidate()
+    before = fixture.product_snapshot()
+    with monkeypatch.context() as hostile:
+        hostile.setenv("GIT_DIR", str(fixture.project.root / ".git"))
+        with pytest.raises(AgentKitError):
+            manager._discard_candidate(candidate)
+    assert fixture.product_snapshot() == before
+    assert (candidate / "skills/example/SKILL.md").is_file()
+    manager._discard_candidate(candidate)
+    assert not candidate.exists()

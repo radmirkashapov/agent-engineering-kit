@@ -22,6 +22,17 @@ from .projects import LogicalProject
 from .security_tools import SecurityToolManager
 
 
+# Список repository-local selectors из `git rev-parse --local-env-vars`;
+# namespace и вся GIT_CONFIG_* family также могут перенаправить Git state.
+_GIT_STATE_ENVIRONMENT = frozenset({
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_CONFIG", "GIT_OBJECT_DIRECTORY",
+    "GIT_DIR", "GIT_WORK_TREE", "GIT_IMPLICIT_WORK_TREE", "GIT_GRAFT_FILE",
+    "GIT_INDEX_FILE", "GIT_NO_REPLACE_OBJECTS", "GIT_REPLACE_REF_BASE",
+    "GIT_PREFIX", "GIT_INTERNAL_SUPER_PREFIX", "GIT_SHALLOW_FILE",
+    "GIT_COMMON_DIR", "GIT_NAMESPACE",
+})
+
+
 @dataclass(frozen=True)
 class ProjectSkillsSource:
     url: str
@@ -109,7 +120,7 @@ class ProjectSkillRepositoryManager:
     def _check_branch(self, branch: str) -> None:
         if not isinstance(branch, str) or not branch or branch.startswith("-") or "@{" in branch:
             raise AgentKitError("Некорректное имя ветки project-skills")
-        checked = self.runner(["git", "check-ref-format", "--branch", branch])
+        checked = self._run_git(["check-ref-format", "--branch", branch])
         if not checked.ok or checked.stdout.strip() != branch:
             raise AgentKitError("Некорректное имя ветки project-skills")
 
@@ -156,9 +167,16 @@ class ProjectSkillRepositoryManager:
             self.override_path.unlink(missing_ok=True)
             return self._selection_dict()
 
+    def _run_git(self, args: list[str]) -> CommandResult:
+        # `git -C` не перекрывает inherited GIT_DIR/INDEX_FILE и другие
+        # selectors. Отказываем до subprocess, не меняя process-wide environ.
+        if any(name in _GIT_STATE_ENVIRONMENT or name.startswith("GIT_CONFIG_") for name in os.environ):
+            raise AgentKitError("Небезопасное окружение Git project-skills: очистите repository-local переменные")
+        return self.runner(["git", *args])
+
     def _git(self, args: list[str]) -> str:
         try:
-            result = self.runner(["git", *args])
+            result = self._run_git(args)
         except OSError as error:
             raise AgentKitError(f"Ошибка Git project-skills: {redact_url(str(error))}") from None
         if not result.ok:
@@ -167,7 +185,7 @@ class ProjectSkillRepositoryManager:
         return result.stdout.strip()
 
     def _discard_candidate(self, candidate: Path) -> None:
-        removed = self.runner(["git", "-C", str(self.checkout), "worktree", "remove", "--force", str(candidate)])
+        removed = self._run_git(["-C", str(self.checkout), "worktree", "remove", "--force", str(candidate)])
         if not removed.ok:
             if candidate.is_symlink():
                 candidate.unlink()
