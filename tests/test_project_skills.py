@@ -443,6 +443,71 @@ def test_fetch_candidate_errors_and_selection_redact_url_credentials(fixture):
         assert "example.invalid/repo.git" in output
 
 
+@pytest.mark.parametrize("unsafe", [
+    "https://alice:secret'part@example.invalid/repo",
+    'https://alice:secret"part@example.invalid/repo',
+    "https://example.invalid/repo?token='secret part'",
+    'https://example.invalid/repo#"secret part"',
+    "https://example.invalid/repo?token='https://alice:secret@private.invalid/part'",
+    "https://alice:secret' part@example.invalid/repo",
+    "https://alice:secret'part",
+    "https://alice:secret'part' private@example.invalid/repo",
+    "https://alice:1234'secret/private@example.invalid/repo",
+    "https://example.invalid/repo?token='secret' private",
+    'https://example.invalid/repo#"secret" private',
+    "https://alice:secret'part@[malformed/repo?token=private",
+])
+@pytest.mark.parametrize("wrapper", ["{}", "cannot access '{}'", '{{"url":"{}"}}'])
+def test_redact_url_masks_quoted_and_malformed_secret_text(unsafe, wrapper):
+    rendered = redact_url(wrapper.format(unsafe))
+    assert all(secret not in rendered for secret in ("alice", "secret", "part", "private"))
+    assert "https://" in rendered
+
+
+@pytest.mark.parametrize("text", [
+    "https://example.invalid/repo",
+    "cannot access 'https://example.invalid/repo' (offline)",
+    '{"url":"https://example.invalid/repo"}',
+    '{"one":"https://one.example.invalid","two":"https://two.example.invalid"}',
+    "https://[2001:db8::1]/repo",
+])
+def test_redact_url_preserves_safe_url_and_surrounding_text(text):
+    assert redact_url(text) == text
+
+
+@pytest.mark.parametrize("first_path", ["/one", ""])
+@pytest.mark.parametrize("second_path", ["/two", ""])
+def test_redact_url_masks_multiple_compact_json_urls(first_path, second_path):
+    text = ('{"one":"https://alice:secret\'part@one.example.invalid' + first_path
+            + '","two":"https://bob:private\"part@two.example.invalid' + second_path + '"}')
+    rendered = redact_url(text)
+    assert all(secret not in rendered for secret in ("alice", "secret", "bob", "private", "part"))
+    assert "one.example.invalid" in rendered
+    assert "two.example.invalid" in rendered
+
+
+@pytest.mark.parametrize("unsafe", [
+    "https://alice:secret'part@example.invalid/repo",
+    'https://alice:secret"part@example.invalid/repo',
+    "https://example.invalid/repo?token='secret part'",
+    'https://example.invalid/repo#"secret part"',
+])
+def test_public_inspection_and_git_errors_mask_quoted_url_secrets(fixture, unsafe):
+    fixture.project.manifest["skills"]["repository"]["url"] = unsafe
+
+    def fail(args, **kwargs):
+        if args[1] == "check-ref-format":
+            return run_command(args, **kwargs)
+        return CommandResult(tuple(args), 1, "", f"cannot access '{unsafe}'")
+
+    manager = fixture.manager(runner=fail)
+    inspected = json.dumps(manager.inspect(ci=True))
+    with pytest.raises(AgentKitError) as caught:
+        manager.fetch_candidate()
+    for rendered in (inspected, str(caught.value)):
+        assert all(secret not in rendered for secret in ("alice", "secret", "part"))
+
+
 def test_unconfigured_source_does_not_create_managed_state(fixture):
     fixture.project.manifest.pop("skills")
     manager = fixture.manager()
@@ -714,8 +779,14 @@ def test_failed_activation_keeps_exact_last_known_good_pointer(fixture, monkeypa
     assert not list((manager.root / "candidates").iterdir())
 
 
-def test_status_and_evidence_redact_source_and_validator_errors(fixture):
-    secret_url = "https://alice:password@example.invalid/repo.git?token=secret#private"
+@pytest.mark.parametrize("secret_url", [
+    "https://alice:password@example.invalid/repo.git?token=secret#private",
+    "https://alice:secret'part@example.invalid/repo.git",
+    'https://alice:secret"part@example.invalid/repo.git',
+    "https://example.invalid/repo.git?token='secret part'",
+    'https://example.invalid/repo.git#"secret part"',
+])
+def test_status_and_evidence_redact_source_and_validator_errors(fixture, secret_url):
     manager = fixture.manager(validator=lambda _: (False, [{"check": "fixture", "status": "FAIL", "url": secret_url}]))
     with pytest.raises(AgentKitError):
         manager.resync()
@@ -723,7 +794,7 @@ def test_status_and_evidence_redact_source_and_validator_errors(fixture):
     status = replace(manager.status(), source_url=secret_url, reason=secret_url)
     for text in ((manager.root / "status.json").read_text(), json.dumps(status.as_dict())):
         assert "example.invalid/repo.git" in text
-        assert all(secret not in text for secret in ("alice", "password", "token=secret", "#private"))
+        assert all(secret not in text for secret in ("alice", "password", "secret", "#private", "part"))
 
 
 def test_rejected_evidence_masks_urls_in_diagnostic_keys(fixture):

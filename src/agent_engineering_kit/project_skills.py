@@ -70,16 +70,39 @@ class ProjectSkillsStatus:
 
 def redact_url(value: str | None) -> str | None:
     """Убрать userinfo, query и fragment из URL, в том числе в Git diagnostic."""
+    url_start = r"\b[a-zA-Z][a-zA-Z0-9+.-]*://"
+
     def redact(match: re.Match[str]) -> str:
+        raw = match.group()
+        # Compact JSON может содержать несколько URL без пробела. URL внутри
+        # query/fragment остаётся частью секрета и удаляется целиком.
+        boundary = min((raw.index(mark) for mark in "?#" if mark in raw), default=len(raw))
+        starts = [item.start() for item in re.finditer(url_start, raw[:boundary])]
+        if len(starts) > 1:
+            return "".join(redact_url(raw[start:end]) for start, end in zip(starts, starts[1:] + [len(raw)]))
         try:
-            parsed = urlsplit(match.group())
-            return urlunsplit((parsed.scheme, parsed.netloc.rsplit("@", 1)[-1], parsed.path, "", ""))
+            parsed = urlsplit(raw)
+            if "@" not in parsed.netloc and "@" in parsed.path and re.search(r'''['"]''', parsed.netloc):
+                raise ValueError("malformed quoted authority")
+            authority = parsed.netloc.rsplit("@", 1)[-1]
+            # urlsplit сам не проверяет port: malformed authority без @
+            # иначе способна вернуть credential-like текст. Кавычки после
+            # authority могут принадлежать окружающему prose/JSON.
+            host = re.split(r'''['"]''', authority, maxsplit=1)[0]
+            urlsplit(f"{parsed.scheme}://{host}").port
+            return urlunsplit((parsed.scheme, authority, parsed.path, "", ""))
         except ValueError:
-            return match.group().split("://", 1)[0] + "://<redacted>"
+            return raw.split("://", 1)[0] + "://<redacted>"
 
     if value is None:
         return None
-    return re.sub(r"\b[a-zA-Z][a-zA-Z0-9+.-]*://[^\s'\"<>]+", redact, value)
+    # Кавычка может быть частью недоверенного userinfo/token, а не границей
+    # prose/JSON. При кавычках в sensitive token поглощаем остаток строки:
+    # даже закрывшаяся кавычка не доказывает конец malformed секрета.
+    return re.sub(
+        url_start + r'''(?:(?=[^\s]*['"])(?=[^\s]*[?#@:])[^\r\n]+|(?:[^\s'"]+|'[^'\r\n]*(?:'|(?=[\r\n]|$))|"[^"\r\n]*(?:"|(?=[\r\n]|$)))+)''',
+        redact, value,
+    )
 
 
 def _redacted(value: Any) -> Any:

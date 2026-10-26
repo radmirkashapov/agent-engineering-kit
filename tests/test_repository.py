@@ -45,13 +45,19 @@ def test_project_skills_validation_reports_default_without_remote_verification(t
     assert not (override.parent / "checkout").exists()
 
 
-def test_project_skills_validation_redacts_invalid_manifest_diagnostics(tmp_path, monkeypatch):
+@pytest.mark.parametrize("secret_url", [
+    "https://manifest-user:manifest-password@example.invalid/skills.git?token=manifest-token#manifest-fragment",
+    "https://manifest-user:manifest-password'part@example.invalid/skills.git",
+    'https://manifest-user:manifest-password"part@example.invalid/skills.git',
+    "https://example.invalid/skills.git?token='manifest-token part'",
+    'https://example.invalid/skills.git#"manifest-fragment part"',
+])
+def test_project_skills_validation_redacts_invalid_manifest_diagnostics(tmp_path, monkeypatch, secret_url):
     from conftest import write_yaml
 
     repository = Path(__file__).resolve().parents[1]
     data = tmp_path / "data"
     paths = KitPaths(repository, data, data / "runtime", data / "projects", data / "overrides")
-    secret_url = "https://manifest-user:manifest-password@example.invalid/skills.git?token=manifest-token#manifest-fragment"
     write_yaml(tmp_path / ".ai-team/project.yaml", {
         "id": "ci-project", "skills": {"repository": {"url": secret_url, "default_branch": "main"}},
     })
@@ -59,7 +65,7 @@ def test_project_skills_validation_redacts_invalid_manifest_diagnostics(tmp_path
     result = validate(repository, paths, "project-skills", include_local=False)
     assert not result.ok
     rendered = "\n".join(item.render() for item in result.diagnostics)
-    assert all(secret not in rendered for secret in ("manifest-user", "manifest-password", "manifest-token", "manifest-fragment"))
+    assert all(secret not in rendered for secret in ("manifest-user", "manifest-password", "manifest-token", "manifest-fragment", "part"))
 
 
 def test_repository_passes_ci_validation(tmp_path: Path) -> None:
