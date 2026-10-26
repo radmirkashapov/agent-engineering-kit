@@ -401,7 +401,7 @@ class ProjectSkillRepositoryManager:
         if (self.root / "status.json").is_file():
             try:
                 recorded = self._read_status(self.root / "status.json")
-            except AgentKitError:
+            except (AgentKitError, UnicodeError):
                 if active is None:
                     raise
                 return active
@@ -467,7 +467,12 @@ class ProjectSkillRepositoryManager:
                                              branch, revision, active.active_revision if active else None, state,
                                              redact_url(str(error)), datetime.now(timezone.utc).isoformat(),
                                              active.skills if active else ())
-                self._record(result, evidence)
+                try:
+                    self._record(result, evidence)
+                except Exception:
+                    # Неавторитетная диагностика не заменяет исходный результат
+                    # и не раскрывает неотредактированную ошибку записи.
+                    pass
                 if active is None:
                     raise AgentKitError(result.reason) from None
                 return result

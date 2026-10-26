@@ -590,6 +590,61 @@ def test_active_pointer_cannot_use_another_worktree_git_metadata(fixture):
         manager.active_skills()
 
 
+@pytest.mark.parametrize("has_active", [False, True])
+@pytest.mark.parametrize("failure", ["fetch", "security"])
+def test_diagnostic_write_failure_preserves_authoritative_update_outcome(fixture, monkeypatch, has_active, failure):
+    from agent_engineering_kit import project_skills
+
+    secret_url = "https://alice:password@example.invalid/repo.git?token=secret#private"
+    manager = fixture.manager(validator=lambda _: (True, []))
+    active = manager.resync() if has_active else None
+    pointer = manager.root / "active.json"
+    pointer_bytes = pointer.read_bytes() if active else None
+    if failure == "fetch":
+        def fail_fetch(args, **kwargs):
+            if "fetch" in args:
+                return CommandResult(tuple(args), 1, "", f"cannot fetch {secret_url}")
+            return run_command(args, **kwargs)
+        manager.runner = fail_fetch
+    else:
+        manager.validator = lambda _: (False, [{"check": "fixture", "status": "FAIL", "url": secret_url}])
+    original_write = project_skills.atomic_write
+
+    def fail_diagnostic(path, content):
+        if path.name == "status.json":
+            raise OSError(f"cannot write diagnostic {secret_url}")
+        original_write(path, content)
+
+    monkeypatch.setattr(project_skills, "atomic_write", fail_diagnostic)
+    if active:
+        result = manager.resync()
+        assert result.state == ("STALE" if failure == "fetch" else "UPDATE_REJECTED")
+        assert result.active_revision == active.active_revision
+        assert pointer.read_bytes() == pointer_bytes
+        assert manager.active_skills()["example"].joinpath("SKILL.md").is_file()
+        diagnostic = result.reason
+    else:
+        with pytest.raises(AgentKitError) as caught:
+            manager.resync()
+        diagnostic = str(caught.value)
+        assert not pointer.exists()
+        assert manager.active_skills() == {}
+    assert diagnostic
+    assert "cannot write diagnostic" not in diagnostic
+    assert all(secret not in diagnostic for secret in ("alice", "password", "token=secret", "#private"))
+    assert not list((manager.root / "candidates").glob("*"))
+
+
+def test_non_utf8_diagnostics_reconstruct_status_from_active_pointer(fixture):
+    manager = fixture.manager(validator=lambda _: (True, []))
+    active = manager.resync()
+    pointer = (manager.root / "active.json").read_bytes()
+    (manager.root / "status.json").write_bytes(b"\xff\xfe\x80")
+    assert manager.status() == active
+    assert (manager.root / "active.json").read_bytes() == pointer
+    assert manager.active_skills()["example"].joinpath("SKILL.md").is_file()
+
+
 @pytest.mark.parametrize("variable,value", [
     ("GIT_DIR", "product/.git"),
     ("GIT_WORK_TREE", "product"),
