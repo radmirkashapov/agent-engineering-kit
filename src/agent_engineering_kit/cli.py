@@ -68,7 +68,7 @@ from .task_workflow import (
 from .validation import VALIDATORS, validate
 from .worktrees import create_managed_worktrees, plan_managed_worktrees
 from .process import run_command
-from .clients import register_native_mcp
+from .clients import effective_skill_inventory, effective_skill_sources, project_skill_status_report, register_native_mcp
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -205,7 +205,9 @@ def _parser() -> argparse.ArgumentParser:
     use_branch = project_skills.add_parser("use-branch", help="Выбрать удалённую ветку локально")
     use_branch.add_argument("branch")
     project_skills.add_parser("use-main", help="Вернуться к default branch")
-    project_skills.add_parser("status", help="Показать источник и активную ревизию")
+    project_skills.add_parser(
+        "status", help="Показать ветку, активную ревизию, происхождение и коллизии",
+    )
     project_init = project.add_parser("init", help="Инициализировать проект по выбранному шаблону")
     project_init.add_argument("path", nargs="?", default=".")
     project_init.add_argument("--id", dest="identifier")
@@ -367,18 +369,11 @@ def _refresh_project_memory(repository: Path, paths: KitPaths, project: LogicalP
 
 
 def _effective_skill_roots(repository: Path, paths: KitPaths, project: LogicalProject | None) -> list[Path]:
-    manager = ExternalSkillManager(repository, paths, project_id=project.identifier if project else None)
-    roots: set[Path] = set()
-    for item in manager.available():
-        if not item.get("enabled"):
-            continue
-        if item.get("path"):
-            roots.add(Path(str(item["path"])).expanduser().resolve())
-            continue
-        active = manager.active_path(str(item["id"]))
-        if active:
-            roots.update(skill_file.parent.resolve() for skill_file in active.rglob("SKILL.md"))
-    return sorted(path for path in roots if path.is_dir())
+    return sorted({
+        source.path.expanduser().resolve()
+        for source in effective_skill_sources(repository, paths, project).values()
+        if source.path.is_dir()
+    })
 
 
 def _project_repository_path(project: LogicalProject, paths: KitPaths, repository_id: str | None) -> Path:
@@ -460,11 +455,7 @@ def _available_resources(
 ) -> list[dict]:
     """Получить полный каталог ресурса с итоговыми решениями доступа."""
     if kind == "skills":
-        return ExternalSkillManager(
-            repository,
-            paths,
-            project_id=project.identifier if project else None,
-        ).available()
+        return effective_skill_inventory(repository, paths, project)
     access_profile = str(effective_policy(repository, paths, project).values["mcp.access_profile"])
     return McpManager(repository, paths).available(project, access_profile=access_profile)
 
@@ -628,11 +619,11 @@ def run(argv: list[str] | None = None) -> int:
             project = find_project(Path.cwd())
             manager = ExternalSkillManager(repository, paths, project_id=project.identifier if project else None)
             if args.skills_command in {"list", "status"}:
-                _print_rows(manager.list())
+                _print_rows(effective_skill_inventory(repository, paths, project))
             elif args.skills_command == "available":
-                print(json.dumps(manager.available(), ensure_ascii=False, indent=2))
+                print(json.dumps(effective_skill_inventory(repository, paths, project), ensure_ascii=False, indent=2))
             elif args.skills_command == "explain":
-                rows = manager.list()
+                rows = effective_skill_inventory(repository, paths, project)
                 selected = [row for row in rows if row["id"] == args.id]
                 if not selected:
                     raise AgentKitError(f"Skill не найден: {args.id}")
@@ -745,7 +736,7 @@ def run(argv: list[str] | None = None) -> int:
             elif args.project_skills_command == "use-main":
                 output = manager.use_main()
             else:
-                output = manager.status().as_dict()
+                output = project_skill_status_report(repository, paths, project)
             print(json.dumps(output, ensure_ascii=False, indent=2))
             return 1 if output.get("state") == "NOT_CONFIGURED" else 0
         if args.command == "project" and args.project_command == "init":

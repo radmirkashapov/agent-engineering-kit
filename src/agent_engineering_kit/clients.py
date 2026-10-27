@@ -38,11 +38,14 @@ class EffectiveSkillSource:
     source_url: str | None = None
     catalog_id: str | None = None
     shadowed: tuple[EffectiveSkillSource, ...] = ()
+    enabled: bool = True
+    access_reason: str = "allowed:catalog"
 
     def as_dict(self) -> dict:
         return {
             "path": str(self.path), "source": self.source, "revision": self.revision,
             "priority": self.priority, "source_url": redact_url(self.source_url), "catalog_id": self.catalog_id,
+            "enabled": self.enabled, "access_reason": self.access_reason,
             "shadowed": [item.as_dict() for item in sorted(self.shadowed, key=lambda item: item.priority)],
         }
 
@@ -57,9 +60,16 @@ def _merge_skill_source(target: dict[str, EffectiveSkillSource], candidate: Effe
         target[candidate.identifier] = replace(current, shadowed=(*current.shadowed, candidate))
 
 
-def _effective_skill_sources(
-    repository: Path, paths: KitPaths, project: LogicalProject | None, project_id: str | None,
+def effective_skill_sources(
+    repository: Path,
+    paths: KitPaths,
+    project: LogicalProject | None = None,
+    project_id: str | None = None,
+    *,
+    include_disabled: bool = False,
 ) -> dict[str, EffectiveSkillSource]:
+    """Разрешить все skill layers единым precedence/override/ACL pipeline."""
+    project_id = project.identifier if project is not None else project_id
     sources: dict[str, EffectiveSkillSource] = {}
     for document in sorted((repository / "skills/first-party").glob("*/SKILL.md")):
         metadata = markdown_frontmatter(document)
@@ -114,8 +124,7 @@ def _effective_skill_sources(
     # Overrides выбирают целый каталог после всех переносимых источников.
     items = [{"id": identifier, "path": str(source.path)} for identifier, source in sources.items()]
     effective = apply_local_overrides(items, paths.overrides, "skills", project_id)
-    enabled = {item["id"] for item in effective}
-    sources = {identifier: source for identifier, source in sources.items() if identifier in enabled}
+    enabled = {item["id"] for item in [*effective, *local_packages]}
     for item in [*effective, *local_packages]:
         identifier = item["id"]
         if not item.get("path"):
@@ -137,8 +146,68 @@ def _effective_skill_sources(
     # Capability directories внешнего пакета наследуют доступ к catalog ID.
     access = resolve_access({source.catalog_id or identifier for identifier, source in sources.items()},
                             paths.overrides, "skills", project_id)
-    return {identifier: source for identifier, source in sources.items()
-            if access[source.catalog_id or identifier].enabled}
+    resolved: dict[str, EffectiveSkillSource] = {}
+    for identifier, source in sources.items():
+        decision = access[source.catalog_id or identifier]
+        override_enabled = identifier in enabled
+        resolved[identifier] = replace(
+            source,
+            enabled=override_enabled and decision.enabled,
+            access_reason=decision.reason if override_enabled else "disabled:override",
+        )
+    return resolved if include_disabled else {
+        identifier: source for identifier, source in resolved.items() if source.enabled
+    }
+
+
+def effective_skill_inventory(
+    repository: Path, paths: KitPaths, project: LogicalProject | None = None,
+) -> list[dict]:
+    """Вернуть CLI-инвентарь из того же resolver, который публикует clients."""
+    project_id = project.identifier if project else None
+    rows = {
+        item["id"]: item
+        for item in ExternalSkillManager(repository, paths, project_id=project_id).list()
+    }
+    for identifier, source in effective_skill_sources(
+        repository, paths, project, project_id, include_disabled=True,
+    ).items():
+        metadata = markdown_frontmatter(source.path / "SKILL.md")
+        rows[identifier] = {
+            **metadata,
+            "id": identifier,
+            **source.as_dict(),
+            "status": Lifecycle.ACTIVE.value if source.enabled else "DISABLED",
+        }
+    return [rows[identifier] for identifier in sorted(rows)]
+
+
+def project_skill_status_report(
+    repository: Path, paths: KitPaths, project: LogicalProject,
+) -> dict[str, object]:
+    """Дополнить lifecycle status текущим branch selection и provenance."""
+    manager = ProjectSkillRepositoryManager(repository, paths, project)
+    report = manager.status().as_dict()
+    selection = manager.inspect()
+    sources = effective_skill_sources(repository, paths, project, include_disabled=True)
+    provenance: dict[str, dict] = {}
+    collisions: dict[str, list[str]] = {}
+    for identifier in manager.active_skills():
+        source = sources.get(identifier)
+        if source is None:
+            continue
+        provenance[identifier] = source.as_dict()
+        layers = [*source.shadowed, replace(source, shadowed=())]
+        names = [item.source for item in sorted(layers, key=lambda item: item.priority)]
+        if len(names) > 1:
+            collisions[identifier] = names
+    return {
+        **report,
+        "requested_branch": selection["requested_branch"],
+        "local_override_applied": selection["local_override_applied"],
+        "provenance": provenance,
+        "collisions": collisions,
+    }
 
 
 def _is_within(path: Path, root: Path) -> bool:
@@ -187,7 +256,7 @@ def sync_clients(
     ensure_runtime(paths)
     generated: list[Path] = []
     project_id = project.identifier if project else project_id
-    skill_sources = _effective_skill_sources(repository, paths, project, project_id)
+    skill_sources = effective_skill_sources(repository, paths, project, project_id)
 
     shared = paths.installations / "clients" / "shared" / "skills"
     shared.mkdir(parents=True, exist_ok=True)

@@ -8,7 +8,13 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .clients import expose_native_instructions, expose_native_skills, register_native_mcp, sync_clients
+from .clients import (
+    effective_skill_sources,
+    expose_native_instructions,
+    expose_native_skills,
+    register_native_mcp,
+    sync_clients,
+)
 from .component_state import Lifecycle
 from .errors import AgentKitError
 from .harness import resolve_harness
@@ -82,15 +88,13 @@ def resync(
     ensure_runtime(paths)
     initialize_override_workspace(repository, paths)
     current_revision = revision(repository)
-    repository_validation = validate(repository, paths, "all", include_local=True)
+    # Переносимая база проверяется до machine-local inputs. Project skills
+    # активируются ниже до проверки overrides, чтобы их ID были известны при
+    # первой настройке проекта.
+    repository_validation = validate(repository, paths, "all", include_local=False)
     if not repository_validation.ok:
         messages = "; ".join(item.message for item in repository_validation.diagnostics if item.severity == "ERROR")
         raise AgentKitError(f"Resync остановлен repository validation: {messages}")
-    override_validation = validate_overrides(repository, paths.overrides, project.identifier if project else None)
-    if not override_validation.ok:
-        messages = "; ".join(item.message for item in override_validation.diagnostics if item.severity == "ERROR")
-        raise AgentKitError(f"Resync остановлен local overrides validation: {messages}")
-
     security_manager = SecurityToolManager(repository, paths)
     if install_security:
         security_result = security_manager.install(force=force)
@@ -98,6 +102,25 @@ def resync(
             messages = "; ".join(item.message for item in security_result.diagnostics if item.severity == "ERROR")
             raise AgentKitError(f"Resync остановлен security installation: {messages}")
     security_state = security_manager.status()
+
+    project_status = ProjectSkillRepositoryManager(repository, paths, project).resync() if project else None
+    project_skills = project_status.as_dict() if project_status else None
+
+    try:
+        known_skill_ids = set(effective_skill_sources(
+            repository, paths, project, include_disabled=True,
+        ))
+    except AgentKitError as error:
+        raise AgentKitError(f"Resync остановлен local overrides validation: {error}") from None
+    override_validation = validate_overrides(
+        repository,
+        paths.overrides,
+        project.identifier if project else None,
+        additional_skill_ids=known_skill_ids,
+    )
+    if not override_validation.ok:
+        messages = "; ".join(item.message for item in override_validation.diagnostics if item.severity == "ERROR")
+        raise AgentKitError(f"Resync остановлен local overrides validation: {messages}")
 
     skill_manager = ExternalSkillManager(repository, paths, project_id=project.identifier if project else None)
     skill_state = skill_manager.resync(force=force)
@@ -118,7 +141,6 @@ def resync(
         raise AgentKitError(f"Resync остановлен MCP installation: {messages}")
     mcp_state = mcp_manager.list(project, access_profile=mcp_access_profile)
 
-    project_skills = ProjectSkillRepositoryManager(repository, paths, project).resync().as_dict() if project else None
     project_id = project.identifier if project else None
     generated = sync_clients(
         repository,

@@ -77,6 +77,7 @@ def resync_environment(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(resync_module, "revision", lambda *_args: "kit123")
     monkeypatch.setattr(resync_module, "validate", lambda *_args, **_kwargs: SimpleNamespace(ok=True))
     monkeypatch.setattr(resync_module, "validate_overrides", lambda *_args, **_kwargs: SimpleNamespace(ok=True))
+    monkeypatch.setattr(resync_module, "effective_skill_sources", lambda *_args, **_kwargs: {"example": object()})
     monkeypatch.setattr(resync_module, "initialize_override_workspace", lambda *_args: None)
     monkeypatch.setattr(resync_module.SecurityToolManager, "install",
                         lambda *_args, **_kwargs: calls.append("security-install") or SimpleNamespace(ok=True))
@@ -123,6 +124,13 @@ def resync_environment(monkeypatch, tmp_path: Path):
 @pytest.mark.parametrize("state", ["ACTIVE", "STALE", "UPDATE_REJECTED", "NOT_CONFIGURED"])
 def test_resync_updates_project_skills_before_client_sync(monkeypatch, resync_environment, state: str) -> None:
     env = resync_environment
+    validated_skill_ids: list[set[str] | None] = []
+    monkeypatch.setattr(
+        resync_module,
+        "validate_overrides",
+        lambda *_args, **kwargs: validated_skill_ids.append(kwargs.get("additional_skill_ids"))
+        or SimpleNamespace(ok=True),
+    )
     status = ProjectSkillsStatus(
         project_id="demo", source_url="https://user:password@example.invalid/skills.git?token=private",
         default_branch="main", requested_branch="feature", resolved_revision="abc123",
@@ -144,8 +152,9 @@ def test_resync_updates_project_skills_before_client_sync(monkeypatch, resync_en
 
     report = resync(env.repository, env.paths, project=env.project, update_kit=False)
 
-    assert env.calls == ["security-install", "security-status", "external-skills", "mcp",
-                         "project-skills-manager", "project-skills", "clients", "native-skills"]
+    assert env.calls == ["security-install", "security-status", "project-skills-manager", "project-skills",
+                         "external-skills", "mcp", "clients", "native-skills"]
+    assert validated_skill_ids == [{"example"}]
     assert env.published_projects == [env.project, env.project]
     assert report.project_skills == status.as_dict()
     manifest_text = (env.paths.state / "effective-environment.json").read_text(encoding="utf-8")

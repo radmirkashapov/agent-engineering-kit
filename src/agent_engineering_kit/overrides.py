@@ -105,8 +105,15 @@ def _core_ids(repository: Path, kind: str) -> dict[str, bool]:
     return found
 
 
-def validate_overrides(repository: Path, override_root: Path, project_id: str | None = None) -> ValidationResult:
+def validate_overrides(
+    repository: Path,
+    override_root: Path,
+    project_id: str | None = None,
+    *,
+    additional_skill_ids: set[str] | None = None,
+) -> ValidationResult:
     result = ValidationResult()
+    known_skill_ids = additional_skill_ids or set()
     roots = [override_root / "global"]
     if project_id:
         roots.append(override_root / "projects" / project_id)
@@ -117,6 +124,8 @@ def validate_overrides(repository: Path, override_root: Path, project_id: str | 
             if not directory.exists():
                 continue
             core = _core_ids(repository, kind)
+            if kind == "skills":
+                core.update({identifier: False for identifier in known_skill_ids})
             for path in sorted(directory.glob("*.yaml")):
                 checked += 1
                 document = load_yaml(path)
@@ -159,7 +168,7 @@ def validate_overrides(repository: Path, override_root: Path, project_id: str | 
         validate_access(
             {
                 "mcp": set(_core_ids(repository, "mcp")),
-                "skills": set(_core_ids(repository, "skills")),
+                "skills": set(_core_ids(repository, "skills")) | known_skill_ids,
             },
             override_root,
             project_id,

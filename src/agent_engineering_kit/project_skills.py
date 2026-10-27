@@ -19,7 +19,7 @@ from .external_skills import SkillValidator
 from .io import atomic_write, load_json, markdown_frontmatter
 from .paths import KitPaths
 from .process import CommandResult, run_command
-from .projects import LogicalProject
+from .projects import LogicalProject, register_memory
 from .security_tools import SecurityToolManager
 
 
@@ -358,6 +358,13 @@ class ProjectSkillRepositoryManager:
             accepted = accepted and passed
         return skills if accepted else {}, evidence
 
+    def _verify_validated_tree(self, root: Path, revision: str, expected: dict[str, Path]) -> None:
+        """Повторно проверить неизменность Git worktree после внешнего validator."""
+        self._check_revision(root, revision)
+        actual = self._structure(root)
+        if tuple(actual) != tuple(expected):
+            raise AgentKitError("Состав candidate project-skills изменён после проверки")
+
     def _read_status(self, path: Path) -> ProjectSkillsStatus:
         value = load_json(path)
         if not isinstance(value.get("skills"), list):
@@ -461,6 +468,9 @@ class ProjectSkillRepositoryManager:
             return self._not_configured()
         self._check_storage()
         with _repository_lock(self.lock_path):
+            # Identity регистрируется под тем же project-level lock до любых
+            # remote mutations, чтобы разные roots не могли по очереди менять origin.
+            register_memory(self.project, self.paths)
             active = self._active()
             source = self.source()
             branch: str | None = None
@@ -475,6 +485,7 @@ class ProjectSkillRepositoryManager:
                 skills, evidence = self._validate_candidate(candidate)
                 if not skills:
                     raise AgentKitError("Candidate project-skills отклонён проверкой структуры или безопасности")
+                self._verify_validated_tree(candidate, revision, skills)
                 if active and revision == active.active_revision:
                     self._discard_candidate(candidate)
                     candidate = None
@@ -487,17 +498,24 @@ class ProjectSkillRepositoryManager:
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 if destination.exists():
                     self._check_revision(destination, revision)
+                    if tuple(self._structure(destination)) != tuple(skills):
+                        raise AgentKitError("Состав сохранённой ревизии project-skills не совпадает с candidate")
                     if candidate is not None:
                         self._discard_candidate(candidate)
                         candidate = None
                 else:
                     self._git(["-C", str(self.checkout), "worktree", "move", str(candidate), str(destination)])
-                    candidate = None
+                    candidate = destination
+                    self._verify_validated_tree(destination, revision, skills)
                 result = ProjectSkillsStatus(self.project.identifier, redact_url(source.url), source.default_branch,
                                              branch, revision, revision, "ACTIVE", None,
                                              datetime.now(timezone.utc).isoformat(), tuple(skills))
                 self._record(result, evidence)
+                # Последняя проверка непосредственно перед authoritative pointer
+                # закрывает мутации, сделанные validator или diagnostic hook.
+                self._verify_validated_tree(destination, revision, skills)
                 atomic_write(self.root / "active.json", json.dumps(result.as_dict(), ensure_ascii=False, indent=2) + "\n")
+                candidate = None
                 return result
             except (AgentKitError, OSError, UnicodeError) as error:
                 result = ProjectSkillsStatus(self.project.identifier, redact_url(source.url), source.default_branch,

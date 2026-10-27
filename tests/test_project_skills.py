@@ -16,8 +16,16 @@ from agent_engineering_kit.paths import KitPaths
 from agent_engineering_kit.process import CommandResult, run_command
 from agent_engineering_kit.projects import LogicalProject
 from agent_engineering_kit.project_skills import ProjectSkillRepositoryManager, redact_url
-from agent_engineering_kit.clients import sync_clients, expose_native_skills
+from agent_engineering_kit.clients import (
+    effective_skill_inventory,
+    effective_skill_sources,
+    expose_native_skills,
+    project_skill_status_report,
+    sync_clients,
+)
+from agent_engineering_kit.cli import _effective_skill_roots
 from agent_engineering_kit.component_state import Lifecycle, write_state
+from agent_engineering_kit.validation import validate_effective_overrides
 from conftest import write_yaml
 
 
@@ -96,8 +104,15 @@ def fixture(tmp_path: Path) -> RepositoryFixture:
     (product / "app.txt").write_text("unstaged\n", encoding="utf-8")
     data = tmp_path / "data"
     paths = KitPaths(tmp_path / "kit", data, data / "runtime", data / "projects", data / "overrides")
+    (paths.repository / "schemas").mkdir(parents=True)
+    shutil.copy2(Path(__file__).resolve().parents[1] / "schemas/project.schema.json",
+                 paths.repository / "schemas/project.schema.json")
     project = LogicalProject(product, product / ".ai-team/project.yaml", {
-        "id": "shared", "skills": {"repository": {"url": str(upstream), "default_branch": "main"}},
+        "version": 1, "id": "shared", "name": "Shared fixture",
+        "repositories": [{"id": "product", "path": "."}],
+        "documentation": {"index": "README.md", "roots": ["docs"]},
+        "memory": {"namespace": "shared"},
+        "skills": {"repository": {"url": str(upstream), "default_branch": "main"}},
     })
     return RepositoryFixture(upstream, seed, project, paths)
 
@@ -106,7 +121,7 @@ def fixture(tmp_path: Path) -> RepositoryFixture:
 def publication_fixture(fixture):
     real = Path(__file__).resolve().parents[1]
     for directory in ("clients", "catalog", "locks", "schemas"):
-        shutil.copytree(real / directory, fixture.paths.repository / directory)
+        shutil.copytree(real / directory, fixture.paths.repository / directory, dirs_exist_ok=True)
     return fixture
 
 
@@ -191,6 +206,85 @@ def test_project_skills_obey_explicit_local_overrides(publication_fixture, mode)
         assert (shared / "skills/example").resolve() == local
         assert rows["example"]["source"] == "local-override"
         assert rows["example"]["shadowed"][0]["source"] == "project-skills"
+
+
+def test_effective_skill_resolver_exposes_project_skill_and_applies_acl(publication_fixture):
+    fixture = publication_fixture
+    fixture.manager(validator=lambda _: (True, [])).resync()
+
+    sources = effective_skill_sources(
+        fixture.paths.repository, fixture.paths, fixture.project, include_disabled=True,
+    )
+
+    assert sources["example"].source == "project-skills"
+    assert sources["example"].enabled is True
+    write_yaml(fixture.paths.overrides / "projects/shared/access.yaml", {
+        "version": 1, "skills": {"allow": [], "block": ["example"]},
+    })
+    blocked = effective_skill_sources(
+        fixture.paths.repository, fixture.paths, fixture.project, include_disabled=True,
+    )["example"]
+    inventory = {row["id"]: row for row in effective_skill_inventory(
+        fixture.paths.repository, fixture.paths, fixture.project,
+    )}
+    assert blocked.enabled is False
+    assert blocked.access_reason == "blocked:project"
+    assert inventory["example"]["status"] == "DISABLED"
+
+
+def test_repository_validation_accepts_active_project_skill_override(publication_fixture, monkeypatch):
+    fixture = publication_fixture
+    fixture.manager(validator=lambda _: (True, [])).resync()
+    write_yaml(fixture.project.manifest_path, fixture.project.manifest)
+    write_yaml(fixture.paths.overrides / "projects/shared/skills/example.yaml", {
+        "target": "example", "override": {"mode": "disable"},
+    })
+    monkeypatch.chdir(fixture.project.root)
+
+    result = validate_effective_overrides(
+        fixture.paths.repository, fixture.paths, include_local=True,
+    )
+
+    assert result.ok
+
+
+def test_security_roots_follow_effective_project_skill_precedence(publication_fixture):
+    fixture = publication_fixture
+    manager = fixture.manager(validator=lambda _: (True, []))
+    manager.resync()
+    assert _effective_skill_roots(fixture.paths.repository, fixture.paths, fixture.project) == [
+        manager.active_skills()["example"].resolve(),
+    ]
+    local = fixture.paths.overrides / "projects/shared/sources/skills/example"
+    local.mkdir(parents=True)
+    (local / "SKILL.md").write_text(
+        "---\nversion: 1\nname: example\ndescription: Use the local test skill.\n"
+        "requires:\n  model_capabilities: []\n---\n", encoding="utf-8",
+    )
+    write_yaml(fixture.paths.overrides / "projects/shared/skills/example.yaml", {
+        "target": "example", "override": {"mode": "replace", "value": {"path": "../sources/skills/example"}},
+    })
+
+    assert _effective_skill_roots(fixture.paths.repository, fixture.paths, fixture.project) == [local.resolve()]
+
+
+def test_project_skill_status_reports_branch_override_provenance_and_collisions(publication_fixture):
+    fixture = publication_fixture
+    manager = fixture.manager(validator=lambda _: (True, []))
+    manager.resync()
+    builtin = fixture.paths.repository / "skills/first-party/example"
+    builtin.mkdir(parents=True)
+    (builtin / "SKILL.md").write_text(
+        "---\nversion: 1\nname: example\ndescription: Use the built-in test skill.\n"
+        "requires:\n  model_capabilities: []\n---\n", encoding="utf-8",
+    )
+    manager.set_branch("feat/new-check")
+
+    report = project_skill_status_report(fixture.paths.repository, fixture.paths, fixture.project)
+
+    assert report["local_override_applied"] is True
+    assert report["provenance"]["example"]["source"] == "project-skills"
+    assert report["collisions"]["example"] == ["built-in", "project-skills"]
 
 
 @pytest.mark.parametrize("configured", [True, False])
@@ -733,6 +827,85 @@ def test_concurrent_resync_serializes_validation_and_activation(fixture):
     assert len(list((manager.root / "revisions").iterdir())) == 1
     assert not list((manager.root / "candidates").iterdir())
     assert git(manager.active_skills()["example"], "rev-parse", "HEAD") == statuses[0].active_revision
+
+
+def test_resync_rejects_incompatible_source_registered_by_another_project_root(publication_fixture):
+    fixture = publication_fixture
+    first = fixture.manager(validator=lambda _: (True, []))
+    first.resync()
+    other_upstream = fixture.upstream.with_name("other-upstream.git")
+    git(fixture.seed.parent, "clone", "--bare", str(fixture.seed), str(other_upstream))
+    other_root = fixture.project.root.parent / "other-product"
+    other_root.mkdir()
+    other_project = LogicalProject(other_root, other_root / ".ai-team/project.yaml", {
+        "version": 1, "id": fixture.project.identifier, "name": "Other fixture",
+        "repositories": [{"id": "product", "path": "."}],
+        "documentation": {"index": "README.md", "roots": ["docs"]},
+        "memory": {"namespace": fixture.project.identifier},
+        "skills": {"repository": {"url": str(other_upstream), "default_branch": "main"}},
+    })
+    second = ProjectSkillRepositoryManager(
+        fixture.paths.repository, fixture.paths, other_project, validator=lambda _: (True, []),
+    )
+    origin_before = git(first.checkout, "remote", "get-url", "origin")
+
+    with pytest.raises(AgentKitError, match="Collision project.id"):
+        second.resync()
+
+    assert git(first.checkout, "remote", "get-url", "origin") == origin_before == str(fixture.upstream)
+    identity = json.loads((fixture.paths.projects / fixture.project.identifier / "identity.json").read_text())
+    assert identity["skills_repository_url"] == str(fixture.upstream)
+
+
+def test_concurrent_resync_allows_only_one_incompatible_namespace_source(publication_fixture):
+    fixture = publication_fixture
+    other_upstream = fixture.upstream.with_name("racing-upstream.git")
+    git(fixture.seed.parent, "clone", "--bare", str(fixture.seed), str(other_upstream))
+    other_root = fixture.project.root.parent / "racing-product"
+    other_root.mkdir()
+    other_project = LogicalProject(other_root, other_root / ".ai-team/project.yaml", {
+        **fixture.project.manifest,
+        "skills": {"repository": {"url": str(other_upstream), "default_branch": "main"}},
+    })
+    managers = (
+        fixture.manager(validator=lambda _: (True, [])),
+        ProjectSkillRepositoryManager(
+            fixture.paths.repository, fixture.paths, other_project, validator=lambda _: (True, []),
+        ),
+    )
+
+    def synchronize(manager):
+        try:
+            return manager.resync().state
+        except AgentKitError as error:
+            return str(error)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(synchronize, managers))
+
+    assert sum(result == "ACTIVE" for result in results) == 1
+    assert sum("Collision project.id" in result for result in results) == 1
+    identity = json.loads((fixture.paths.projects / fixture.project.identifier / "identity.json").read_text())
+    assert git(managers[0].checkout, "remote", "get-url", "origin") == identity["skills_repository_url"]
+
+
+def test_validator_mutation_after_structure_check_keeps_last_known_good(fixture):
+    manager = fixture.manager(validator=lambda _: (True, []))
+    active = manager.resync()
+    pointer = (manager.root / "active.json").read_bytes()
+    fixture.commit_skill("---\nname: example\n---\n# Candidate\n")
+
+    def mutate(skill_root: Path):
+        (skill_root / "SKILL.md").write_text("---\nname: example\n---\n# Mutated after validation\n")
+        return True, [{"check": "fixture", "status": "PASS"}]
+
+    manager.validator = mutate
+    rejected = manager.resync()
+
+    assert rejected.state == "UPDATE_REJECTED"
+    assert rejected.active_revision == active.active_revision
+    assert (manager.root / "active.json").read_bytes() == pointer
+    assert "Mutated" not in manager.active_skills()["example"].joinpath("SKILL.md").read_text()
 
 
 def test_unconfigured_lifecycle_has_no_source_revision_or_state_writes(fixture):

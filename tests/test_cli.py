@@ -59,6 +59,27 @@ def test_available_does_not_require_scope() -> None:
     assert args.skills_command == "available"
 
 
+def test_project_skill_is_available_to_cli_listing_and_access_mutation(
+    isolated_data: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    project = SimpleNamespace(identifier="demo")
+    rows = [{
+        "id": "project-check", "source": "project-skills", "enabled": True,
+        "access_reason": "allowed:catalog", "status": "ACTIVE", "path": "/managed/project-check",
+    }]
+    monkeypatch.setattr(cli_module, "find_project", lambda _path: project)
+    monkeypatch.setattr(cli_module, "effective_skill_inventory", lambda *_args: rows)
+
+    assert run(["skills", "available"]) == 0
+    assert json.loads(capsys.readouterr().out)[0]["id"] == "project-check"
+    assert run(["skills", "disable", "project-check", "--scope", "global"]) == 0
+
+    access = load_yaml(isolated_data / "overrides/global/access.yaml")
+    assert access["skills"]["block"] == ["project-check"]
+
+
 def test_mcp_creds_import_parser() -> None:
     from pathlib import Path
 
@@ -278,6 +299,16 @@ def test_project_skills_dispatch_outputs_safe_json_without_resync(skills_project
             )
 
     monkeypatch.setattr(cli_module, "ProjectSkillRepositoryManager", Manager, raising=False)
+    monkeypatch.setattr(
+        cli_module,
+        "project_skill_status_report",
+        lambda repository, paths, project: {
+            **Manager(repository, paths, project).status().as_dict(),
+            "local_override_applied": False,
+            "provenance": {},
+            "collisions": {},
+        },
+    )
     monkeypatch.setattr(cli_module, "resync", lambda *args, **kwargs: pytest.fail("Неожиданный resync"))
     assert run(["project", "skills", *command]) == 0
     output = capsys.readouterr()

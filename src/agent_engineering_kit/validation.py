@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .clients import validate_clients
+from .clients import effective_skill_sources, validate_clients
 from .conventions import validate_conventions
 from .definitions import validate_agents, validate_locks, validate_mcp, validate_skills
 from .git_hygiene import validate_git_hygiene
@@ -50,6 +50,22 @@ def validate_project_skills(
     return result
 
 
+def validate_effective_overrides(repository: Path, paths: KitPaths, *, include_local: bool) -> ValidationResult:
+    """Проверить overrides в контексте активных skills текущего logical project."""
+    if not include_local:
+        return ValidationResult()
+    project = find_project(Path.cwd())
+    identifiers = set(effective_skill_sources(
+        repository, paths, project, include_disabled=True,
+    )) if project else None
+    return validate_overrides(
+        repository,
+        paths.overrides,
+        project.identifier if project else None,
+        additional_skill_ids=identifiers,
+    )
+
+
 VALIDATORS = {
     "schemas": lambda repository, paths, include_local: validate_repository_schemas(repository),
     "models": lambda repository, paths, include_local: validate_models(repository, include_local=include_local, local_path=paths.overrides / "models.yaml"),
@@ -63,7 +79,8 @@ VALIDATORS = {
     "profiles": lambda repository, paths, include_local: validate_profiles(repository),
     "conventions": lambda repository, paths, include_local: validate_conventions(repository, find_project(Path.cwd()) if include_local else None),
     "policy": lambda repository, paths, include_local: validate_policy(repository, paths, find_project(Path.cwd()) if include_local else None, include_local=include_local),
-    "overrides": lambda repository, paths, include_local: validate_overrides(repository, paths.overrides) if include_local else ValidationResult(),
+    "overrides": lambda repository, paths, include_local: validate_effective_overrides(
+        repository, paths, include_local=include_local),
     "git-hygiene": lambda repository, paths, include_local: validate_git_hygiene(repository, paths, require_gitleaks=not include_local),
     "security": lambda repository, paths, include_local: validate_security(repository),
 }
