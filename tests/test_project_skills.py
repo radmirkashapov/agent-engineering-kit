@@ -972,6 +972,28 @@ def test_validator_cannot_hide_mutation_with_assume_unchanged(fixture):
     assert "Hidden mutation" not in manager.active_skills()["example"].joinpath("SKILL.md").read_text()
 
 
+def test_validator_cannot_hide_executable_mode_change_with_assume_unchanged(fixture):
+    manager = fixture.manager(validator=lambda _: (True, []))
+    active = manager.resync()
+    pointer = (manager.root / "active.json").read_bytes()
+    fixture.commit_skill("---\nname: example\n---\n# Candidate\n")
+
+    def change_mode_and_hide(skill_root: Path):
+        document = skill_root / "SKILL.md"
+        document.chmod(document.stat().st_mode | stat.S_IXUSR)
+        git(skill_root, "update-index", "--assume-unchanged", "SKILL.md")
+        assert git(skill_root, "status", "--porcelain") == ""
+        return True, [{"check": "fixture", "status": "PASS"}]
+
+    manager.validator = change_mode_and_hide
+    rejected = manager.resync()
+
+    assert rejected.state == "UPDATE_REJECTED"
+    assert rejected.active_revision == active.active_revision
+    assert (manager.root / "active.json").read_bytes() == pointer
+    assert not manager.active_skills()["example"].joinpath("SKILL.md").stat().st_mode & stat.S_IXUSR
+
+
 def test_unconfigured_lifecycle_has_no_source_revision_or_state_writes(fixture):
     fixture.project.manifest.pop("skills")
     manager = fixture.manager()

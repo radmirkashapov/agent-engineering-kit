@@ -7,6 +7,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -379,18 +380,19 @@ class ProjectSkillRepositoryManager:
         algorithm = self._git(["-C", str(root), "rev-parse", "--show-object-format"])
         if algorithm not in {"sha1", "sha256"}:
             raise AgentKitError("Неизвестный формат Git object project-skills")
-        expected: dict[str, tuple[bool, str]] = {}
+        expected: dict[str, tuple[str, str]] = {}
         listing = self._git(["-C", str(root), "ls-tree", "-rz", "--full-tree", revision])
         for record in listing.split("\0"):
             if not record:
                 continue
             header, separator, relative = record.partition("\t")
             fields = header.split()
-            if not separator or len(fields) != 3 or fields[1] != "blob" or relative in expected:
+            if (not separator or len(fields) != 3 or fields[1] != "blob"
+                    or fields[0] not in {"100644", "100755", "120000"} or relative in expected):
                 raise AgentKitError("Некорректное дерево Git project-skills")
-            expected[relative] = (fields[0] == "120000", fields[2])
+            expected[relative] = (fields[0], fields[2])
 
-        actual: dict[str, tuple[bool, str]] = {}
+        actual: dict[str, tuple[str, str]] = {}
         for directory, names, files in os.walk(root, followlinks=False):
             base = Path(directory)
             for name in tuple(names):
@@ -403,15 +405,22 @@ class ProjectSkillRepositoryManager:
                 relative = path.relative_to(root).as_posix()
                 if relative == ".git":
                     continue
-                symlink = path.is_symlink()
                 try:
-                    content = os.fsencode(os.readlink(path)) if symlink else path.read_bytes()
+                    metadata = path.lstat()
+                    if stat.S_ISLNK(metadata.st_mode):
+                        mode = "120000"
+                        content = os.fsencode(os.readlink(path))
+                    elif stat.S_ISREG(metadata.st_mode):
+                        mode = "100755" if metadata.st_mode & 0o111 else "100644"
+                        content = path.read_bytes()
+                    else:
+                        raise AgentKitError("Недопустимый тип файла в project-skills")
                 except OSError as error:
                     raise AgentKitError("Не удалось прочитать дерево project-skills") from error
                 digest = hashlib.new(algorithm)
                 digest.update(f"blob {len(content)}\0".encode("ascii"))
                 digest.update(content)
-                actual[relative] = (symlink, digest.hexdigest())
+                actual[relative] = (mode, digest.hexdigest())
         if actual != expected:
             raise AgentKitError("Содержимое project-skills изменено после проверки")
 
