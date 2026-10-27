@@ -34,7 +34,7 @@ def test_resync_initializes_overrides_before_local_validation(monkeypatch, tmp_p
     )
 
     with pytest.raises(AgentKitError, match="local overrides validation"):
-        resync(repository, paths, update_kit=False)
+        resync(repository, paths, update_kit=False, install_security=False)
 
     assert calls == ["runtime", "initializer"]
 
