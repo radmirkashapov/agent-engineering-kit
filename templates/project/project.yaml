@@ -23,6 +23,14 @@ documentation:
 memory:
   # Namespace связывает project с изолированной machine-local memory.
   namespace: example-project
+# Необязательный общий источник project skills; без секции состояние — NOT_CONFIGURED.
+# Все repositories с одинаковым project id должны указывать один и тот же источник.
+# skills:
+#   repository:
+#     # Допустим SSH URL или HTTPS URL без credentials, query и fragment.
+#     url: git@gitlab.example.com:team/project-skills.git
+#     # Ветка для обычного resync; локальный use-branch не меняет manifest.
+#     default_branch: main
 harness:
   # Auto выбирает первый adapter, покрывающий обязательные возможности проекта.
   preferred_client: auto

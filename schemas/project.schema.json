@@ -37,6 +37,22 @@
       "type": "object", "required": ["namespace"], "additionalProperties": false,
       "properties": { "namespace": { "$ref": "#/$defs/id" } }
     },
+    "skills": {
+      "type": "object",
+      "required": ["repository"],
+      "additionalProperties": false,
+      "properties": {
+        "repository": {
+          "type": "object",
+          "required": ["url", "default_branch"],
+          "additionalProperties": false,
+          "properties": {
+            "url": { "type": "string", "minLength": 1, "not": { "pattern": "(?:[?#]|://[^/]*@)" } },
+            "default_branch": { "type": "string", "pattern": "^(?!.*\\.\\.)(?!.*\\s)[^~^:?*\\\\[]+$" }
+          }
+        }
+      }
+    },
     "integrations": {
       "type": "object",
       "additionalProperties": false,

@@ -59,6 +59,27 @@ def test_available_does_not_require_scope() -> None:
     assert args.skills_command == "available"
 
 
+def test_project_skill_is_available_to_cli_listing_and_access_mutation(
+    isolated_data: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    project = SimpleNamespace(identifier="demo")
+    rows = [{
+        "id": "project-check", "source": "project-skills", "enabled": True,
+        "access_reason": "allowed:catalog", "status": "ACTIVE", "path": "/managed/project-check",
+    }]
+    monkeypatch.setattr(cli_module, "find_project", lambda _path: project)
+    monkeypatch.setattr(cli_module, "effective_skill_inventory", lambda *_args: rows)
+
+    assert run(["skills", "available"]) == 0
+    assert json.loads(capsys.readouterr().out)[0]["id"] == "project-check"
+    assert run(["skills", "disable", "project-check", "--scope", "global"]) == 0
+
+    access = load_yaml(isolated_data / "overrides/global/access.yaml")
+    assert access["skills"]["block"] == ["project-check"]
+
+
 def test_mcp_creds_import_parser() -> None:
     from pathlib import Path
 
@@ -211,6 +232,193 @@ def test_help_rejects_unknown_topic(capsys: pytest.CaptureFixture[str]) -> None:
     assert run(["help", "unknown-topic"]) == 2
 
     assert "unknown-topic" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("command", [["use-branch", "feat/проверка"], ["use-main"], ["status"]])
+def test_project_skills_parser(command):
+    args = _parser().parse_args(["project", "skills", *command])
+    assert args.project_skills_command == command[0]
+    if command[0] == "use-branch":
+        assert args.branch == "feat/проверка"
+
+
+def test_project_skills_help(capsys):
+    assert run(["help", "project", "skills"]) == 0
+    output = capsys.readouterr().out
+    assert "agent-kit project skills" in output
+    for command in ("use-branch", "use-main", "status"):
+        assert command in output
+
+
+@pytest.mark.parametrize("command", [["use-branch", "feat/check"], ["use-main"], ["status"]])
+def test_project_skills_requires_logical_project(isolated_data, capsys, command):
+    assert run(["project", "skills", *command]) == 1
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert "Logical project не найден" in output.err
+
+
+@pytest.fixture
+def skills_project(isolated_data):
+    from conftest import write_yaml
+
+    root = isolated_data / "product"
+    manifest = root / ".ai-team/project.yaml"
+    write_yaml(manifest, {
+        "version": 1, "id": "cli-project", "name": "Проверка CLI",
+        "repositories": [{"id": "product", "path": "."}],
+        "documentation": {"index": "docs/INDEX.md", "roots": ["docs"]},
+        "memory": {"namespace": "cli-project"},
+        "skills": {"repository": {"url": "https://example.test/skills.git", "default_branch": "main"}},
+    })
+    return root
+
+
+@pytest.mark.parametrize("command,branch", [(["use-branch", "feat/проверка"], "feat/проверка"), (["use-main"], "main"), (["status"], "main")])
+def test_project_skills_dispatch_outputs_safe_json_without_resync(skills_project, monkeypatch, capsys, command, branch):
+    monkeypatch.chdir(skills_project / ".ai-team")
+
+    class Manager:
+        def __init__(self, repository, paths, project):
+            assert project.root == skills_project
+            self.project = project
+
+        def set_branch(self, value):
+            return {"project_id": self.project.identifier, "requested_branch": value, "source_url": "https://example.test/skills.git"}
+
+        def use_main(self):
+            return self.set_branch("main")
+
+        def status(self):
+            from agent_engineering_kit.project_skills import ProjectSkillsStatus
+
+            return ProjectSkillsStatus(
+                self.project.identifier,
+                "https://fixture-user:fixture-secret@example.test/skills.git?token=fixture-token",
+                "main", "main", "a" * 40, "a" * 40, "ACTIVE", "Проверено", None, ("example",),
+            )
+
+    monkeypatch.setattr(cli_module, "ProjectSkillRepositoryManager", Manager, raising=False)
+    monkeypatch.setattr(
+        cli_module,
+        "project_skill_status_report",
+        lambda repository, paths, project: {
+            **Manager(repository, paths, project).status().as_dict(),
+            "local_override_applied": False,
+            "provenance": {},
+            "collisions": {},
+        },
+    )
+    monkeypatch.setattr(cli_module, "resync", lambda *args, **kwargs: pytest.fail("Неожиданный resync"))
+    assert run(["project", "skills", *command]) == 0
+    output = capsys.readouterr()
+    document = json.loads(output.out)
+    assert document["project_id"] == "cli-project"
+    assert document["requested_branch"] == branch
+    assert document["source_url"] == ("<redacted-url>" if command == ["status"] else "https://example.test/skills.git")
+    assert output.err == ""
+    assert "\\u" not in output.out
+    assert all(value not in output.out for value in ("fixture-user", "fixture-secret", "fixture-token"))
+
+
+def test_project_skills_branch_selection_persists_only_machine_local_state(skills_project, isolated_data, monkeypatch, capsys):
+    monkeypatch.chdir(skills_project)
+    manifest = skills_project / ".ai-team/project.yaml"
+    original = manifest.read_bytes()
+    monkeypatch.setattr(cli_module, "resync", lambda *args, **kwargs: pytest.fail("Неожиданный resync"))
+    assert run(["project", "skills", "use-branch", "feat/проверка"]) == 0
+    selected = json.loads(capsys.readouterr().out)
+    assert selected["requested_branch"] == "feat/проверка"
+    assert selected["local_override_applied"] is True
+    override = isolated_data / "projects/cli-project/skills-repository/branch-override.json"
+    assert json.loads(override.read_text())["branch"] == "feat/проверка"
+    assert not (override.parent / "checkout").exists()
+    assert run(["project", "skills", "use-main"]) == 0
+    selected = json.loads(capsys.readouterr().out)
+    assert selected["requested_branch"] == "main"
+    assert selected["local_override_applied"] is False
+    assert not override.exists()
+    assert manifest.read_bytes() == original
+
+
+@pytest.mark.parametrize("command", [["use-branch", "feat/check"], ["use-main"], ["status"]])
+def test_project_skills_invalid_config_does_not_expose_credentials(skills_project, monkeypatch, capsys, command):
+    from conftest import write_yaml
+
+    manifest = skills_project / ".ai-team/project.yaml"
+    document = load_yaml(manifest)
+    document["skills"]["repository"]["url"] = "https://fixture-user:fixture-secret@example.test/skills.git?token=fixture-token"
+    write_yaml(manifest, document)
+    monkeypatch.chdir(skills_project)
+    assert run(["project", "skills", *command]) == 1
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert "Некоррект" in output.err
+    assert all(value not in output.err for value in ("fixture-user", "fixture-secret", "fixture-token"))
+
+
+def test_project_skills_unsafe_branch_error_is_generic(skills_project, monkeypatch, capsys):
+    monkeypatch.chdir(skills_project)
+    unsafe = "https://fixture-user:fixture-secret@example.test/bad?token=fixture-token"
+    assert run(["project", "skills", "use-branch", unsafe]) == 1
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert "Некорректное имя ветки" in output.err
+    assert all(value not in output.err for value in (unsafe, "fixture-secret", "fixture-token"))
+
+
+@pytest.mark.parametrize("command", [["use-branch", "feat/check"], ["use-main"], ["status"]])
+def test_project_skills_missing_source_is_nonzero(skills_project, monkeypatch, capsys, command):
+    from conftest import write_yaml
+
+    manifest = skills_project / ".ai-team/project.yaml"
+    document = load_yaml(manifest)
+    del document["skills"]
+    write_yaml(manifest, document)
+    monkeypatch.chdir(skills_project)
+    assert run(["project", "skills", *command]) == 1
+    output = capsys.readouterr()
+    if command == ["status"]:
+        assert json.loads(output.out)["state"] == "NOT_CONFIGURED"
+    else:
+        assert "не настроен" in output.err
+
+
+def test_project_skills_unsynced_status_uses_cli_error_handling(skills_project, monkeypatch, capsys):
+    monkeypatch.chdir(skills_project)
+    assert run(["project", "skills", "status"]) == 1
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert "ещё не синхронизированы" in output.err
+
+
+@pytest.mark.parametrize("invalid", [
+    'skills: ["https://fixture-user:fixture-secret@example.test/skills.git?token=fixture-token"',
+    "memory: null\n",
+])
+def test_project_skills_malformed_manifest_is_safe_error(skills_project, monkeypatch, capsys, invalid):
+    (skills_project / ".ai-team/project.yaml").write_text(invalid, encoding="utf-8")
+    monkeypatch.chdir(skills_project)
+    assert run(["project", "skills", "status"]) == 1
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert "Некоррект" in output.err
+    assert all(value not in output.err for value in ("fixture-user", "fixture-secret", "fixture-token"))
+
+
+def test_project_skills_invalid_utf8_manifest_is_safe_error(skills_project, monkeypatch, capsys):
+    manifest = skills_project / ".ai-team/project.yaml"
+    manifest.write_bytes(b"name: fixture-private-name\nnote: fixture-private-value\n\xff")
+    monkeypatch.chdir(skills_project)
+
+    assert run(["project", "skills", "status"]) == 1
+
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert "Некорректная конфигурация logical project" in output.err
+    assert all(value not in output.err for value in (
+        str(manifest), "fixture-private-name", "fixture-private-value", "0xff", "UnicodeDecodeError",
+    ))
 
 
 @pytest.mark.parametrize("resource", ["skills", "mcp"])

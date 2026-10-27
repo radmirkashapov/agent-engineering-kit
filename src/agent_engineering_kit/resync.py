@@ -8,7 +8,13 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .clients import expose_native_instructions, expose_native_skills, register_native_mcp, sync_clients
+from .clients import (
+    effective_skill_sources,
+    expose_native_instructions,
+    expose_native_skills,
+    register_native_mcp,
+    sync_clients,
+)
 from .component_state import Lifecycle
 from .errors import AgentKitError
 from .harness import resolve_harness
@@ -18,6 +24,7 @@ from .mcp_manager import McpManager
 from .override_service import initialize_override_workspace
 from .paths import KitPaths, ensure_runtime
 from .policy import effective_policy as resolve_effective_policy
+from .project_skills import ProjectSkillRepositoryManager
 from .projects import LogicalProject
 from .overrides import validate_overrides
 from .security_tools import SecurityToolManager
@@ -34,6 +41,7 @@ class ResyncReport:
     clients: list[str]
     changed: bool
     incomplete: list[str]
+    project_skills: dict[str, object] | None = None
 
 
 def build_session_manifest(
@@ -47,6 +55,7 @@ def build_session_manifest(
     harness: dict[str, object],
     effective_policy: Path,
     recorded_at: str,
+    project_skills: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """Собрать воспроизводимый снимок control plane для текущего сеанса."""
     return {
@@ -58,6 +67,7 @@ def build_session_manifest(
         "effective_policy_sha256": hashlib.sha256(effective_policy.read_bytes()).hexdigest(),
         "security": security,
         "skills": skills,
+        "project_skills": project_skills,
         "mcp": mcp,
         "clients": clients,
     }
@@ -78,15 +88,13 @@ def resync(
     ensure_runtime(paths)
     initialize_override_workspace(repository, paths)
     current_revision = revision(repository)
-    repository_validation = validate(repository, paths, "all", include_local=True)
+    # Переносимая база проверяется до machine-local inputs. Project skills
+    # активируются ниже до проверки overrides, чтобы их ID были известны при
+    # первой настройке проекта.
+    repository_validation = validate(repository, paths, "all", include_local=False)
     if not repository_validation.ok:
         messages = "; ".join(item.message for item in repository_validation.diagnostics if item.severity == "ERROR")
         raise AgentKitError(f"Resync остановлен repository validation: {messages}")
-    override_validation = validate_overrides(repository, paths.overrides, project.identifier if project else None)
-    if not override_validation.ok:
-        messages = "; ".join(item.message for item in override_validation.diagnostics if item.severity == "ERROR")
-        raise AgentKitError(f"Resync остановлен local overrides validation: {messages}")
-
     security_manager = SecurityToolManager(repository, paths)
     if install_security:
         security_result = security_manager.install(force=force)
@@ -94,6 +102,25 @@ def resync(
             messages = "; ".join(item.message for item in security_result.diagnostics if item.severity == "ERROR")
             raise AgentKitError(f"Resync остановлен security installation: {messages}")
     security_state = security_manager.status()
+
+    project_status = ProjectSkillRepositoryManager(repository, paths, project).resync() if project else None
+    project_skills = project_status.as_dict() if project_status else None
+
+    try:
+        known_skill_ids = set(effective_skill_sources(
+            repository, paths, project, include_disabled=True,
+        ))
+    except AgentKitError as error:
+        raise AgentKitError(f"Resync остановлен local overrides validation: {error}") from None
+    override_validation = validate_overrides(
+        repository,
+        paths.overrides,
+        project.identifier if project else None,
+        additional_skill_ids=known_skill_ids,
+    )
+    if not override_validation.ok:
+        messages = "; ".join(item.message for item in override_validation.diagnostics if item.severity == "ERROR")
+        raise AgentKitError(f"Resync остановлен local overrides validation: {messages}")
 
     skill_manager = ExternalSkillManager(repository, paths, project_id=project.identifier if project else None)
     skill_state = skill_manager.resync(force=force)
@@ -118,12 +145,13 @@ def resync(
     generated = sync_clients(
         repository,
         paths,
+        project=project,
         project_id=project_id,
         capability_policy=capability_resolution.as_dict(),
     )
     incomplete: list[str] = []
     if expose_native:
-        generated.extend(expose_native_skills(repository, paths, project_id=project_id))
+        generated.extend(expose_native_skills(repository, paths, project=project, project_id=project_id))
         generated.extend(expose_native_instructions(repository, paths))
         registration_path = register_native_mcp(
             repository,
@@ -171,6 +199,7 @@ def resync(
         ),
         effective_policy=paths.installations / "clients" / "shared" / "effective-policy.json",
         recorded_at=datetime.now(timezone.utc).isoformat(),
+        project_skills=project_skills,
     )
     serialized = json.dumps(effective, ensure_ascii=False, indent=2) + "\n"
     comparable_previous = ""
@@ -189,4 +218,7 @@ def resync(
         paths.state / "session-revision.json",
         json.dumps({"revision": current_revision, "immutable_for_session": True}, ensure_ascii=False, indent=2) + "\n",
     )
-    return ResyncReport(current_revision, security_state, skill_state, mcp_state, [str(path) for path in generated], changed, incomplete)
+    return ResyncReport(
+        current_revision, security_state, skill_state, mcp_state,
+        [str(path) for path in generated], changed, incomplete, project_skills,
+    )

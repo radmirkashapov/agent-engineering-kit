@@ -32,6 +32,11 @@ class LogicalProject:
     def identifier(self) -> str:
         return str(self.manifest["id"])
 
+    @property
+    def skills_repository(self) -> dict[str, str] | None:
+        value = self.manifest.get("skills", {}).get("repository")
+        return dict(value) if isinstance(value, dict) else None
+
 
 def slugify(value: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
@@ -161,19 +166,36 @@ def detect_project(root: Path) -> dict[str, Any]:
 
 
 def register_memory(project: LogicalProject, paths: KitPaths) -> Path:
+    validation = validate_instance(project.manifest, paths.repository / "schemas" / "project.schema.json", "project")
+    if not validation.ok:
+        raise AgentKitError("Некорректный project manifest: регистрация namespace отклонена")
     ensure_runtime(paths)
     memory = paths.projects / project.identifier
     identity_path = memory / "identity.json"
     root_hash = hashlib.sha256(str(project.root).encode("utf-8")).hexdigest()
+    source = project.skills_repository
+    source_url = source["url"].strip().rstrip("/") or None if source else None
+    root_hashes: set[str] = set()
     if identity_path.exists():
         identity = json.loads(identity_path.read_text(encoding="utf-8"))
-        if identity.get("root_hash") != root_hash:
+        root_hashes.update(identity.get("root_hashes", []))
+        if identity.get("root_hash"):
+            root_hashes.add(identity["root_hash"])
+        existing_url = (identity.get("skills_repository_url") or "").strip().rstrip("/") or None
+        same_single_root = root_hashes == {root_hash}
+        matching_shared_source = bool(source_url) and source_url == existing_url
+        if not same_single_root and not matching_shared_source:
             raise AgentKitError(
                 f"Collision project.id={project.identifier!r}: namespace уже принадлежит другому root. Измените id в project.yaml."
             )
+    root_hashes.add(root_hash)
     for child in ("state", "sessions", "summaries", "checkpoints", "integrations"):
         (memory / child).mkdir(parents=True, exist_ok=True)
-    atomic_write(identity_path, json.dumps({"project_id": project.identifier, "root_hash": root_hash}, ensure_ascii=False, indent=2) + "\n")
+    atomic_write(identity_path, json.dumps({
+        "project_id": project.identifier,
+        "skills_repository_url": source_url,
+        "root_hashes": sorted(root_hashes),
+    }, ensure_ascii=False, indent=2) + "\n")
     return memory
 
 

@@ -11,6 +11,65 @@ from agent_engineering_kit.definitions import is_english_text, validate_agents, 
 from agent_engineering_kit.validation import validate
 
 
+@pytest.mark.parametrize("ci", [False, True])
+def test_project_skills_validation_reports_default_without_remote_verification(tmp_path, monkeypatch, capsys, ci):
+    from agent_engineering_kit.cli import run
+    from conftest import write_yaml
+
+    repository = Path(__file__).resolve().parents[1]
+    data = tmp_path / "data"
+    project = tmp_path / "product"
+    write_yaml(project / ".ai-team/project.yaml", {
+        "version": 1, "id": "ci-project", "name": "CI fixture",
+        "repositories": [{"id": "app", "path": "."}],
+        "documentation": {"index": "docs/INDEX.md", "roots": ["docs"]},
+        "memory": {"namespace": "ci-project"},
+        "skills": {"repository": {"url": "https://example.invalid/skills.git", "default_branch": "main"}},
+    })
+    override = data / "projects/ci-project/skills-repository/branch-override.json"
+    override.parent.mkdir(parents=True)
+    override.write_text('{"branch": "feat/machine-only"}')
+    monkeypatch.chdir(project)
+    monkeypatch.setenv("AGENT_KIT_REPOSITORY", str(repository))
+    monkeypatch.setenv("AGENT_KIT_DATA_HOME", str(data))
+    command = ["validate", "project-skills", *(["--ci"] if ci else [])]
+
+    assert run(command) == 0
+    output = capsys.readouterr().out
+    assert "https://example.invalid/skills.git" in output
+    assert ("feat/machine-only" if not ci else "main") in output
+    assert "не разрешена" in output
+    if ci:
+        assert "feat/machine-only" not in output
+        assert "user-local overrides отключены" in output
+    assert not (override.parent / "checkout").exists()
+
+
+@pytest.mark.parametrize("secret_url", [
+    "https://manifest-user:manifest-password@example.invalid/skills.git?token=manifest-token#manifest-fragment",
+    "https://manifest-user:manifest-password'part@example.invalid/skills.git",
+    'https://manifest-user:manifest-password"part@example.invalid/skills.git',
+    "https://example.invalid/skills.git?token='manifest-token part'",
+    'https://example.invalid/skills.git#"manifest-fragment part"',
+    "https://manifest-user: manifest-password'part@example.invalid/skills.git",
+    "https://manifest-user:manifest-password 'part@example.invalid/skills.git",
+])
+def test_project_skills_validation_redacts_invalid_manifest_diagnostics(tmp_path, monkeypatch, secret_url):
+    from conftest import write_yaml
+
+    repository = Path(__file__).resolve().parents[1]
+    data = tmp_path / "data"
+    paths = KitPaths(repository, data, data / "runtime", data / "projects", data / "overrides")
+    write_yaml(tmp_path / ".ai-team/project.yaml", {
+        "id": "ci-project", "skills": {"repository": {"url": secret_url, "default_branch": "main"}},
+    })
+    monkeypatch.chdir(tmp_path)
+    result = validate(repository, paths, "project-skills", include_local=False)
+    assert not result.ok
+    rendered = "\n".join(item.render() for item in result.diagnostics)
+    assert all(secret not in rendered for secret in ("manifest-user", "manifest-password", "manifest-token", "manifest-fragment", "part"))
+
+
 def test_repository_passes_ci_validation(tmp_path: Path) -> None:
     repository = Path(__file__).resolve().parents[1]
     data = tmp_path / "data"

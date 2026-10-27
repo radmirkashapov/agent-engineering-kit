@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -7,7 +8,7 @@ import pytest
 
 from agent_engineering_kit.errors import AgentKitError
 from agent_engineering_kit.paths import KitPaths
-from agent_engineering_kit.projects import find_project, init_project, register_memory, validate_project
+from agent_engineering_kit.projects import LogicalProject, find_project, init_project, register_memory, validate_project
 import agent_engineering_kit.projects as projects_module
 from agent_engineering_kit.bindings import attach_project, bind_repository, project_readiness, reconcile_project
 
@@ -96,6 +97,166 @@ def test_project_id_collision_fails(tmp_path: Path, kit_repository: Path) -> Non
     register_memory(first, kit_paths)
     with pytest.raises(AgentKitError, match="Collision"):
         init_project(tmp_path / "second-project", kit_repository, kit_paths, identifier="shared-id")
+
+
+def _skills_source(project, url="git@gitlab.example.com:team/project-skills.git"):
+    project.manifest["skills"] = {"repository": {"url": url, "default_branch": "main"}}
+    return project
+
+
+def _shared_project(root: Path) -> LogicalProject:
+    root.mkdir()
+    return LogicalProject(root, root / ".ai-team/project.yaml", {
+        "version": 1, "id": "shared", "name": root.name,
+        "repositories": [{"id": "root", "path": "."}],
+        "documentation": {"index": "docs/INDEX.md", "roots": ["docs"]},
+        "memory": {"namespace": "shared"},
+    })
+
+
+@pytest.mark.parametrize("url", [
+    "git@gitlab.example.com:team/project-skills.git",
+    "https://example.com/team/project-skills.git",
+])
+def test_project_manifest_accepts_project_skills_repository(tmp_path, kit_repository, url):
+    project = _skills_source(init_project(tmp_path / "first", kit_repository, paths(tmp_path, kit_repository)), url)
+    assert validate_project(project, kit_repository).ok
+    assert project.skills_repository == {"url": url, "default_branch": "main"}
+
+
+def test_project_skills_absence_is_not_configured(tmp_path, kit_repository):
+    project = init_project(tmp_path / "first", kit_repository, paths(tmp_path, kit_repository))
+    assert "skills" not in project.manifest
+    assert project.skills_repository is None
+
+
+@pytest.mark.parametrize("url", [
+    "https://user:secret@example.com/project-skills.git",
+    "https://example.com/project-skills.git?token=secret",
+    "https://example.com/project-skills.git#secret",
+    "",
+])
+def test_project_skills_url_rejects_credentials(tmp_path, kit_repository, url):
+    project = _skills_source(_shared_project(tmp_path / "unsafe"), url)
+    assert not validate_project(project, kit_repository).ok
+
+
+@pytest.mark.parametrize("prior_identity", [False, True])
+@pytest.mark.parametrize("skills", [
+    {"repository": {"url": "https://user:secret@example.com/project-skills.git", "default_branch": "main"}},
+    {"repository": {"url": "https://example.com/project-skills.git?token=secret", "default_branch": "main"}},
+    {"repository": {"url": "https://example.com/project-skills.git#secret", "default_branch": "main"}},
+    None,
+    "invalid",
+    {"repository": "invalid"},
+    {"repository": {"default_branch": "main"}},
+])
+def test_project_skills_unsafe_existing_manifest_preserves_identity(tmp_path, kit_repository, prior_identity, skills):
+    kit_paths = paths(tmp_path, kit_repository)
+    project = _shared_project(tmp_path / "existing")
+    identity_path = kit_paths.projects / "shared/identity.json"
+    if prior_identity:
+        register_memory(project, kit_paths)
+    before = identity_path.read_bytes() if identity_path.exists() else None
+    project.manifest["skills"] = skills
+    project.manifest_path.parent.mkdir()
+    project.manifest_path.write_text(json.dumps(project.manifest), encoding="utf-8")
+
+    with pytest.raises(AgentKitError) as error:
+        init_project(project.root, kit_repository, kit_paths)
+
+    assert "secret" not in str(error.value)
+    assert (identity_path.read_bytes() if identity_path.exists() else None) == before
+
+
+@pytest.mark.parametrize("branch", ["", "feature/../bad", "bad branch", "bad~ref", "bad^ref", "bad:ref", "bad?ref", "bad*ref", "bad\\ref", "bad[ref"])
+def test_project_skills_rejects_invalid_branch(tmp_path, kit_repository, branch):
+    project = _skills_source(_shared_project(tmp_path / "unsafe"))
+    project.manifest["skills"]["repository"]["default_branch"] = branch
+    assert not validate_project(project, kit_repository).ok
+
+
+@pytest.mark.parametrize("skills", [{}, {"repository": {}}, {"repository": {"url": "safe"}}, {"repository": {"url": "safe", "default_branch": "main", "extra": True}}])
+def test_project_skills_requires_complete_source(tmp_path, kit_repository, skills):
+    project = _shared_project(tmp_path / "unsafe")
+    project.manifest["skills"] = skills
+    assert not validate_project(project, kit_repository).ok
+
+
+def test_shared_project_id_requires_identical_skills_source(tmp_path, kit_repository):
+    kit_paths = paths(tmp_path, kit_repository)
+    first = _skills_source(_shared_project(tmp_path / "first"))
+    second = _skills_source(_shared_project(tmp_path / "second"), " git@gitlab.example.com:team/project-skills.git/ ")
+    register_memory(first, kit_paths)
+    register_memory(second, kit_paths)
+    register_memory(first, kit_paths)
+    identity = json.loads((kit_paths.projects / "shared/identity.json").read_text())
+    assert identity["project_id"] == "shared"
+    assert identity["skills_repository_url"] == "git@gitlab.example.com:team/project-skills.git"
+    assert identity["root_hashes"] == sorted([
+        hashlib.sha256(str(first.root).encode()).hexdigest(),
+        hashlib.sha256(str(second.root).encode()).hexdigest(),
+    ])
+
+
+@pytest.mark.parametrize("second_source", [None, "git@gitlab.example.com:other/project-skills.git", "https://gitlab.example.com/team/project-skills.git", "git@gitlab.example.com:team/project-skills"])
+def test_shared_project_id_rejects_missing_or_different_source(tmp_path, kit_repository, second_source):
+    kit_paths = paths(tmp_path, kit_repository)
+    first = _skills_source(_shared_project(tmp_path / "first"))
+    second = _shared_project(tmp_path / "second")
+    if second_source:
+        _skills_source(second, second_source)
+    register_memory(first, kit_paths)
+    identity_path = kit_paths.projects / "shared/identity.json"
+    before = identity_path.read_text()
+    with pytest.raises(AgentKitError, match="Collision"):
+        register_memory(second, kit_paths)
+    assert identity_path.read_text() == before
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_shared_project_id_adopts_source_only_from_existing_root(tmp_path, kit_repository, legacy):
+    kit_paths = paths(tmp_path, kit_repository)
+    first = _shared_project(tmp_path / "first")
+    second = _skills_source(_shared_project(tmp_path / "second"))
+    register_memory(first, kit_paths)
+    identity_path = kit_paths.projects / "shared/identity.json"
+    if legacy:
+        identity_path.write_text(json.dumps({"project_id": "shared", "root_hash": hashlib.sha256(str(first.root).encode()).hexdigest()}))
+    with pytest.raises(AgentKitError, match="Collision"):
+        register_memory(second, kit_paths)
+    register_memory(_skills_source(first), kit_paths)
+    register_memory(second, kit_paths)
+    assert len(json.loads(identity_path.read_text())["root_hashes"]) == 2
+
+
+@pytest.mark.parametrize("replacement", [None, "https://example.com/different.git"])
+def test_shared_project_id_rejects_source_change_for_registered_root(tmp_path, kit_repository, replacement):
+    kit_paths = paths(tmp_path, kit_repository)
+    first = _skills_source(_shared_project(tmp_path / "first"))
+    second = _skills_source(_shared_project(tmp_path / "second"))
+    register_memory(first, kit_paths)
+    register_memory(second, kit_paths)
+    if replacement:
+        _skills_source(first, replacement)
+    else:
+        first.manifest.pop("skills")
+    with pytest.raises(AgentKitError, match="Collision"):
+        register_memory(first, kit_paths)
+
+
+@pytest.mark.parametrize("replacement", [None, "https://example.com/different.git"])
+def test_project_skills_single_root_can_replace_or_remove_source(tmp_path, kit_repository, replacement):
+    kit_paths = paths(tmp_path, kit_repository)
+    project = _skills_source(_shared_project(tmp_path / "first"))
+    register_memory(project, kit_paths)
+    if replacement:
+        _skills_source(project, replacement)
+    else:
+        project.manifest.pop("skills")
+    register_memory(project, kit_paths)
+    identity = json.loads((kit_paths.projects / "shared/identity.json").read_text())
+    assert identity["skills_repository_url"] == replacement
 
 
 def test_memory_has_expected_isolated_shape(tmp_path: Path, kit_repository: Path) -> None:

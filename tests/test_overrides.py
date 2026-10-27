@@ -60,6 +60,20 @@ def test_unknown_target_fails(kit: tuple[Path, Path]) -> None:
     assert not validate_overrides(repository, overrides).ok
 
 
+def test_project_skill_is_known_to_override_and_access_validation(kit: tuple[Path, Path]) -> None:
+    repository, overrides = kit
+    write_yaml(overrides / "projects/demo/skills/project-check.yaml", {
+        "target": "project-check", "override": {"mode": "disable"},
+    })
+    write_yaml(overrides / "projects/demo/access.yaml", {
+        "version": 1, "skills": {"allow": [], "block": ["project-check"]},
+    })
+
+    assert validate_overrides(
+        repository, overrides, "demo", additional_skill_ids={"project-check"},
+    ).ok
+
+
 def test_disable_enforced_skill_passes(kit: tuple[Path, Path]) -> None:
     repository, overrides = kit
     write_yaml(overrides / "global/skills/verification.yaml", {"target": "verification", "override": {"mode": "disable"}})
