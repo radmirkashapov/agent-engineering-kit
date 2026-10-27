@@ -62,5 +62,5 @@ def test_release_version_is_synchronized() -> None:
     repository = Path(__file__).resolve().parents[1]
     package = (repository / "src/agent_engineering_kit/__init__.py").read_text(encoding="utf-8")
 
-    assert (repository / "app.version").read_text(encoding="utf-8").strip() == "0.10.0"
-    assert '__version__ = "0.10.0"' in package
+    assert (repository / "app.version").read_text(encoding="utf-8").strip() == "0.10.1"
+    assert '__version__ = "0.10.1"' in package
