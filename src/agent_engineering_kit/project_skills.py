@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -177,6 +178,13 @@ class ProjectSkillRepositoryManager:
     @property
     def lock_path(self) -> Path:
         return self.paths.locks / f"project-skills-{self.project.identifier}.lock"
+
+    @contextmanager
+    def read_snapshot(self) -> Iterator[None]:
+        """Зафиксировать один согласованный снимок lifecycle и provenance."""
+        self._check_storage()
+        with _repository_lock(self.lock_path):
+            yield
 
     def source(self) -> ProjectSkillsSource:
         value = self.project.skills_repository
@@ -361,9 +369,51 @@ class ProjectSkillRepositoryManager:
     def _verify_validated_tree(self, root: Path, revision: str, expected: dict[str, Path]) -> None:
         """Повторно проверить неизменность Git worktree после внешнего validator."""
         self._check_revision(root, revision)
+        self._verify_worktree_content(root, revision)
         actual = self._structure(root)
         if tuple(actual) != tuple(expected):
             raise AgentKitError("Состав candidate project-skills изменён после проверки")
+
+    def _verify_worktree_content(self, root: Path, revision: str) -> None:
+        """Сравнить файлы с commit tree без доверия к index и его stat flags."""
+        algorithm = self._git(["-C", str(root), "rev-parse", "--show-object-format"])
+        if algorithm not in {"sha1", "sha256"}:
+            raise AgentKitError("Неизвестный формат Git object project-skills")
+        expected: dict[str, tuple[bool, str]] = {}
+        listing = self._git(["-C", str(root), "ls-tree", "-rz", "--full-tree", revision])
+        for record in listing.split("\0"):
+            if not record:
+                continue
+            header, separator, relative = record.partition("\t")
+            fields = header.split()
+            if not separator or len(fields) != 3 or fields[1] != "blob" or relative in expected:
+                raise AgentKitError("Некорректное дерево Git project-skills")
+            expected[relative] = (fields[0] == "120000", fields[2])
+
+        actual: dict[str, tuple[bool, str]] = {}
+        for directory, names, files in os.walk(root, followlinks=False):
+            base = Path(directory)
+            for name in tuple(names):
+                path = base / name
+                if path.is_symlink():
+                    names.remove(name)
+                    files.append(name)
+            for name in files:
+                path = base / name
+                relative = path.relative_to(root).as_posix()
+                if relative == ".git":
+                    continue
+                symlink = path.is_symlink()
+                try:
+                    content = os.fsencode(os.readlink(path)) if symlink else path.read_bytes()
+                except OSError as error:
+                    raise AgentKitError("Не удалось прочитать дерево project-skills") from error
+                digest = hashlib.new(algorithm)
+                digest.update(f"blob {len(content)}\0".encode("ascii"))
+                digest.update(content)
+                actual[relative] = (symlink, digest.hexdigest())
+        if actual != expected:
+            raise AgentKitError("Содержимое project-skills изменено после проверки")
 
     def _read_status(self, path: Path) -> ProjectSkillsStatus:
         value = load_json(path)

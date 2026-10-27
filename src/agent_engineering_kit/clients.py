@@ -187,20 +187,21 @@ def project_skill_status_report(
 ) -> dict[str, object]:
     """Дополнить lifecycle status текущим branch selection и provenance."""
     manager = ProjectSkillRepositoryManager(repository, paths, project)
-    report = manager.status().as_dict()
-    selection = manager.inspect()
-    sources = effective_skill_sources(repository, paths, project, include_disabled=True)
-    provenance: dict[str, dict] = {}
-    collisions: dict[str, list[str]] = {}
-    for identifier in manager.active_skills():
-        source = sources.get(identifier)
-        if source is None:
-            continue
-        provenance[identifier] = source.as_dict()
-        layers = [*source.shadowed, replace(source, shadowed=())]
-        names = [item.source for item in sorted(layers, key=lambda item: item.priority)]
-        if len(names) > 1:
-            collisions[identifier] = names
+    with manager.read_snapshot():
+        report = manager.status().as_dict()
+        selection = manager.inspect()
+        sources = effective_skill_sources(repository, paths, project, include_disabled=True)
+        provenance: dict[str, dict] = {}
+        collisions: dict[str, list[str]] = {}
+        for identifier in manager.active_skills():
+            source = sources.get(identifier)
+            if source is None:
+                continue
+            provenance[identifier] = source.as_dict()
+            layers = [*source.shadowed, replace(source, shadowed=())]
+            names = [item.source for item in sorted(layers, key=lambda item: item.priority)]
+            if len(names) > 1:
+                collisions[identifier] = names
     return {
         **report,
         "requested_branch": selection["requested_branch"],

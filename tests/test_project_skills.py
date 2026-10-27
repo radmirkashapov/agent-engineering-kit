@@ -5,6 +5,7 @@ import os
 import stat
 import shutil
 import subprocess
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -285,6 +286,46 @@ def test_project_skill_status_reports_branch_override_provenance_and_collisions(
     assert report["local_override_applied"] is True
     assert report["provenance"]["example"]["source"] == "project-skills"
     assert report["collisions"]["example"] == ["built-in", "project-skills"]
+
+
+def test_project_skill_status_is_one_snapshot_during_concurrent_resync(publication_fixture, monkeypatch):
+    fixture = publication_fixture
+    manager = fixture.manager(validator=lambda _: (True, []))
+    initial = manager.resync()
+    updated_revision = fixture.commit_skill("---\nname: example\n---\n# Updated\n")
+    status_read = threading.Event()
+    release_status = threading.Event()
+    resync_entered = threading.Event()
+    original_status = ProjectSkillRepositoryManager.status
+    original_fetch = manager._fetch_candidate
+
+    def paused_status(self):
+        status = original_status(self)
+        status_read.set()
+        assert release_status.wait(5)
+        return status
+
+    def observe_fetch(*, ci=False):
+        resync_entered.set()
+        return original_fetch(ci=ci)
+
+    monkeypatch.setattr(ProjectSkillRepositoryManager, "status", paused_status)
+    manager._fetch_candidate = observe_fetch
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        report_future = executor.submit(
+            project_skill_status_report, fixture.paths.repository, fixture.paths, fixture.project,
+        )
+        assert status_read.wait(5)
+        resync_future = executor.submit(manager.resync)
+        raced_with_snapshot = resync_entered.wait(1)
+        release_status.set()
+        report = report_future.result(timeout=5)
+        updated = resync_future.result(timeout=5)
+
+    assert not raced_with_snapshot
+    assert report["active_revision"] == initial.active_revision
+    assert report["provenance"]["example"]["revision"] == initial.active_revision
+    assert updated.active_revision == updated_revision
 
 
 @pytest.mark.parametrize("configured", [True, False])
@@ -906,6 +947,29 @@ def test_validator_mutation_after_structure_check_keeps_last_known_good(fixture)
     assert rejected.active_revision == active.active_revision
     assert (manager.root / "active.json").read_bytes() == pointer
     assert "Mutated" not in manager.active_skills()["example"].joinpath("SKILL.md").read_text()
+
+
+def test_validator_cannot_hide_mutation_with_assume_unchanged(fixture):
+    manager = fixture.manager(validator=lambda _: (True, []))
+    active = manager.resync()
+    pointer = (manager.root / "active.json").read_bytes()
+    fixture.commit_skill("---\nname: example\n---\n# Candidate\n")
+
+    def mutate_and_hide(skill_root: Path):
+        (skill_root / "SKILL.md").write_text(
+            "---\nname: example\n---\n# Hidden mutation\n", encoding="utf-8",
+        )
+        git(skill_root, "update-index", "--assume-unchanged", "SKILL.md")
+        assert git(skill_root, "status", "--porcelain") == ""
+        return True, [{"check": "fixture", "status": "PASS"}]
+
+    manager.validator = mutate_and_hide
+    rejected = manager.resync()
+
+    assert rejected.state == "UPDATE_REJECTED"
+    assert rejected.active_revision == active.active_revision
+    assert (manager.root / "active.json").read_bytes() == pointer
+    assert "Hidden mutation" not in manager.active_skills()["example"].joinpath("SKILL.md").read_text()
 
 
 def test_unconfigured_lifecycle_has_no_source_revision_or_state_writes(fixture):
