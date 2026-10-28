@@ -2,8 +2,8 @@
 version: 1
 id: reviewer
 description: Review proposed changes independently without modifying the implementation
-roles: [reviewer]
-skills: [code-review, change-impact]
+roles: [reviewer, security-engineer]
+skills: [code-review, change-impact, threat-modeling]
 mcp: [codebase-memory, serena]
 permissions:
   # Рецензент читает diff и запускает безопасные проверки.
