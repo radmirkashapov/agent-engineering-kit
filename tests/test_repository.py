@@ -265,6 +265,66 @@ def test_default_skill_and_mcp_descriptions_are_english() -> None:
     assert mcp.ok, "\n".join(item.render() for item in mcp.diagnostics)
 
 
+def test_first_party_skill_set_contains_sdlc_workflows() -> None:
+    repository = Path(__file__).resolve().parents[1]
+    expected = {
+        "agent-evaluation",
+        "architecture-decision",
+        "change-impact",
+        "code-review",
+        "codebase-analysis",
+        "docs-index",
+        "greeting",
+        "incident-analysis",
+        "mcp-doctor",
+        "project-bootstrap",
+        "project-orientation",
+        "release-readiness",
+        "requirements-analysis",
+        "test-design",
+        "threat-modeling",
+        "verification",
+    }
+    actual = {
+        path.parent.name
+        for path in (repository / "skills" / "first-party").glob("*/SKILL.md")
+    }
+
+    assert actual == expected
+
+
+@pytest.mark.parametrize(("identifier", "capabilities"), [
+    ("requirements-analysis", {"reasoning", "long_context"}),
+    ("architecture-decision", {"reasoning", "coding", "long_context"}),
+    ("test-design", {"reasoning", "coding", "tool_use"}),
+    ("threat-modeling", {"reasoning", "coding", "tool_use"}),
+    ("agent-evaluation", {"reasoning", "coding", "tool_use"}),
+    ("release-readiness", {"reasoning", "coding", "tool_use"}),
+    ("incident-analysis", {"reasoning", "coding", "tool_use"}),
+])
+def test_sdlc_skills_preserve_discovery_and_instruction_contract(
+    identifier: str,
+    capabilities: set[str],
+) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    path = repository / "skills" / "first-party" / identifier / "SKILL.md"
+    metadata = markdown_frontmatter(path)
+    content = path.read_text(encoding="utf-8")
+    required_sections = (
+        "## Назначение",
+        "## Когда применять",
+        "## Входные данные",
+        "## Порядок работы",
+        "## Результат",
+        "## Остановка и эскалация",
+        "## Типовые ошибки",
+    )
+
+    assert metadata["description"].startswith("Use when ")
+    assert set(metadata["requires"]["model_capabilities"]) == capabilities
+    assert all(section in content for section in required_sections)
+
+
 @pytest.mark.parametrize("field", ["source", "installation"])
 def test_mcp_validation_rejects_url_credentials(tmp_path: Path, field: str) -> None:
     from shutil import copytree
