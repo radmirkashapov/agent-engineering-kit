@@ -7,7 +7,8 @@ import subprocess
 import pytest
 
 from agent_engineering_kit.paths import KitPaths
-from agent_engineering_kit.definitions import is_english_text, validate_agents, validate_mcp, validate_skills
+from agent_engineering_kit.definitions import DEFAULT_AGENT_IDS, is_english_text, validate_agents, validate_mcp, validate_skills
+from agent_engineering_kit.io import markdown_frontmatter
 from agent_engineering_kit.validation import validate
 
 
@@ -202,6 +203,56 @@ def test_default_agent_roles_are_complete_detailed_and_english() -> None:
         assert len(content.splitlines()) >= 45, f"Недостаточно подробная роль: {path.name}"
         assert not re.search(r"[А-Яа-яЁё]", content), f"Описание роли должно быть на английском: {path.name}"
         assert all(section in content for section in required_sections), path.name
+
+
+@pytest.mark.parametrize(("identifier", "role_prefix", "capabilities", "tools"), [
+    (
+        "requirements-analyst",
+        "Analyze ",
+        {"reasoning", "long_context"},
+        {"code-search", "mcp"},
+    ),
+    (
+        "security-engineer",
+        "Assess ",
+        {"reasoning", "coding", "tool_use"},
+        {"code-search", "git-diff", "tests", "mcp"},
+    ),
+    (
+        "evaluation-engineer",
+        "Evaluate ",
+        {"reasoning", "coding", "tool_use"},
+        {"tests", "mcp"},
+    ),
+    (
+        "release-engineer",
+        "Verify ",
+        {"reasoning", "coding", "tool_use"},
+        {"tests", "git-diff", "mcp"},
+    ),
+])
+def test_sdlc_specialist_roles_preserve_capability_contracts(
+    identifier: str,
+    role_prefix: str,
+    capabilities: set[str],
+    tools: set[str],
+) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    metadata = markdown_frontmatter(repository / "agents" / f"{identifier}.md")
+
+    assert metadata["role"].startswith(role_prefix)
+    assert set(metadata["requires"]["model_capabilities"]) == capabilities
+    assert set(metadata["tools"]) == tools
+
+
+def test_canonical_ai_instructions_list_every_default_agent_role() -> None:
+    repository = Path(__file__).resolve().parents[1]
+    instructions = (repository / "AI.md").read_text(encoding="utf-8")
+    role_paragraph = re.search(r"Роли агентов находятся.*?\. Работу задачи", instructions, re.DOTALL)
+
+    assert role_paragraph is not None
+    documented = set(re.findall(r"`([a-z][a-z0-9-]+)`", role_paragraph.group()))
+    assert documented == DEFAULT_AGENT_IDS
 
 
 def test_default_skill_and_mcp_descriptions_are_english() -> None:
