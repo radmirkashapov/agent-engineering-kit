@@ -12,10 +12,20 @@ from .result import ValidationResult
 from .schema import validate_instance
 
 
-DEFAULT_AGENT_IDS = frozenset({"orchestrator", "architect", "developer", "reviewer", "qa-engineer"})
+DEFAULT_AGENT_IDS = frozenset({
+    "orchestrator",
+    "requirements-analyst",
+    "architect",
+    "developer",
+    "reviewer",
+    "security-engineer",
+    "qa-engineer",
+    "evaluation-engineer",
+    "release-engineer",
+})
 _ENGLISH_MARKERS = frozenset({"an", "and", "before", "for", "from", "into", "of", "on", "or", "the", "to", "with", "without"})
 _ENGLISH_ACTION_VERBS = frozenset({
-    "access", "analyze", "assess", "automate", "build", "coordinate", "design",
+    "access", "analyze", "assess", "automate", "build", "coordinate", "design", "evaluate",
     "diagnose", "greet", "identify", "implement", "initialize", "inspect", "maintain",
     "navigate", "prove", "retrieve", "review", "use", "verify",
 })
