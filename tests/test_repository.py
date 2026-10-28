@@ -174,17 +174,34 @@ def test_default_agent_roles_are_complete_detailed_and_english() -> None:
     result = validate_agents(repository)
 
     assert result.ok, "\n".join(item.render() for item in result.diagnostics)
-    assert {path.stem for path in (repository / "agents").glob("*.md")} == {
+    expected_roles = {
         "orchestrator",
+        "requirements-analyst",
         "architect",
         "developer",
         "reviewer",
+        "security-engineer",
         "qa-engineer",
+        "evaluation-engineer",
+        "release-engineer",
     }
+    assert {path.stem for path in (repository / "agents").glob("*.md")} == expected_roles
+    required_sections = (
+        "## Mission",
+        "## Use this role when",
+        "## Required inputs",
+        "## Responsibilities",
+        "## Working method",
+        "## Deliverables",
+        "## Guardrails",
+        "## Escalation and handoff",
+        "## Completion criteria",
+    )
     for path in (repository / "agents").glob("*.md"):
         content = path.read_text(encoding="utf-8")
         assert len(content.splitlines()) >= 45, f"Недостаточно подробная роль: {path.name}"
         assert not re.search(r"[А-Яа-яЁё]", content), f"Описание роли должно быть на английском: {path.name}"
+        assert all(section in content for section in required_sections), path.name
 
 
 def test_default_skill_and_mcp_descriptions_are_english() -> None:
