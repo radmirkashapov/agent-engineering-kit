@@ -87,6 +87,7 @@ def resync(
     if update_kit:
         update_repository(repository)
     ensure_runtime(paths)
+    agent_kit_enabled = read_status(paths).enabled
     initialize_override_workspace(repository, paths)
     current_revision = revision(repository)
     # Переносимая база проверяется до machine-local inputs. Project skills
@@ -153,7 +154,7 @@ def resync(
     incomplete: list[str] = []
     if expose_native:
         generated.extend(expose_native_skills(repository, paths, project=project, project_id=project_id))
-        if read_status(paths).enabled:
+        if agent_kit_enabled:
             # Сохраняем совместимость с внешними адаптерами старого API.
             generated.extend(expose_native_instructions(repository, paths))
         else:
