@@ -183,6 +183,21 @@ agent-kit doctor
 
 `agent-kit help` показывает команды верхнего уровня. После `help` можно указать любой путь команды; вывод строится из того же CLI parser, поэтому не расходится с `--help`:
 
+### Глобальное включение и отключение Kit
+
+Иногда нужно временно запустить агента без профилей, ролей, rules и skills Agent Engineering Kit. Это machine-local переключатель: он не меняет Git и не удаляет настройки MCP.
+
+```bash
+agent-kit status
+agent-kit disable
+agent-kit enable
+agent-kit enable --reset
+```
+
+`disable` сразу обновляет managed-блоки в `~/.codex/AGENTS.md`, `~/.claude/CLAUDE.md` и `~/.config/opencode/AGENTS.md`. В блоке появляется явное указание не применять правила Kit; пользовательский текст вокруг блока сохраняется. `enable` немедленно возвращает обычную инструкцию. Состояние хранится вне репозитория в `<data>/state/agent-kit-status.json`, поэтому его можно менять независимо для каждой рабочей станции.
+
+В отключённом режиме `agent-kit run prepare` завершается без создания request manifest. Команды `validate` и `validate --ci` продолжают проверять репозиторий, а `resync` сохраняет выбранное состояние и публикует соответствующий managed-блок.
+
 ```bash
 agent-kit help
 agent-kit help project init

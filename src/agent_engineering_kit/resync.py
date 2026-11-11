@@ -15,6 +15,7 @@ from .clients import (
     register_native_mcp,
     sync_clients,
 )
+from .agent_kit_state import read_status
 from .component_state import Lifecycle
 from .errors import AgentKitError
 from .harness import resolve_harness
@@ -152,7 +153,15 @@ def resync(
     incomplete: list[str] = []
     if expose_native:
         generated.extend(expose_native_skills(repository, paths, project=project, project_id=project_id))
-        generated.extend(expose_native_instructions(repository, paths))
+        if read_status(paths).enabled:
+            # Сохраняем совместимость с внешними адаптерами старого API.
+            generated.extend(expose_native_instructions(repository, paths))
+        else:
+            generated.extend(expose_native_instructions(
+                repository,
+                paths,
+                agent_kit_enabled=False,
+            ))
         registration_path = register_native_mcp(
             repository,
             paths,

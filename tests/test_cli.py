@@ -59,6 +59,40 @@ def test_available_does_not_require_scope() -> None:
     assert args.skills_command == "available"
 
 
+def test_global_toggle_updates_managed_instruction_files(isolated_data: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
+    home = isolated_data / "home"
+    monkeypatch.setattr(cli_module.Path, "home", lambda: home)
+
+    assert run(["disable"]) == 0
+    assert "отключён" in capsys.readouterr().out
+    status_path = isolated_data / "state/agent-kit-status.json"
+    assert json.loads(status_path.read_text(encoding="utf-8"))["enabled"] is False
+    managed = (home / ".codex/AGENTS.md").read_text(encoding="utf-8")
+    assert "Не применяй профили" in managed
+
+    assert run(["enable"]) == 0
+    capsys.readouterr()
+    managed = (home / ".codex/AGENTS.md").read_text(encoding="utf-8")
+    assert "Используй canonical instructions" in managed
+    assert "Не применяй профили" not in managed
+
+
+def test_global_toggle_parser_supports_reset() -> None:
+    args = _parser().parse_args(["enable", "--reset"])
+    assert args.command == "enable"
+    assert args.reset is True
+
+
+def test_run_prepare_is_blocked_when_global_toggle_is_disabled(isolated_data: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    assert run(["disable"]) == 0
+    capsys.readouterr()
+
+    assert run(["run", "prepare", "."]) == 1
+    output = capsys.readouterr()
+    assert "Agent Engineering Kit отключён" in output.err
+    assert not list((isolated_data / "state").glob("runs/**/request.json"))
+
+
 def test_project_skill_is_available_to_cli_listing_and_access_mutation(
     isolated_data: Path,
     monkeypatch: pytest.MonkeyPatch,

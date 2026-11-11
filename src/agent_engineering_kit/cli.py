@@ -11,6 +11,7 @@ from typing import Literal
 
 from .bindings import attach_project, bind_repository, load_attached_project, project_readiness, reconcile_project
 from .bindings import repository_paths
+from .agent_kit_state import read_status, reset as reset_agent_kit_status, set_enabled
 from .conventions import load_conventions
 from .doctor import doctor
 from .docker_mcp import DockerMcpToolkit
@@ -68,7 +69,7 @@ from .task_workflow import (
 from .validation import VALIDATORS, validate
 from .worktrees import create_managed_worktrees, plan_managed_worktrees
 from .process import run_command
-from .clients import effective_skill_inventory, effective_skill_sources, project_skill_status_report, register_native_mcp
+from .clients import effective_skill_inventory, effective_skill_sources, expose_native_instructions, project_skill_status_report, register_native_mcp
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -77,6 +78,10 @@ def _parser() -> argparse.ArgumentParser:
     help_command = subs.add_parser("help", help="Показать справку по команде или разделу")
     help_command.add_argument("topic", nargs="*", help="Путь команды, например: mcp docker")
     subs.add_parser("install", help="Установить desired-state environment без обновления checkout")
+    subs.add_parser("disable", help="Глобально отключить применение профилей и правил Agent Kit")
+    enable = subs.add_parser("enable", help="Глобально включить применение профилей и правил Agent Kit")
+    enable.add_argument("--reset", action="store_true", help="Удалить machine-local state и вернуть значение по умолчанию")
+    subs.add_parser("status", help="Показать глобальное состояние Agent Kit")
     check = subs.add_parser("validate", help="Проверить repository и effective policy")
     check.add_argument("target", nargs="?", default="all", choices=["all", *VALIDATORS])
     check.add_argument("--ci", action="store_true", help="Исключить user-local inputs; project-skills проверяются без fetch")
@@ -597,6 +602,19 @@ def run(argv: list[str] | None = None) -> int:
     paths = resolve_paths()
     repository = paths.repository
     try:
+        if args.command in {"disable", "enable", "status"}:
+            if args.command == "status":
+                state = read_status(paths)
+                print(json.dumps({**state.as_dict(), "path": str(paths.state / "agent-kit-status.json")}, ensure_ascii=False, indent=2))
+                return 0
+            if args.command == "enable" and args.reset:
+                reset_agent_kit_status(paths)
+                state = read_status(paths)
+            else:
+                state = set_enabled(paths, args.command == "enable")
+            expose_native_instructions(repository, paths, agent_kit_enabled=state.enabled)
+            print("Agent Engineering Kit включён" if state.enabled else "Agent Engineering Kit отключён")
+            return 0
         if args.command == "validate":
             return _render_result(validate(repository, paths, args.target, include_local=not args.ci))
         if args.command == "doctor":
@@ -797,6 +815,12 @@ def run(argv: list[str] | None = None) -> int:
             print(json.dumps(_refresh_project_memory(repository, paths, project), ensure_ascii=False, indent=2))
             return 0
         if args.command == "run" and args.run_command == "prepare":
+            agent_kit_status = read_status(paths)
+            if not agent_kit_status.enabled:
+                raise AgentKitError(
+                    "Agent Engineering Kit отключён на этой машине; профили, роли, rules и skills не применяются. "
+                    "Для включения выполните `agent-kit enable`"
+                )
             candidate = Path(args.path).expanduser()
             if candidate.exists():
                 project = find_project(candidate)

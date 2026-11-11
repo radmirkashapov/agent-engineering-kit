@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 
 from .models import load_policy
+from .agent_kit_state import read_status
 from .mcp_manager import McpManager
 from .mcp_credentials import McpCredentialStore
 from .paths import KitPaths, ensure_runtime
@@ -19,6 +20,8 @@ from .security_tools import SecurityToolManager
 
 def doctor(repository: Path, paths: KitPaths) -> ValidationResult:
     result = ValidationResult()
+    status = read_status(paths)
+    result.info("agent-kit", f"Глобальное состояние: {'включён' if status.enabled else 'выключен'}")
     if sys.version_info < (3, 10):
         result.error("doctor", "Нужен Python 3.10 или новее")
     else:

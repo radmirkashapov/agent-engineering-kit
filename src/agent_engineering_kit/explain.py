@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 from .conventions import load_conventions
+from .agent_kit_state import read_status
 from .external_skills import ExternalSkillManager
 from .harness import resolve_harness
 from .io import markdown_frontmatter
@@ -23,16 +24,18 @@ def explain(repository: Path, paths: KitPaths, start: Path, *, output_format: st
     project = find_project(start)
     conventions = load_conventions(repository, project)
     resolved_policy = effective_policy(repository, paths, project)
+    agent_kit_status = read_status(paths)
     if output_format == "json":
         return json.dumps({
             "revision": revision(repository),
             "project_id": project.identifier if project else None,
             "policy": resolved_policy.as_dict(),
+            "agent_kit": {**agent_kit_status.as_dict(), "path": str(paths.state / "agent-kit-status.json")},
             "conventions": conventions,
         }, ensure_ascii=False, indent=2) + "\n"
     if output_format != "text":
         raise ValueError(f"Неизвестный формат config explain: {output_format}")
-    lines = ["Agent Engineering Kit", f"revision: {revision(repository)}", ""]
+    lines = ["Agent Engineering Kit", f"revision: {revision(repository)}", f"agent kit: {'enabled' if agent_kit_status.enabled else 'disabled'}", ""]
     lines.extend(["Logical project:", project.identifier if project else "не определён", ""])
     if project:
         lines.extend(["Project root:", str(project.root), ""])
