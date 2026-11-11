@@ -2,8 +2,8 @@
 version: 1
 id: developer
 description: Implement approved changes with scoped write access and explicit review gates
-roles: [orchestrator, developer, reviewer]
-skills: [project-orientation, change-impact, verification]
+roles: [orchestrator, requirements-analyst, architect, developer, reviewer]
+skills: [project-orientation, codebase-analysis, requirements-analysis, architecture-decision, change-impact, test-design, verification]
 mcp: [codebase-memory, serena, context7]
 permissions:
   # Рискованные действия требуют решения внешнего harness.

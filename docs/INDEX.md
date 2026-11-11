@@ -13,6 +13,7 @@
 - [План безопасной загрузки credentials для MCP](superpowers/plans/2026-10-23-mcp-credentials.md).
 - [Дизайн единого Git-репозитория проектных skills](superpowers/specs/2026-10-26-project-skills-repository-design.md).
 - [Дизайн базовых SDLC-ролей агентов](superpowers/specs/2026-10-28-sdlc-agent-roles-design.md).
+- [Дизайн базовых SDLC-skills и профилей](superpowers/specs/2026-10-28-sdlc-skills-profiles-design.md).
 - [План реализации базовых SDLC-ролей агентов](superpowers/plans/2026-10-28-sdlc-agent-roles.md).
 - [План реализации единого Git-репозитория проектных skills](superpowers/plans/2026-10-26-project-skills-repository.md).
 - [Эксплуатация project-skills: подключение, ветки и диагностика](../README.md#единый-репозиторий-проектных-skills).
