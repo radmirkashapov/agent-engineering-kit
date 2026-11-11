@@ -406,8 +406,14 @@ def expose_native_skills(
     return exposed
 
 
-def expose_native_instructions(repository: Path, paths: KitPaths, *, home: Path | None = None) -> list[Path]:
-    """Синхронизировать только managed block, сохраняя пользовательский текст."""
+def expose_native_instructions(
+    repository: Path,
+    paths: KitPaths,
+    *,
+    home: Path | None = None,
+    agent_kit_enabled: bool = True,
+) -> list[Path]:
+    """Синхронизировать managed block, сохраняя пользовательский текст."""
     user_home = home or Path.home()
     targets = (
         user_home / ".codex" / "AGENTS.md",
@@ -416,13 +422,22 @@ def expose_native_instructions(repository: Path, paths: KitPaths, *, home: Path 
     )
     start = "<!-- agent-engineering-kit:start -->"
     end = "<!-- agent-engineering-kit:end -->"
-    block = (
-        f"{start}\n"
-        f"Используй canonical instructions: {repository / 'AI.md'}\n"
-        f"Применяй effective local agents/rules из: {paths.installations / 'clients' / 'shared' / 'effective-policy.json'}\n"
-        "В начале новой session выполни `agent-kit resync`; не копируй global rules в project.\n"
-        f"{end}"
-    )
+    if agent_kit_enabled:
+        block = (
+            f"{start}\n"
+            f"Используй canonical instructions: {repository / 'AI.md'}\n"
+            f"Применяй effective local agents/rules из: {paths.installations / 'clients' / 'shared' / 'effective-policy.json'}\n"
+            "В начале новой session выполни `agent-kit resync`; не копируй global rules в project.\n"
+            f"{end}"
+        )
+    else:
+        block = (
+            f"{start}\n"
+            "Agent Engineering Kit глобально отключён на этой машине.\n"
+            "Не применяй профили, роли, rules и skills Agent Engineering Kit к агентам.\n"
+            "Для повторного включения выполни `agent-kit enable`.\n"
+            f"{end}"
+        )
     generated: list[Path] = []
     for target in targets:
         existing = target.read_text(encoding="utf-8") if target.is_file() else ""

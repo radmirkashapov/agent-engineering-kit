@@ -15,6 +15,7 @@ from .clients import (
     register_native_mcp,
     sync_clients,
 )
+from .agent_kit_state import read_status
 from .component_state import Lifecycle
 from .errors import AgentKitError
 from .harness import resolve_harness
@@ -86,6 +87,7 @@ def resync(
     if update_kit:
         update_repository(repository)
     ensure_runtime(paths)
+    agent_kit_enabled = read_status(paths).enabled
     initialize_override_workspace(repository, paths)
     current_revision = revision(repository)
     # Переносимая база проверяется до machine-local inputs. Project skills
@@ -152,7 +154,15 @@ def resync(
     incomplete: list[str] = []
     if expose_native:
         generated.extend(expose_native_skills(repository, paths, project=project, project_id=project_id))
-        generated.extend(expose_native_instructions(repository, paths))
+        if agent_kit_enabled:
+            # Сохраняем совместимость с внешними адаптерами старого API.
+            generated.extend(expose_native_instructions(repository, paths))
+        else:
+            generated.extend(expose_native_instructions(
+                repository,
+                paths,
+                agent_kit_enabled=False,
+            ))
         registration_path = register_native_mcp(
             repository,
             paths,

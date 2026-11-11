@@ -39,6 +39,22 @@ def test_resync_initializes_overrides_before_local_validation(monkeypatch, tmp_p
     assert calls == ["runtime", "initializer"]
 
 
+def test_resync_rejects_corrupted_toggle_before_mutating_runtime(monkeypatch, tmp_path: Path) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    paths = KitPaths(repository, tmp_path / "data", tmp_path / "runtime", tmp_path / "projects", tmp_path / "overrides")
+    paths.state.mkdir(parents=True)
+    status_path = paths.state / "agent-kit-status.json"
+    status_path.write_text("{broken", encoding="utf-8")
+    calls: list[str] = []
+    monkeypatch.setattr(resync_module, "ensure_runtime", lambda _paths: calls.append("runtime"))
+    monkeypatch.setattr(resync_module, "initialize_override_workspace", lambda *_args: calls.append("initializer"))
+
+    with pytest.raises(AgentKitError, match=str(status_path)):
+        resync(repository, paths, update_kit=False, install_security=False)
+
+    assert calls == ["runtime"]
+
+
 def test_session_manifest_records_harness_and_effective_policy_digest(tmp_path: Path) -> None:
     policy = tmp_path / "effective-policy.json"
     policy.write_text('{"version":1}\n', encoding="utf-8")
