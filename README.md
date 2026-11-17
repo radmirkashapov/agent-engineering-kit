@@ -218,6 +218,7 @@ agent-kit project init --help
 | `agent-kit validate [target]` | Проверить схемы, каталоги, policy, Git hygiene и безопасность. |
 | `agent-kit doctor` | Диагностировать установленное окружение и runtime. |
 | `agent-kit sync` / `resync` | Синхронизировать локальные установки, MCP и клиентские адаптеры. |
+| `agent-kit models ...` | Просмотреть каталог моделей, объяснить поддержку клиента или безопасно синхронизировать provider и модели. |
 | `agent-kit project ...` | Создать, подключить, обнаружить или сверить logical project и его память. |
 | `agent-kit config explain` | Показать effective configuration, выбранный harness и происхождение решений. |
 | `agent-kit skills ...` | Просмотреть, включить, отключить или переопределить skills. |
@@ -683,6 +684,25 @@ agent-kit security validate
 Отслеживаемый файл `models/corporate.yaml` задаёт разрешённых провайдеров, идентификаторы, псевдонимы и способности моделей. В исходном Kit он содержит `enabled: false`: примеры валидируются, но корпоративный allowlist не ограничивает локальный runtime. В корпоративном форке администратор меняет значение на `true` и поддерживает собственный список; тогда только разрешённые модели могут использоваться в закоммиченных определениях и effective policy.
 
 Пользовательские модели задаются вне рабочей копии в `<data>/overrides/models.yaml`; защитный путь `models/user.local.yaml` исключён из Git. Локальные модели расширяют только рабочее окружение конкретной машины.
+
+### Регистрация моделей в клиентах
+
+`agent-kit models` публикует provider endpoint и перечень моделей из effective каталога. Он не является менеджером секретов: ключи, OAuth-токены и значения переменных окружения никогда не читаются, не записываются и не выводятся в консоль.
+
+```bash
+# Проверить единый каталог и контракт конкретного клиента.
+agent-kit models list
+agent-kit models explain codex
+agent-kit models status
+
+# Обновить только Codex либо все безопасно управляемые клиенты.
+agent-kit models sync --client codex
+agent-kit models sync
+```
+
+Codex поддерживает безопасную синхронизацию provider: Kit обновляет `base_url` и transport, но сохраняет уже заданный `env_key`. OpenCode получает отдельный system-level managed config: OpenCode объединяет его с пользовательским `~/.config/opencode/opencode.json(c)`, не требуя редактировать пользовательский файл. Kit обновляет models и `baseURL` в системном слое; если для него не хватает прав, команда возвращает `CONFIG_REQUIRED`. Для нового provider в YAML указывается только имя переменной `api_key_env`, например `COMPANY_AI_API_KEY`; её значение пользователь задаёт в своей среде или внешнем secret store. Если Kit обнаруживает одноимённый provider Codex, которым он не владеет, команда прекращается без изменения файла.
+
+Cline хранит profile и secrets во внутреннем хранилище приложения, поэтому Kit выводит только инструкцию: настройте provider через UI либо `cline auth`. Claude Code использует Anthropic-compatible API, а не произвольный OpenAI-compatible transport; Claude Desktop не имеет поддерживаемого контракта регистрации пользовательских provider. Для этих трёх клиентов `models sync` ничего не меняет. `agent-kit resync` запускает ту же безопасную синхронизацию автоматически.
 
 ## Локальные переопределения
 

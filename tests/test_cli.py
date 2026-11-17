@@ -59,6 +59,22 @@ def test_available_does_not_require_scope() -> None:
     assert args.skills_command == "available"
 
 
+def test_models_commands_parse_targeted_client() -> None:
+    args = _parser().parse_args(["models", "sync", "--client", "codex"])
+
+    assert args.command == "models"
+    assert args.models_command == "sync"
+    assert args.client == ["codex"]
+
+
+def test_models_status_uses_safe_client_service(isolated_data: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    monkeypatch.setattr(cli_module, "client_model_status", lambda *_args: {"codex": {"mode": "managed"}})
+
+    assert run(["models", "status"]) == 0
+
+    assert json.loads(capsys.readouterr().out) == {"codex": {"mode": "managed"}}
+
+
 def test_global_toggle_updates_managed_instruction_files(isolated_data: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
     home = isolated_data / "home"
     monkeypatch.setattr(cli_module.Path, "home", lambda: home)

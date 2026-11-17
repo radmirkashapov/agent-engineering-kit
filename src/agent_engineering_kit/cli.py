@@ -12,6 +12,7 @@ from typing import Literal
 from .bindings import attach_project, bind_repository, load_attached_project, project_readiness, reconcile_project
 from .bindings import repository_paths
 from .agent_kit_state import read_status, reset as reset_agent_kit_status, set_enabled
+from .client_models import CLIENT_MODEL_CAPABILITIES, client_model_status, list_client_models, sync_client_models
 from .conventions import load_conventions
 from .doctor import doctor
 from .docker_mcp import DockerMcpToolkit
@@ -86,6 +87,16 @@ def _parser() -> argparse.ArgumentParser:
     check.add_argument("target", nargs="?", default="all", choices=["all", *VALIDATORS])
     check.add_argument("--ci", action="store_true", help="Исключить user-local inputs; project-skills проверяются без fetch")
     subs.add_parser("doctor", help="Проверить installation и runtime")
+    models = subs.add_parser("models", help="Регистрировать модели в поддерживаемых клиентах").add_subparsers(
+        dest="models_command", required=True,
+    )
+    models.add_parser("list", help="Показать effective каталог provider и моделей")
+    models.add_parser("status", help="Показать режимы и состояние client model adapters")
+    models_sync = models.add_parser("sync", help="Синхронизировать модели без записи credentials")
+    models_sync.add_argument("--client", action="append", choices=sorted(CLIENT_MODEL_CAPABILITIES),
+                             help="Ограничить синхронизацию указанным клиентом; можно повторять")
+    models_explain = models.add_parser("explain", help="Объяснить аутентификацию и возможности клиента")
+    models_explain.add_argument("client", choices=sorted(CLIENT_MODEL_CAPABILITIES))
     for name in ("sync", "resync"):
         command = subs.add_parser(name, help="Привести машину к desired state")
         command.add_argument("--no-update", action="store_true")
@@ -619,6 +630,22 @@ def run(argv: list[str] | None = None) -> int:
             return _render_result(validate(repository, paths, args.target, include_local=not args.ci))
         if args.command == "doctor":
             return _render_result(doctor(repository, paths))
+        if args.command == "models":
+            if args.models_command == "list":
+                print(json.dumps(list_client_models(repository, paths), ensure_ascii=False, indent=2))
+            elif args.models_command == "status":
+                print(json.dumps(client_model_status(repository, paths), ensure_ascii=False, indent=2))
+            elif args.models_command == "explain":
+                print(json.dumps({
+                    "client": args.client,
+                    **CLIENT_MODEL_CAPABILITIES[args.client],
+                }, ensure_ascii=False, indent=2))
+            else:
+                print(json.dumps(
+                    sync_client_models(repository, paths, clients=args.client),
+                    ensure_ascii=False, indent=2,
+                ))
+            return 0
         if args.command in {"install", "resync"}:
             project = find_project(Path.cwd())
             report = resync(repository, paths, project=project, update_kit=args.command == "resync" and not getattr(args, "no_update", False), force=getattr(args, "force", False))

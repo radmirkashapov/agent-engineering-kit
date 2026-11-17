@@ -14,7 +14,14 @@
         "type": "object",
         "required": ["id"],
         "additionalProperties": false,
-        "properties": { "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" } }
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+          "name": { "type": "string", "minLength": 1 },
+          "description": { "type": "string", "minLength": 1 },
+          "base_url": { "type": "string", "pattern": "^https?://[^\\s]+$" },
+          "api_key_env": { "type": "string", "pattern": "^[A-Z_][A-Z0-9_]*$" },
+          "wire_api": { "enum": ["chat", "responses"] }
+        }
       }
     },
     "models": {
@@ -26,6 +33,11 @@
         "properties": {
           "id": { "type": "string", "minLength": 1 },
           "provider": { "type": "string", "minLength": 1 },
+          "name": { "type": "string", "minLength": 1 },
+          "description": { "type": "string", "minLength": 1 },
+          "model_id": { "type": "string", "minLength": 1 },
+          "context_window": { "type": "integer", "minimum": 1 },
+          "max_output_tokens": { "type": "integer", "minimum": 1 },
           "aliases": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
           "capabilities": {
             "type": "object",

@@ -86,3 +86,37 @@ def test_duplicate_model_id_fails(tmp_path: Path, real_repository: Path) -> None
 def test_unknown_provider_fails(tmp_path: Path, real_repository: Path) -> None:
     repository = make_model_repository(tmp_path, real_repository, [model("mystery", "unknown")])
     assert not validate_models(repository).ok
+
+
+def test_model_catalog_accepts_provider_and_model_descriptions(tmp_path: Path, real_repository: Path) -> None:
+    repository = make_model_repository(tmp_path, real_repository, [model("corp-model")])
+    document = load_yaml(repository / "models/corporate.yaml")
+    document["providers"][0].update({
+        "name": "Company AI Gateway",
+        "description": "OpenAI-compatible endpoint for engineering workloads.",
+        "base_url": "https://ai.example.test/v1",
+        "api_key_env": "COMPANY_AI_API_KEY",
+        "wire_api": "responses",
+    })
+    document["models"][0].update({
+        "name": "Corporate coding model",
+        "description": "Preferred model for implementation tasks.",
+        "model_id": "server-side-id",
+        "context_window": 128000,
+        "max_output_tokens": 16000,
+    })
+    write_yaml(repository / "models/corporate.yaml", document)
+
+    assert validate_models(repository).ok
+
+
+def test_model_catalog_rejects_non_https_provider_base_url(tmp_path: Path, real_repository: Path) -> None:
+    repository = make_model_repository(tmp_path, real_repository, [model("corp-model")])
+    document = load_yaml(repository / "models/corporate.yaml")
+    document["providers"][0]["base_url"] = "not a url"
+    write_yaml(repository / "models/corporate.yaml", document)
+
+    result = validate_models(repository)
+
+    assert not result.ok
+    assert "base_url" in "\n".join(item.message for item in result.diagnostics)

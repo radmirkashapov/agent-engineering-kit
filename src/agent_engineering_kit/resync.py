@@ -15,6 +15,7 @@ from .clients import (
     register_native_mcp,
     sync_clients,
 )
+from .client_models import sync_client_models
 from .agent_kit_state import read_status
 from .component_state import Lifecycle
 from .errors import AgentKitError
@@ -151,6 +152,9 @@ def resync(
         project_id=project_id,
         capability_policy=capability_resolution.as_dict(),
     )
+    # Model adapters own only endpoint and model metadata. Credentials remain
+    # in each client's own environment or secure storage.
+    sync_client_models(repository, paths)
     incomplete: list[str] = []
     if expose_native:
         generated.extend(expose_native_skills(repository, paths, project=project, project_id=project_id))
