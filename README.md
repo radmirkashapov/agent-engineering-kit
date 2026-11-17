@@ -700,7 +700,7 @@ agent-kit models sync --client codex
 agent-kit models sync
 ```
 
-Codex и OpenCode поддерживают безопасную синхронизацию. Kit обновляет `base_url`, технический transport и список моделей, но сохраняет уже заданные `env_key`, `env` и `settings.apiKey`. Для нового provider в YAML указывается только имя переменной `api_key_env`, например `COMPANY_AI_API_KEY`; её значение пользователь задаёт в своей среде или внешнем secret store. Если Kit обнаруживает одноимённый provider, которым он не владеет, команда прекращается без изменения файла.
+Codex поддерживает безопасную синхронизацию provider: Kit обновляет `base_url` и transport, но сохраняет уже заданный `env_key`. OpenCode получает управляемый config только на чистой машине: он содержит лишь `baseURL`, models и имя `api_key_env`. Если `opencode.json` или `opencode.jsonc` уже существует, Kit не открывает и не меняет этот файл — клиент остаётся в ручном режиме. Для нового provider в YAML указывается только имя переменной `api_key_env`, например `COMPANY_AI_API_KEY`; её значение пользователь задаёт в своей среде или внешнем secret store. Если Kit обнаруживает одноимённый provider Codex, которым он не владеет, команда прекращается без изменения файла.
 
 Cline хранит profile и secrets во внутреннем хранилище приложения, поэтому Kit выводит только инструкцию: настройте provider через UI либо `cline auth`. Claude Code использует Anthropic-compatible API, а не произвольный OpenAI-compatible transport; Claude Desktop не имеет поддерживаемого контракта регистрации пользовательских provider. Для этих трёх клиентов `models sync` ничего не меняет. `agent-kit resync` запускает ту же безопасную синхронизацию автоматически.
 

@@ -39,7 +39,7 @@ models:
       tool_use: true
 ```
 
-После изменения каталога выполните `agent-kit models sync`. Codex и OpenCode получают только endpoint и модели; существующие настройки ключа сохраняются. Cline, Claude Code и Claude Desktop не редактируются: подробности даёт `agent-kit models explain <client>`.
+После изменения каталога выполните `agent-kit models sync`. Codex получает endpoint и сохраняет существующий `env_key`. OpenCode создаёт свой config только при его отсутствии; имеющийся `opencode.json` или `opencode.jsonc` остаётся полностью ручным и не читается Kit. Cline, Claude Code и Claude Desktop не редактируются: подробности даёт `agent-kit models explain <client>`.
 
 Предпочтительный контракт skill — `requires.model_capabilities`; конкретную модель выбирает механизм разрешения. Явные поля `model.preferred` и `model.allowed` разрешены для роли агента, когда нужна воспроизводимость.
 

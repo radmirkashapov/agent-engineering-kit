@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import json
 import re
+import hashlib
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Iterable
 
 from .errors import AgentKitError
 from .io import atomic_write, load_json, load_yaml
-from .models import load_policy
+from .models import load_policy, validate_models
 from .paths import KitPaths, ensure_runtime
 
 
@@ -93,18 +94,19 @@ def _state_path(paths: KitPaths) -> Path:
     return paths.state / "client-models.json"
 
 
-def _load_state(paths: KitPaths) -> dict[str, list[str]]:
+def _load_state(paths: KitPaths) -> dict[str, Any]:
     path = _state_path(paths)
     if not path.is_file():
-        return {"codex": [], "opencode": []}
+        return {"codex": [], "opencode": [], "opencode_digest": None}
     document = load_json(path)
     return {
-        client: [item for item in document.get(client, []) if isinstance(item, str)]
-        for client in ("codex", "opencode")
+        "codex": [item for item in document.get("codex", []) if isinstance(item, str)],
+        "opencode": [item for item in document.get("opencode", []) if isinstance(item, str)],
+        "opencode_digest": document.get("opencode_digest") if isinstance(document.get("opencode_digest"), str) else None,
     }
 
 
-def _write_state(paths: KitPaths, state: dict[str, list[str]]) -> None:
+def _write_state(paths: KitPaths, state: dict[str, Any]) -> None:
     atomic_write(_state_path(paths), json.dumps({"version": 1, **state}, ensure_ascii=False, indent=2) + "\n")
 
 
@@ -128,8 +130,16 @@ def _codex_block(provider: dict[str, Any]) -> str:
 
 
 def _preserved_codex_env_key(block: str) -> str | None:
-    match = re.search(r'^env_key\s*=\s*"([^"]+)"\s*$', block, flags=re.MULTILINE)
-    return match.group(1) if match else None
+    match = re.search(
+        r"^env_key\s*=\s*(?:\"(?P<double>(?:\\.|[^\"\\])*)\"|'(?P<single>[^']*)')\s*(?:#.*)?$",
+        block,
+        flags=re.MULTILINE,
+    )
+    if match is None:
+        return None
+    if match.group("double") is not None:
+        return json.loads(f'"{match.group("double")}"')
+    return match.group("single")
 
 
 def _sync_codex(providers: Iterable[dict[str, Any]], paths: KitPaths, home: Path) -> dict[str, Any]:
@@ -183,53 +193,46 @@ def _opencode_models(models: list[dict[str, Any]]) -> dict[str, Any]:
     return result
 
 
-def _sync_opencode(providers: Iterable[dict[str, Any]], models: dict[str, list[dict[str, Any]]], paths: KitPaths, home: Path) -> dict[str, Any]:
-    config_path = home / ".config" / "opencode" / "opencode.json"
-    if config_path.is_file():
-        try:
-            document = json.loads(config_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError as error:
-            raise AgentKitError(f"OpenCode configuration must be strict JSON for managed sync: {config_path}") from error
-    else:
-        document = {}
-    if not isinstance(document, dict):
-        raise AgentKitError(f"OpenCode configuration root must be an object: {config_path}")
-    provider_map = document.setdefault("providers", {})
-    if not isinstance(provider_map, dict):
-        raise AgentKitError(f"OpenCode providers must be an object: {config_path}")
-    state = _load_state(paths)
-    owned = set(state["opencode"])
-    synchronized: list[str] = []
+def _opencode_document(providers: Iterable[dict[str, Any]], models: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
+    """Собрать конфиг без literal credentials и без пользовательских полей."""
+    provider_map: dict[str, Any] = {}
     for provider in providers:
         identifier = provider["id"]
-        existing = provider_map.get(identifier)
-        if existing is not None and not isinstance(existing, dict):
-            raise AgentKitError(f"OpenCode model provider has invalid shape: {identifier}")
-        if existing is not None and identifier not in owned and not existing.get("_agent_kit_managed"):
-            raise AgentKitError(f"OpenCode model provider ownership collision: {identifier}")
-        existing = dict(existing or {})
-        settings = dict(existing.get("settings") or {})
-        settings["baseURL"] = provider["base_url"]
-        updated = {
-            **existing,
+        entry: dict[str, Any] = {
             "name": provider.get("name") or identifier,
             "package": "@opencode/ai/providers/openai-compatible",
-            "settings": settings,
+            "settings": {"baseURL": provider["base_url"]},
             "models": _opencode_models(models.get(identifier, [])),
         }
-        if "env" not in updated and provider.get("api_key_env"):
-            updated["env"] = [provider["api_key_env"]]
-        updated.pop("_agent_kit_managed", None)
-        provider_map[identifier] = updated
-        owned.add(identifier)
-        synchronized.append(identifier)
-    state["opencode"] = sorted(owned)
+        if provider.get("api_key_env"):
+            entry["env"] = [provider["api_key_env"]]
+        provider_map[identifier] = entry
+    return {"$schema": "https://opencode.ai/config.json", "providers": provider_map}
+
+
+def _sync_opencode(providers: Iterable[dict[str, Any]], models: dict[str, list[dict[str, Any]]], paths: KitPaths, home: Path) -> dict[str, Any]:
+    config_path = home / ".config" / "opencode" / "opencode.json"
+    jsonc_path = config_path.with_suffix(".jsonc")
+    state = _load_state(paths)
+    if jsonc_path.exists():
+        return {"status": "MANUAL", "path": str(jsonc_path), "changed": False,
+                "reason": "OpenCode JSONC configuration is user-owned"}
+    if config_path.exists():
+        current_digest = hashlib.sha256(config_path.read_bytes()).hexdigest()
+        if state.get("opencode_digest") != current_digest:
+            return {"status": "MANUAL", "path": str(config_path), "changed": False,
+                    "reason": "OpenCode configuration is user-owned or changed outside Agent Kit"}
+    document = _opencode_document(providers, models)
     serialized = json.dumps(document, ensure_ascii=False, indent=2) + "\n"
     previous = config_path.read_text(encoding="utf-8") if config_path.is_file() else ""
-    if serialized != previous:
+    changed = serialized != previous
+    if changed:
         atomic_write(config_path, serialized)
+    digest = hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+    state["opencode"] = sorted(provider["id"] for provider in providers)
+    state["opencode_digest"] = digest
     _write_state(paths, state)
-    return {"status": "SYNCED", "path": str(config_path), "providers": synchronized, "changed": serialized != previous}
+    return {"status": "SYNCED", "path": str(config_path), "providers": state["opencode"], "changed": changed}
 
 
 def sync_client_models(
@@ -237,6 +240,10 @@ def sync_client_models(
 ) -> dict[str, dict[str, Any]]:
     """Синхронизировать только безопасно управляемые client model contracts."""
     ensure_runtime(paths)
+    validation = validate_models(repository, include_local=True, local_path=paths.overrides / "models.yaml")
+    if not validation.ok:
+        messages = "; ".join(item.message for item in validation.diagnostics if item.severity == "ERROR")
+        raise AgentKitError(f"Некорректный local model catalog: {messages}")
     selected = tuple(clients or CLIENT_MODEL_CAPABILITIES)
     unknown = sorted(set(selected) - set(CLIENT_MODEL_CAPABILITIES))
     if unknown:

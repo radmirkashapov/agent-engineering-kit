@@ -82,6 +82,26 @@ def test_sync_keeps_existing_codex_env_key_unchanged(tmp_path: Path, real_reposi
     assert 'base_url = "https://ai.example.test/v1"' in result
 
 
+def test_sync_keeps_single_quoted_codex_env_key_unchanged(tmp_path: Path, real_repository: Path) -> None:
+    repository = make_model_repository(tmp_path, real_repository, [])
+    declare_compatible_provider(repository)
+    paths = make_paths(tmp_path, repository)
+    home = tmp_path / "home"
+    config_path = home / ".codex/config.toml"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        '# agent-kit:model-provider:company-ai:start\n'
+        '[model_providers.company-ai]\n'
+        "env_key = 'USER_SELECTED_KEY'\n"
+        '# agent-kit:model-provider:company-ai:end\n',
+        encoding="utf-8",
+    )
+
+    sync_client_models(repository, paths, home=home, clients=("codex",))
+
+    assert 'env_key = "USER_SELECTED_KEY"' in config_path.read_text(encoding="utf-8")
+
+
 def test_sync_rejects_unmanaged_codex_provider_collision(tmp_path: Path, real_repository: Path) -> None:
     repository = make_model_repository(tmp_path, real_repository, [])
     declare_compatible_provider(repository)
@@ -118,7 +138,7 @@ def test_sync_rejects_codex_provider_when_owned_marker_was_removed(tmp_path: Pat
     assert config_path.read_text(encoding="utf-8") == original
 
 
-def test_sync_creates_opencode_provider_and_preserves_existing_credentials(tmp_path: Path, real_repository: Path) -> None:
+def test_sync_does_not_open_or_change_existing_opencode_credentials(tmp_path: Path, real_repository: Path) -> None:
     repository = make_model_repository(tmp_path, real_repository, [])
     declare_compatible_provider(repository)
     paths = make_paths(tmp_path, repository)
@@ -134,13 +154,13 @@ def test_sync_creates_opencode_provider_and_preserves_existing_credentials(tmp_p
 
     report = sync_client_models(repository, paths, home=home, clients=("opencode",))
 
-    document = json.loads(config_path.read_text(encoding="utf-8"))
-    provider = document["providers"]["company-ai"]
-    assert report["opencode"]["status"] == "SYNCED"
-    assert provider["env"] == ["USER_SELECTED_KEY"]
-    assert provider["settings"]["apiKey"] == "{env:USER_SELECTED_KEY}"
-    assert provider["settings"]["baseURL"] == "https://ai.example.test/v1"
-    assert set(provider["models"]) == {"company-coder"}
+    assert report["opencode"]["status"] == "MANUAL"
+    assert config_path.read_text(encoding="utf-8") == json.dumps({"providers": {"company-ai": {
+        "_agent_kit_managed": True,
+        "env": ["USER_SELECTED_KEY"],
+        "settings": {"apiKey": "{env:USER_SELECTED_KEY}"},
+        "models": {"obsolete": {}},
+    }}})
 
 
 def test_opencode_sync_is_idempotent(tmp_path: Path, real_repository: Path) -> None:
@@ -153,6 +173,37 @@ def test_opencode_sync_is_idempotent(tmp_path: Path, real_repository: Path) -> N
     second = sync_client_models(repository, paths, home=home, clients=("opencode",))
 
     assert second["opencode"]["changed"] is False
+
+
+def test_sync_leaves_opencode_jsonc_untouched(tmp_path: Path, real_repository: Path) -> None:
+    repository = make_model_repository(tmp_path, real_repository, [])
+    declare_compatible_provider(repository)
+    paths = make_paths(tmp_path, repository)
+    home = tmp_path / "home"
+    config_path = home / ".config/opencode/opencode.jsonc"
+    config_path.parent.mkdir(parents=True)
+    original = '{\n  // user-owned configuration\n  "providers": {}\n}\n'
+    config_path.write_text(original, encoding="utf-8")
+
+    report = sync_client_models(repository, paths, home=home, clients=("opencode",))
+
+    assert report["opencode"]["status"] == "MANUAL"
+    assert config_path.read_text(encoding="utf-8") == original
+    assert not (config_path.parent / "opencode.json").exists()
+
+
+def test_sync_rejects_invalid_local_model_catalog_before_client_write(tmp_path: Path, real_repository: Path) -> None:
+    repository = make_model_repository(tmp_path, real_repository, [])
+    paths = make_paths(tmp_path, repository)
+    paths.overrides.mkdir(parents=True)
+    write_yaml(paths.overrides / "models.yaml", {
+        "version": 1,
+        "providers": [{"id": "company-ai", "base_url": "invalid"}],
+        "models": [model("company-coder", "company-ai")],
+    })
+
+    with pytest.raises(Exception, match="Некорректный local model catalog"):
+        sync_client_models(repository, paths, home=tmp_path / "home", clients=("codex",))
 
 
 def test_sync_reports_manual_clients_without_creating_configs(tmp_path: Path, real_repository: Path) -> None:

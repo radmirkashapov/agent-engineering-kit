@@ -27,13 +27,15 @@ model появляются необязательные описательные
 | Клиент | Режим | Изменяемые поля | Секреты |
 | --- | --- | --- | --- |
 | Codex | `managed` | custom provider, `base_url`, `wire_api`, выбранная модель | сохраняется существующий `env_key`; новый берётся только как имя `api_key_env` |
-| OpenCode | `managed` | custom provider, `settings.baseURL`, `models` | `env` и `settings.apiKey` сохраняются; для нового provider записывается только имя env-переменной |
+| OpenCode | `managed` только для чистого config | custom provider, `settings.baseURL`, `models` | существующий `opencode.json`/`opencode.jsonc` не открывается и остаётся ручным; новый config содержит только имя env-переменной |
 | Cline | `manual` | нет | внутреннее provider storage не редактируется |
 | Claude Code | `manual` | нет для OpenAI-compatible API | env и авторизация Claude не редактируются |
 | Claude Desktop | `unsupported` | нет | модельная авторизация не редактируется |
 
-Для Codex и OpenCode Kit владеет лишь provider, помеченным metadata-файлом в
-собственном состоянии. Чужой provider с тем же ID — конфликт: команда не
+Для Codex Kit владеет лишь provider, помеченным metadata-файлом в собственном
+состоянии. Для OpenCode Kit создаёт config только когда у клиента нет своего
+`opencode.json` или `opencode.jsonc`; в дальнейшем сверяет digest созданного
+файла. Чужой provider с тем же ID — конфликт: команда не
 изменяет его и завершает работу с понятной ошибкой. Запись атомарна, но
 резервную копию не создаёт: она могла бы продублировать literal credentials.
 Повторная синхронизация идемпотентна.
