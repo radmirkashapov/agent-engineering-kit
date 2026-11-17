@@ -211,6 +211,19 @@ def test_resync_without_project_skips_project_skills(monkeypatch, resync_environ
     assert json.loads((env.paths.state / "effective-environment.json").read_text())["project_skills"] is None
 
 
+def test_resync_registers_client_models_after_client_adapters(monkeypatch, resync_environment) -> None:
+    env = resync_environment
+    monkeypatch.setattr(
+        resync_module,
+        "sync_client_models",
+        lambda *_args, **_kwargs: env.calls.append("models") or {"codex": {"status": "SYNCED"}},
+    )
+
+    resync(env.repository, env.paths, update_kit=False, install_security=False, expose_native=False)
+
+    assert env.calls[-2:] == ["clients", "models"]
+
+
 def test_session_manifest_records_project_skills(tmp_path: Path) -> None:
     policy = tmp_path / "policy.json"
     policy.write_text("{}\n", encoding="utf-8")

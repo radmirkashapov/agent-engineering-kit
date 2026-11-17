@@ -8,6 +8,8 @@
 - [Установка из корпоративного GitLab, корпоративная конфигурация и синхронизация с GitHub](runbooks/install-from-gitlab-fork.md).
 - [ADR](adr/) — архитектурные решения.
 - [Политика моделей](../models/README.md).
+- [Дизайн централизованной регистрации моделей в клиентах](superpowers/specs/2026-11-17-client-model-registration-design.md).
+- [План централизованной регистрации моделей в клиентах](superpowers/plans/2026-11-17-client-model-registration.md).
 - [Реестр MCP](../mcp/README.md).
 - [Безопасная загрузка credentials для MCP и границы OAuth](superpowers/specs/2026-10-23-mcp-credentials-design.md).
 - [План безопасной загрузки credentials для MCP](superpowers/plans/2026-10-23-mcp-credentials.md).
