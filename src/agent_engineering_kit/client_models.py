@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import platform
 import re
 from collections import defaultdict
 from pathlib import Path
@@ -96,11 +98,12 @@ def _state_path(paths: KitPaths) -> Path:
 def _load_state(paths: KitPaths) -> dict[str, Any]:
     path = _state_path(paths)
     if not path.is_file():
-        return {"codex": [], "opencode": []}
+        return {"codex": [], "opencode": [], "opencode_config": None}
     document = load_json(path)
     return {
         "codex": [item for item in document.get("codex", []) if isinstance(item, str)],
         "opencode": [item for item in document.get("opencode", []) if isinstance(item, str)],
+        "opencode_config": document.get("opencode_config") if isinstance(document.get("opencode_config"), str) else None,
     }
 
 
@@ -208,20 +211,34 @@ def _opencode_document(providers: Iterable[dict[str, Any]], models: dict[str, li
     return {"$schema": "https://opencode.ai/config.json", "providers": provider_map}
 
 
+def opencode_managed_config_path(environ: dict[str, str] | None = None) -> Path:
+    """Вернуть официальный system-level config OpenCode, а не user config."""
+    env = os.environ if environ is None else environ
+    if configured := env.get("AGENT_KIT_OPENCODE_MANAGED_CONFIG"):
+        return Path(configured).expanduser()
+    if platform.system() == "Darwin":
+        return Path("/Library/Application Support/opencode/opencode.json")
+    if platform.system() == "Windows":
+        return Path(env.get("ProgramData", r"C:\\ProgramData")) / "opencode" / "opencode.json"
+    return Path("/etc/opencode/opencode.json")
+
+
 def _sync_opencode(providers: Iterable[dict[str, Any]], models: dict[str, list[dict[str, Any]]], paths: KitPaths, home: Path) -> dict[str, Any]:
-    config_path = home / ".config" / "opencode" / "opencode.json"
-    jsonc_path = config_path.with_suffix(".jsonc")
+    config_path = opencode_managed_config_path()
     state = _load_state(paths)
-    if jsonc_path.exists():
-        return {"status": "MANUAL", "path": str(jsonc_path), "changed": False,
-                "reason": "OpenCode JSONC configuration is user-owned"}
-    if config_path.exists():
-        return {"status": "MANUAL", "path": str(config_path), "changed": False,
-                "reason": "Existing OpenCode configuration is never read or changed by Agent Kit"}
+    owner = state.get("opencode_config")
+    if config_path.exists() and owner != str(config_path):
+        return {"status": "CONFIG_REQUIRED", "path": str(config_path), "changed": False,
+                "reason": "OpenCode system configuration is not owned by Agent Kit"}
     document = _opencode_document(providers, models)
     serialized = json.dumps(document, ensure_ascii=False, indent=2) + "\n"
-    atomic_write(config_path, serialized)
+    try:
+        atomic_write(config_path, serialized)
+    except OSError:
+        return {"status": "CONFIG_REQUIRED", "path": str(config_path), "changed": False,
+                "reason": "Agent Kit needs permission to write the OpenCode system configuration"}
     state["opencode"] = sorted(provider["id"] for provider in providers)
+    state["opencode_config"] = str(config_path)
     _write_state(paths, state)
     return {"status": "SYNCED", "path": str(config_path), "providers": state["opencode"], "changed": True}
 
