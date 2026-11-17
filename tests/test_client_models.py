@@ -163,16 +163,19 @@ def test_sync_does_not_open_or_change_existing_opencode_credentials(tmp_path: Pa
     }}})
 
 
-def test_opencode_sync_is_idempotent(tmp_path: Path, real_repository: Path) -> None:
+def test_second_opencode_sync_leaves_agent_created_config_untouched(tmp_path: Path, real_repository: Path) -> None:
     repository = make_model_repository(tmp_path, real_repository, [])
     declare_compatible_provider(repository)
     paths = make_paths(tmp_path, repository)
     home = tmp_path / "home"
 
     sync_client_models(repository, paths, home=home, clients=("opencode",))
+    config_path = home / ".config/opencode/opencode.json"
+    original = config_path.read_text(encoding="utf-8")
     second = sync_client_models(repository, paths, home=home, clients=("opencode",))
 
-    assert second["opencode"]["changed"] is False
+    assert second["opencode"]["status"] == "MANUAL"
+    assert config_path.read_text(encoding="utf-8") == original
 
 
 def test_sync_leaves_opencode_jsonc_untouched(tmp_path: Path, real_repository: Path) -> None:

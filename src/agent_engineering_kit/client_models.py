@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import re
-import hashlib
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Iterable
@@ -97,12 +96,11 @@ def _state_path(paths: KitPaths) -> Path:
 def _load_state(paths: KitPaths) -> dict[str, Any]:
     path = _state_path(paths)
     if not path.is_file():
-        return {"codex": [], "opencode": [], "opencode_digest": None}
+        return {"codex": [], "opencode": []}
     document = load_json(path)
     return {
         "codex": [item for item in document.get("codex", []) if isinstance(item, str)],
         "opencode": [item for item in document.get("opencode", []) if isinstance(item, str)],
-        "opencode_digest": document.get("opencode_digest") if isinstance(document.get("opencode_digest"), str) else None,
     }
 
 
@@ -218,21 +216,14 @@ def _sync_opencode(providers: Iterable[dict[str, Any]], models: dict[str, list[d
         return {"status": "MANUAL", "path": str(jsonc_path), "changed": False,
                 "reason": "OpenCode JSONC configuration is user-owned"}
     if config_path.exists():
-        current_digest = hashlib.sha256(config_path.read_bytes()).hexdigest()
-        if state.get("opencode_digest") != current_digest:
-            return {"status": "MANUAL", "path": str(config_path), "changed": False,
-                    "reason": "OpenCode configuration is user-owned or changed outside Agent Kit"}
+        return {"status": "MANUAL", "path": str(config_path), "changed": False,
+                "reason": "Existing OpenCode configuration is never read or changed by Agent Kit"}
     document = _opencode_document(providers, models)
     serialized = json.dumps(document, ensure_ascii=False, indent=2) + "\n"
-    previous = config_path.read_text(encoding="utf-8") if config_path.is_file() else ""
-    changed = serialized != previous
-    if changed:
-        atomic_write(config_path, serialized)
-    digest = hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+    atomic_write(config_path, serialized)
     state["opencode"] = sorted(provider["id"] for provider in providers)
-    state["opencode_digest"] = digest
     _write_state(paths, state)
-    return {"status": "SYNCED", "path": str(config_path), "providers": state["opencode"], "changed": changed}
+    return {"status": "SYNCED", "path": str(config_path), "providers": state["opencode"], "changed": True}
 
 
 def sync_client_models(
