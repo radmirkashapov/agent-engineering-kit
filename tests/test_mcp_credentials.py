@@ -132,6 +132,25 @@ def test_import_is_atomic_private_and_status_never_contains_values(tmp_path):
     assert not any(isinstance(value, int) and value == len("super-secret") for value in metadata.values())
 
 
+def test_import_generates_private_shared_atlassian_config(tmp_path):
+    paths = make_paths(tmp_path)
+    source = tmp_path / "mcp-creds.env"
+    source.write_text("JIRA_HOST=jira.example.test\nJIRA_API_TOKEN=jira-secret\n", encoding="utf-8")
+    store = credentials_module.McpCredentialStore(paths)
+    servers = [{
+        "id": "jira-datacenter",
+        "environment": {"JIRA_HOST": "env:JIRA_HOST", "JIRA_API_TOKEN": "env:JIRA_API_TOKEN"},
+        "required_environment": ["JIRA_HOST", "JIRA_API_TOKEN"],
+    }]
+
+    store.import_file(source, servers)
+
+    shared = store.atlassian_config_path
+    assert shared.read_text(encoding="utf-8") == "JIRA_API_TOKEN=jira-secret\nJIRA_HOST=jira.example.test\n"
+    if os.name == "posix":
+        assert stat.S_IMODE(shared.stat().st_mode) == 0o600
+
+
 def test_import_metadata_names_are_sorted_and_omit_empty_values(tmp_path):
     store = credentials_module.McpCredentialStore(make_paths(tmp_path))
     source = tmp_path / "source.env"

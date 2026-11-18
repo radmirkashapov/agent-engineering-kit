@@ -221,6 +221,11 @@ def parse_credentials(text: str, *, allowed: set[str] | None) -> dict[str, str]:
 
 
 class McpCredentialStore:
+    _ATLASSIAN_VARIABLES = (
+        "JIRA_HOST", "JIRA_API_TOKEN", "JIRA_API_BASE_PATH", "JIRA_DEFAULT_PAGE_SIZE",
+        "CONFLUENCE_HOST", "CONFLUENCE_API_TOKEN", "CONFLUENCE_API_BASE_PATH", "CONFLUENCE_DEFAULT_PAGE_SIZE",
+    )
+
     def __init__(self, paths: KitPaths):
         self.paths = paths
 
@@ -231,6 +236,11 @@ class McpCredentialStore:
     @property
     def metadata_path(self) -> Path:
         return self.paths.state / "mcp-credentials.json"
+
+    @property
+    def atlassian_config_path(self) -> Path:
+        """Приватный shared dotenv для совместимого Atlassian Data Center MCP."""
+        return self.paths.secrets / "atlassian-dc-mcp.env"
 
     def import_file(self, source: Path, servers: Iterable[dict[str, Any]]) -> Path:
         requirements = credential_requirements(servers)
@@ -248,6 +258,7 @@ class McpCredentialStore:
         except OSError:
             raise AgentKitError("Не удалось проверить границы хранилища credentials MCP") from None
         self._write_private(values)
+        self.write_atlassian_config(values)
         self._write_metadata(names=sorted(name for name, value in values.items() if value))
         return self.vault_path
 
@@ -281,7 +292,7 @@ class McpCredentialStore:
         try:
             with ExitStack() as stack:
                 targets = [(stack.enter_context(managed_directory(self.paths.data, path.parent)), path.name)
-                           for path in (self.vault_path, self.metadata_path)]
+                           for path in (self.vault_path, self.atlassian_config_path, self.metadata_path)]
                 # Полный preflight до удаления любого из двух файлов.
                 for directory, name in targets:
                     if directory is not None:
@@ -293,6 +304,25 @@ class McpCredentialStore:
         except OSError:
             raise AgentKitError("Не удалось удалить хранилище credentials MCP") from None
         return existed
+
+    def write_atlassian_config(self, values: dict[str, str] | None = None) -> Path | None:
+        """Синхронизировать private shared config только из credential vault Kit."""
+        selected = {
+            name: value for name, value in (self.load() if values is None else values).items()
+            if name in self._ATLASSIAN_VARIABLES and value
+        }
+        if not selected:
+            return None
+        try:
+            with managed_directory(self.paths.data, self.paths.secrets, create=True, private=True) as directory:
+                self._atomic_write(
+                    self.atlassian_config_path,
+                    "".join(f"{name}={value}\n" for name, value in sorted(selected.items())),
+                    directory,
+                )
+        except (OSError, UnicodeError):
+            raise AgentKitError("Не удалось сохранить shared config Atlassian MCP") from None
+        return self.atlassian_config_path.resolve()
 
     def _write_private(self, values: dict[str, str]) -> None:
         try:
