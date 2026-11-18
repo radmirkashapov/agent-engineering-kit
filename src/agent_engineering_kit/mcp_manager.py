@@ -219,8 +219,10 @@ class McpManager:
                 signals.add("sonar")
             if any(root.rglob("package.json")):
                 signals.add("web")
-        if environment_names & {"JIRA_URL", "ATLASSIAN_SITE_URL", "CONFLUENCE_URL"}:
-            signals.add("atlassian")
+        if {"JIRA_HOST", "JIRA_API_TOKEN"} <= environment_names:
+            signals.add("jira-datacenter")
+        if {"CONFLUENCE_HOST", "CONFLUENCE_API_TOKEN"} <= environment_names:
+            signals.add("twiki-datacenter")
         return signals
 
     def is_enabled(self, item: dict[str, Any], project: LogicalProject | None = None) -> bool:

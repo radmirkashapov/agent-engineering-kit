@@ -72,7 +72,7 @@ State хранит только имена переменных, время им
 
 Список строится из effective MCP definitions: ключей `environment`, ссылок `env:VARIABLE` и `required_environment`. Поэтому корпоративный или локально переопределённый MCP может объявить собственный `JIRA_API_TOKEN`, но импорт не принимает неизвестное имя заранее.
 
-`mcp-creds.example.env` содержит переменные базового каталога. Для официальных Atlassian, GitLab и Context7 используются комментарии про OAuth вместо фиктивного token-поля.
+`mcp-creds.example.env` содержит переменные базового каталога. Jira Data Center и Confluence Data Center используют локальные host/token переменные, а GitLab и Context7 используют OAuth там, где это требуется.
 
 ## Launcher для stdio MCP
 

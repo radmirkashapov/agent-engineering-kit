@@ -180,21 +180,48 @@ servers:
     state: native
     policy: configurable
 
-  # Collaboration integration требует настроенного Atlassian tenant и OAuth.
-  - id: atlassian
-    description: Access Jira and Confluence project context through the official Atlassian integration
+  # Jira Data Center запускается локально и получает credentials только из private vault.
+  - id: jira-datacenter
+    description: Access Jira Data Center issues and project context through a local MCP server
     category: collaboration
     required: false
-    transport: http
-    activation: atlassian
-    # Один Atlassian MCP покрывает Jira и Confluence; URL tenant задаётся локально.
-    endpoint_environment: ATLASSIAN_MCP_URL
+    transport: stdio
+    activation: jira-datacenter
+    command: npx
+    args: [-y, "@atlassian-dc-mcp/jira"]
     source:
-      type: service
-      repository: https://developer.atlassian.com/cloud/rovo-mcp/
+      type: git
+      repository: https://github.com/b1ff/atlassian-dc-mcp.git
     installation:
-      type: remote
-      endpoint: https://mcp.atlassian.com/v2/mcp
-      authentication: oauth
+      type: external-command
+      command: npx
+      package: "@atlassian-dc-mcp/jira"
+    environment:
+      JIRA_HOST: env:JIRA_HOST
+      JIRA_API_TOKEN: env:JIRA_API_TOKEN
+    required_environment: [JIRA_HOST, JIRA_API_TOKEN]
+    state: native
+    policy: configurable
+
+  # Confluence Data Center остаётся отдельным сервером, чтобы ограничивать доступ независимо от Jira.
+  - id: twiki-datacenter
+    description: Access Confluence Data Center pages and knowledge context through a local MCP server
+    category: collaboration
+    required: false
+    transport: stdio
+    activation: twiki-datacenter
+    command: npx
+    args: [-y, "@atlassian-dc-mcp/confluence"]
+    source:
+      type: git
+      repository: https://github.com/b1ff/atlassian-dc-mcp.git
+    installation:
+      type: external-command
+      command: npx
+      package: "@atlassian-dc-mcp/confluence"
+    environment:
+      CONFLUENCE_HOST: env:CONFLUENCE_HOST
+      CONFLUENCE_API_TOKEN: env:CONFLUENCE_API_TOKEN
+    required_environment: [CONFLUENCE_HOST, CONFLUENCE_API_TOKEN]
     state: native
     policy: configurable

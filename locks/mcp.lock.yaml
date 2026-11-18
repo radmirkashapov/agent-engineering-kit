@@ -26,6 +26,9 @@ components:
   - id: playwright
     version: 0.0.47
     revision: f1257a5a67aff872f947fae274759f7d54853862
-  - id: atlassian
-    version: remote-contract-2026-09-02
-    revision: 2362bd84c4e614862aded220bdf003d25d56839e
+  - id: jira-datacenter
+    version: npm-contract-2026-11-18
+    revision: 8d19b65783ace3045f53dfc77a7cb20ebb4bfcfd
+  - id: twiki-datacenter
+    version: npm-contract-2026-11-18
+    revision: 8d19b65783ace3045f53dfc77a7cb20ebb4bfcfd

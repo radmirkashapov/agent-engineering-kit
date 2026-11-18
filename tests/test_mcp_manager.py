@@ -183,7 +183,7 @@ def test_default_profile_exposes_only_servers_with_enforceable_read_boundaries(t
     assert enabled["context7"]
     assert not enabled["codebase-memory"] and not enabled["serena"]
     assert not enabled["github"] and not enabled["gitlab"]
-    assert not enabled["sonarqube"] and not enabled["atlassian"]
+    assert not enabled["sonarqube"] and not enabled["jira-datacenter"] and not enabled["twiki-datacenter"]
 
 
 def test_access_policy_can_disable_required_mcp(tmp_path: Path) -> None:
@@ -259,9 +259,9 @@ def test_corporate_capabilities_default_to_read_only(tmp_path: Path) -> None:
     rows = {row["id"]: row for row in McpManager(repository, paths).available()}
 
     assert rows["context7"]["enabled_capabilities"] == ["documentation.read"]
-    assert rows["atlassian"]["enabled_capabilities"] == []
-    assert rows["atlassian"]["enabled"] is False
-    assert rows["atlassian"]["access_reason"] == "corporate:partial-capability-selection-unenforceable"
+    assert rows["jira-datacenter"]["enabled_capabilities"] == []
+    assert rows["jira-datacenter"]["enabled"] is False
+    assert rows["jira-datacenter"]["access_reason"] == "corporate:partial-capability-selection-unenforceable"
 
 
 def test_corporate_policy_metadata_is_visible_in_list(tmp_path: Path) -> None:
@@ -300,15 +300,15 @@ def test_editor_profile_does_not_claim_partially_selected_server_is_enforced(tmp
     data = tmp_path / "data"
     paths = KitPaths(repository, data, data / "runtime", data / "projects", data / "overrides")
 
-    atlassian = next(
+    jira_datacenter = next(
         row for row in McpManager(repository, paths).available(access_profile="editor")
-        if row["id"] == "atlassian"
+        if row["id"] == "jira-datacenter"
     )
 
-    assert "jira.issue.write" in atlassian["planned_capabilities"]
-    assert atlassian["enabled_capabilities"] == []
-    assert atlassian["enabled"] is False
-    assert atlassian["access_reason"] == "corporate:partial-capability-selection-unenforceable"
+    assert "jira.issue.write" in jira_datacenter["planned_capabilities"]
+    assert jira_datacenter["enabled_capabilities"] == []
+    assert jira_datacenter["enabled"] is False
+    assert jira_datacenter["access_reason"] == "corporate:partial-capability-selection-unenforceable"
 
 
 def test_capability_selection_obeys_profile_without_boolean_enforcement_claim() -> None:

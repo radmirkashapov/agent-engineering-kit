@@ -251,9 +251,10 @@ agent-kit project init --help
 - `gitlab` — включается при обнаружении удалённого репозитория GitLab;
 - `sonarqube` — включается при наличии конфигурации Sonar;
 - `playwright` — включается для веб-проектов;
-- `atlassian` — включается при настроенных Jira или Confluence.
+- `jira-datacenter` — включается при заданных `JIRA_HOST` и `JIRA_API_TOKEN`;
+- `twiki-datacenter` — включается при заданных `CONFLUENCE_HOST` и `CONFLUENCE_API_TOKEN`.
 
-CBM и Serena дополняют друг друга: сначала CBM определяет область влияния, затем Serena уточняет конкретные символы и ссылки. Однако нативная регистрация выполняется только тогда, когда штатный client способен применить весь выбранный capability contract. В профиле `readonly` mixed read/write серверы (`codebase-memory`, `serena`, SCM, Playwright и Atlassian) не регистрируются целиком под видом read-only. `planned_capabilities` показывают план, а `enabled_capabilities` — только реально применённый полный surface. Локальный пользователь может выбрать более свободный профиль через override, принимая соответствующий риск.
+CBM и Serena дополняют друг друга: сначала CBM определяет область влияния, затем Serena уточняет конкретные символы и ссылки. Однако нативная регистрация выполняется только тогда, когда штатный client способен применить весь выбранный capability contract. В профиле `readonly` mixed read/write серверы (`codebase-memory`, `serena`, SCM, Playwright, `jira-datacenter` и `twiki-datacenter`) не регистрируются целиком под видом read-only. `planned_capabilities` показывают план, а `enabled_capabilities` — только реально применённый полный surface. Локальный пользователь может выбрать более свободный профиль через override, принимая соответствующий риск.
 
 Serena сохраняет web dashboard, но Kit запускает сервер с `--open-web-dashboard false`: страница доступна вручную и больше не открывается новой вкладкой при каждом старте MCP.
 
@@ -380,7 +381,7 @@ agent-kit doctor
 
 ```bash
 # Jira URL и обычный ID поддерживаются одинаково.
-agent task create https://company.atlassian.net/browse/TASK-123
+agent task create https://jira.company.example/browse/TASK-123
 agent task create SOME-ID --type fix
 ```
 
@@ -540,7 +541,7 @@ agent-kit security scan
 | OpenCode | Требуется ручная регистрация в конфигурации OpenCode. | Следуйте [инструкции OpenCode](clients/opencode/README.md). |
 | Cline | Требуется ручная регистрация в MCP Servers настройках расширения. | Следуйте [инструкции Cline](clients/cline/README.md). |
 
-Если диагностика показывает `AUTH_REQUIRED`, сначала проверьте `agent-kit mcp creds status`. Для stdio MCP импортируйте недостающие credentials и перезапустите соответствующий клиент. Для remote OAuth завершите авторизацию в конкретном клиенте и профиле, затем повторите запрос. Atlassian, GitLab и Context7 хранят OAuth-состояние отдельно в каждом клиенте или профиле; авторизация в одном не переносится в другой. Исключение — выбранная схема, где все клиенты подключены к одному Docker MCP Gateway: в этом случае OAuth-состоянием владеет Docker Desktop.
+Если диагностика показывает `AUTH_REQUIRED`, сначала проверьте `agent-kit mcp creds status`. Для stdio MCP импортируйте недостающие credentials и перезапустите соответствующий клиент. Для remote OAuth завершите авторизацию в конкретном клиенте и профиле, затем повторите запрос. GitLab и Context7 хранят OAuth-состояние отдельно в каждом клиенте или профиле; авторизация в одном не переносится в другой. Исключение — выбранная схема, где все клиенты подключены к одному Docker MCP Gateway: в этом случае OAuth-состоянием владеет Docker Desktop.
 
 После ротации токена повторите `agent-kit mcp creds import --from ./mcp-creds.env`; новое значение применяется при следующем запуске MCP без `resync`. Изменение определения MCP или команды запуска требует `agent-kit mcp enable <id> --scope global --resync`. `agent-kit mcp creds clear --yes` удаляет только machine-local хранилище credentials Kit; он не удаляет OAuth-состояние клиентов или Docker Desktop. После настройки запускайте `agent-kit security scan`.
 
@@ -714,7 +715,7 @@ agent-kit mcp creds status
 
 Codex получает ключ через локальную `auth.command` в момент запроса. OpenCode использует ссылку `{file:…}` на файл с правами только владельца. Если в существующем provider уже задан `env_key`, `env` или `settings.apiKey`, Kit сохраняет его и не заменяет. Глобальная конфигурация OpenCode находится в `~/.config/opencode/opencode.json`, либо в `~/.config/opencode/opencode.jsonc`, когда существует именно этот файл. Синхронизация обновляет только управляемые provider: `baseURL`, перечень моделей и технические поля provider.
 
-Корпоративные endpoints не коммитятся в реестр: GitLab берётся из `GITLAB_MCP_URL`, а единый Atlassian MCP для Jira и Confluence — из `ATLASSIAN_MCP_URL` в `mcp-creds.env`. Sentry использует `SENTRY_HOST` и `SENTRY_ACCESS_TOKEN`. Корпоративный форк также обязан внести hostname GitLab и Atlassian в `catalog/corporate/mcp.yaml` → `boundaries.allowed_hosts`: это намеренная проверка, не позволяющая локальному env перенаправить корпоративный MCP на произвольный сервер. После импорта выполните `agent-kit mcp enable gitlab --scope global --resync` или аналогичную команду для нужного MCP. OAuth для GitLab и Atlassian всё равно подтверждается в каждом клиенте при первом подключении: URL определяет сервер, но не заменяет пользовательскую OAuth-сессию.
+Корпоративные endpoints и tokens не коммитятся в реестр: GitLab берётся из `GITLAB_MCP_URL`, Jira Data Center — из `JIRA_HOST` и `JIRA_API_TOKEN`, Confluence Data Center — из `CONFLUENCE_HOST` и `CONFLUENCE_API_TOKEN` в `mcp-creds.env`. После импорта выполните `agent-kit mcp enable jira-datacenter --scope global --resync` и при необходимости аналогичную команду для `twiki-datacenter`. MCP запускаются локально через `npx`; каждому пользователю нужен персональный token с минимальными необходимыми правами.
 
 Cline хранит profile и secrets во внутреннем хранилище приложения, поэтому Kit выводит только инструкцию: настройте provider через UI либо `cline auth`. Claude Code использует Anthropic-compatible API, а не произвольный OpenAI-compatible transport; Claude Desktop не имеет поддерживаемого контракта регистрации пользовательских provider. Для этих трёх клиентов `models sync` ничего не меняет. `agent-kit resync` запускает ту же безопасную синхронизацию автоматически.
 

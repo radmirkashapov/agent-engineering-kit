@@ -20,7 +20,7 @@ agent-kit config explain .
 Начните задачу через Jira URL или task ID:
 
 ```bash
-agent task create https://company.atlassian.net/browse/TASK-123
+agent task create https://jira.company.example/browse/TASK-123
 ```
 
 Если Jira недоступна, используйте ID напрямую. Проверьте статус workspace и write set до записи:

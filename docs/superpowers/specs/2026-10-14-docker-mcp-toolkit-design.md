@@ -135,6 +135,6 @@ Docker OAuth credentials разделяются между profiles, поэто�
 5. `gitlab` — нативный remote MCP.
 6. `sonarqube` — нативный.
 7. `playwright` — Docker mapping `playwright`, нативный fallback.
-8. `atlassian` — нативный remote MCP.
+8. `jira-datacenter` и `twiki-datacenter` — нативные stdio MCP для Data Center.
 
 `agent-kit-docker` не считается отдельным базовым MCP: это транспортный gateway для выбранных элементов списка.
