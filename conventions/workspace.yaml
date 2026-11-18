@@ -11,3 +11,10 @@ conventions:
     requirements:
       - Store durable knowledge in Git code, tests, ADRs, and documentation.
       - Keep machine-local project memory outside the repository.
+  # Git trailers фиксируют происхождение автоматизированного изменения без подмены автора.
+  - id: agent-commit-provenance
+    description: Mark commits created by an AI harness with portable Git trailers.
+    requirements:
+      - "Add Agent-Generated: true when an AI agent creates a commit."
+      - "Add Agent-Client with the stable active harness identifier."
+      - Preserve the developer Git author and do not mark manual commits.

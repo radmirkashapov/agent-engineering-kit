@@ -667,6 +667,17 @@ Candidate никогда не становится исполняемым час
 
 Kit намеренно не делает commit, push, merge, не создаёт PR/MR и не копирует project skills в продуктовые репозитории. Изменения самого `project-skills` проходят обычный Git workflow, а `agent-kit resync` только читает удалённую ветку и обновляет проверенное machine-local состояние.
 
+### Происхождение agent-коммитов
+
+Git trailers — переносимый механизм Git для структурированных полей в конце сообщения коммита. Kit использует два собственных trailers только для коммитов, которые создаёт AI-агент через активный harness:
+
+```text
+Agent-Generated: true
+Agent-Client: codex
+```
+
+Значение `Agent-Client` — ID harness (`codex`, `claude-code`, `opencode`, `cline` или `claude-desktop`). Автор и committer в Git не изменяются: ими остаётся пользовательская Git identity разработчика. Для ручных коммитов trailers не добавляются. Это не общеотраслевой стандарт имён полей, но Git trailers являются распространённым стандартным форматом; единые имена полей фиксируются Kit как переносимая внутренняя конвенция.
+
 ## Безопасность
 
 Секреты хранятся только в machine-local credentials или внешнем хранилище секретов; их имена перечислены в `mcp-creds.example.env`. Файл `.env.example` оставлен для совместимости. Набор инструментов безопасности включает SkillEvaluator, SkillSpector, Semgrep, Gitleaks и Bumblebee. В CI используется закреплённая версия Gitleaks.
