@@ -5,6 +5,7 @@ from __future__ import annotations
 import shutil
 import json
 import os
+import re
 from collections import Counter
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -26,6 +27,81 @@ from .result import ValidationResult
 
 
 CLIENTS = ("codex", "claude-code", "claude-desktop", "opencode", "cline")
+
+
+def _opencode_config_path(home: Path) -> Path:
+    """Выбрать единственный глобальный config OpenCode без project-level записи."""
+    json_path = home / ".config" / "opencode" / "opencode.json"
+    jsonc_path = home / ".config" / "opencode" / "opencode.jsonc"
+    return jsonc_path if jsonc_path.is_file() else json_path
+
+
+def _load_opencode_config(path: Path) -> dict:
+    if not path.is_file():
+        return {"$schema": "https://opencode.ai/config.json"}
+    try:
+        raw = path.read_text(encoding="utf-8")
+        # Поддерживаем JSONC, сохраняя семантику пользовательских полей при merge.
+        cleaned = re.sub(r"(?m)^\s*//[^\n]*|/\*[\s\S]*?\*/", "", raw)
+        cleaned = re.sub(r",\s*([}\]])", r"\1", cleaned)
+        document = json.loads(cleaned)
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise AgentKitError(f"Некорректный JSON OpenCode: {path}") from error
+    if not isinstance(document, dict):
+        raise AgentKitError(f"OpenCode config должен быть object: {path}")
+    return document
+
+
+def _sync_opencode_mcp(
+    paths: KitPaths,
+    desired: dict[str, dict],
+    manager,
+    endpoint_values: dict[str, str],
+    *,
+    home: Path | None = None,
+) -> tuple[str, bool, str]:
+    """Слить только managed `agent-kit-*` entries с глобальным OpenCode config."""
+    from .mcp_endpoint import resolved_endpoint
+    from .mcp_launcher import registration_command
+
+    config_path = _opencode_config_path(home or Path.home())
+    document = _load_opencode_config(config_path)
+    mcp = document.setdefault("mcp", {})
+    if not isinstance(mcp, dict):
+        raise AgentKitError(f"OpenCode mcp должен быть object: {config_path}")
+    servers = mcp.setdefault("servers", {})
+    if not isinstance(servers, dict):
+        raise AgentKitError(f"OpenCode mcp.servers должен быть object: {config_path}")
+    previous = json.dumps(servers, ensure_ascii=False, sort_keys=True)
+    expected_names = {str(item.get("registration_name", f"agent-kit-{identifier}")) for identifier, item in desired.items()}
+    for name in list(servers):
+        if isinstance(name, str) and name.startswith("agent-kit-") and name not in expected_names:
+            del servers[name]
+    for identifier, item in desired.items():
+        name = str(item.get("registration_name", f"agent-kit-{identifier}"))
+        installation = item["installation"]
+        if installation["type"] == "remote":
+            entry = {"type": "remote", "url": resolved_endpoint(item, endpoint_values)}
+        else:
+            binary = manager.executable(item)
+            if binary is None:
+                continue
+            command, args = (
+                registration_command(paths, item, binary)
+                if item.get("environment") or item.get("required_environment")
+                else (str(binary), list(item.get("args", [])))
+            )
+            entry = {"type": "local", "command": [command, *args]}
+        # Пользовательские поля чужих MCP не читаются и не меняются; managed
+        # server целиком принадлежит Kit и атомарно приводится к desired state.
+        servers[name] = entry
+    changed = previous != json.dumps(servers, ensure_ascii=False, sort_keys=True) or not config_path.is_file()
+    if changed:
+        try:
+            atomic_write(config_path, json.dumps(document, ensure_ascii=False, indent=2) + "\n")
+        except OSError:
+            return "CONFIG_REQUIRED", False, str(config_path)
+    return "SYNCED", changed, str(config_path)
 
 
 @dataclass(frozen=True)
@@ -516,6 +592,15 @@ def register_native_mcp(
     credential_store = McpCredentialStore(paths)
     credential_status = {row["name"]: row["status"] for row in credential_store.status(desired.values())}
     endpoint_values = {**os.environ, **credential_store.load()}
+    try:
+        opencode_status, opencode_changed, opencode_path = _sync_opencode_mcp(
+            paths, desired, manager, endpoint_values,
+            # Инъецированный runner используется только в тестах и dry интеграциях:
+            # не позволяем им менять настоящий user-level config.
+            home=None if runner is run_command else paths.data / "test-home",
+        )
+    except AgentKitError:
+        opencode_status, opencode_changed, opencode_path = "CONFIG_REQUIRED", False, ""
     target = paths.state / "client-mcp-registrations.json"
     previous_rows: list[dict] = []
     if target.is_file():
@@ -629,7 +714,7 @@ def register_native_mcp(
             added = runner(command, cwd=paths.state)
             status = ready_status if added.ok else "ERROR"
             rows.append({"client": client, "mcp": identifier, "status": status, "changed": added.ok, "desired_verified": added.ok, **readiness, "reason": "OAuth может потребовать интерактивного подтверждения при первом использовании" if status == "AUTH_REQUIRED" else ("" if added.ok else "не удалось зарегистрировать managed MCP")})
-    for client in ("claude-desktop", "opencode", "cline"):
+    for client in ("claude-desktop", "cline"):
         for identifier, item in desired.items():
             rows.append({
                 "client": client,
@@ -638,5 +723,14 @@ def register_native_mcp(
                 "status": "CONFIG_REQUIRED",
                 "contract": f"clients/{client}/README.md",
             })
+    for identifier, item in desired.items():
+        rows.append({
+            "client": "opencode",
+            "mcp": identifier,
+            "required": bool(item.get("required")),
+            "status": opencode_status,
+            "changed": opencode_changed,
+            "path": opencode_path,
+        })
     atomic_write(target, json.dumps({"version": 1, "registrations": rows}, ensure_ascii=False, indent=2) + "\n")
     return target

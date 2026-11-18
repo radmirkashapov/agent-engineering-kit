@@ -14,6 +14,16 @@
 
 ```bash
 # Выполнять из полного Git checkout, а не из скачанного ZIP-архива.
+# Создать private env-файлы до bootstrap. Они уже исключены из Git.
+cp mcp-creds.example.env mcp-creds.env
+cp model-creds.example.env model-creds.env
+
+# Заполнить только нужные значения: URL и token корпоративных MCP,
+# а также ключи provider моделей. Пустые строки допустимы.
+$EDITOR mcp-creds.env
+$EDITOR model-creds.env
+
+# Bootstrap импортирует оба файла в private vault и применяет разрешённые MCP.
 ./bootstrap/install.sh
 
 # Проверить переносимую конфигурацию и подготовить локальное окружение.
@@ -23,6 +33,14 @@ agent-kit doctor
 
 # Открыть встроенную справку.
 agent-kit help
+```
+
+Не добавляйте `mcp-creds.env` и `model-creds.env` в Git, не передавайте их в чат и не помещайте literal secrets в YAML. Если env-файлы создаются после установки, импортируйте их вручную и повторите reconciliation:
+
+```bash
+agent-kit mcp creds import --from ./mcp-creds.env
+agent-kit models creds import --from ./model-creds.env
+agent-kit resync --no-update
 ```
 
 Для подключения продуктового репозитория перейдите в его корень и выполните:
@@ -265,6 +283,23 @@ agent-kit mcp list
 agent-kit mcp status
 agent-kit mcp explain <id>
 ```
+
+### Включение MCP в repository policy
+
+Реестр `mcp/registry.yaml` определяет доступный состав, но не отменяет corporate policy и project signals. Чтобы сервер был включён для всех подходящих проектов, в корпоративном fork измените его `activation` на `always`; чтобы оставить включение по наличию credentials, используйте отдельный идентификатор activation и объявите его в `McpManager._project_signals`. Поле `required: true` делает сервер обязательным для compatible harness, но не обходит policy безопасности.
+
+Каждому новому или изменённому MCP соответствуют три синхронные записи: описание в `mcp/registry.yaml`, закреплённая ревизия в `locks/mcp.lock.yaml` и capability policy в `catalog/corporate/mcp.yaml`. Для remote/self-hosted endpoint добавьте hostname в `boundaries.allowed_hosts`. После commit в control-plane repository разработчик применяет новую desired state обычной командой:
+
+```bash
+agent-kit resync --no-update
+agent-kit mcp explain <id>
+```
+
+Локальные `agent-kit mcp enable` и `disable` — только пользовательские overrides; они не изменяют repository policy и не заменяют corporate restrictions.
+
+### Автоматическая регистрация OpenCode MCP
+
+При `resync` Kit безопасно сливает свои MCP в глобальный `~/.config/opencode/opencode.json` или существующий `opencode.jsonc`. Записи Kit всегда называются `agent-kit-<id>` и находятся в `mcp.servers`. Только они заменяются или удаляются при следующей синхронизации; все остальные серверы и поля пользователя сохраняются. Для stdio MCP Kit регистрирует private launcher, который получает credentials из local vault, поэтому значения token не записываются в OpenCode config. Remote OAuth MCP после регистрации требуют входа в самом OpenCode.
 
 ### Docker MCP Toolkit
 

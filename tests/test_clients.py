@@ -8,7 +8,7 @@ import shutil
 import sys
 import yaml
 
-from agent_engineering_kit.clients import CLIENTS, expose_native_instructions, expose_native_skills, register_native_mcp, sync_clients, validate_clients
+from agent_engineering_kit.clients import CLIENTS, _sync_opencode_mcp, expose_native_instructions, expose_native_skills, register_native_mcp, sync_clients, validate_clients
 from agent_engineering_kit.paths import KitPaths
 from agent_engineering_kit.component_state import Lifecycle, write_state
 from agent_engineering_kit.mcp_credentials import McpCredentialStore
@@ -27,6 +27,33 @@ def write_publication_skill(path: Path, identifier: str, marker: str) -> None:
         "requires:\n  model_capabilities: []\n---\n", encoding="utf-8",
     )
     (path / f"{marker}.txt").write_text(marker, encoding="utf-8")
+
+
+def test_opencode_mcp_merge_preserves_user_servers_and_replaces_only_agent_kit_namespace(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    paths = KitPaths(tmp_path, data, data / "runtime", data / "projects", data / "overrides")
+    home = tmp_path / "home"
+    config = home / ".config/opencode/opencode.jsonc"
+    config.parent.mkdir(parents=True)
+    config.write_text('{\n  // user configuration\n  "mcp": {"servers": {"user-db": {"type": "local", "command": ["db-mcp"]}, "agent-kit-old": {"type": "remote", "url": "https://old.example.test"}}}\n}\n', encoding="utf-8")
+
+    class Manager:
+        @staticmethod
+        def executable(_item):
+            return Path("/usr/bin/npx")
+
+    status, changed, path = _sync_opencode_mcp(
+        paths,
+        {"jira-datacenter": {"id": "jira-datacenter", "installation": {"type": "external-command"}, "command": "npx", "args": ["-y", "@example/jira"], "environment": {"JIRA_HOST": "env:JIRA_HOST"}}},
+        Manager(), {}, home=home,
+    )
+
+    document = json.loads(config.read_text(encoding="utf-8"))
+    servers = document["mcp"]["servers"]
+    assert (status, changed, path) == ("SYNCED", True, str(config))
+    assert servers["user-db"] == {"type": "local", "command": ["db-mcp"]}
+    assert "agent-kit-old" not in servers
+    assert servers["agent-kit-jira-datacenter"]["type"] == "local"
 
 
 @pytest.mark.parametrize("layer", ["built-in", "external-catalog", "local-override", "local-package-override"])

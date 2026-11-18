@@ -434,6 +434,25 @@ def test_mcp_validation_rejects_endpoint_outside_boundary(tmp_path: Path) -> Non
     assert any("allowed_hosts" in diagnostic.message for diagnostic in result.diagnostics)
 
 
+def test_mcp_validation_allows_corporate_host_for_machine_local_endpoint(tmp_path: Path) -> None:
+    from shutil import copytree
+    from agent_engineering_kit.io import load_yaml
+    from conftest import write_yaml
+
+    repository = Path(__file__).resolve().parents[1]
+    copytree(repository / "mcp", tmp_path / "mcp")
+    copytree(repository / "schemas", tmp_path / "schemas")
+    copytree(repository / "catalog" / "corporate", tmp_path / "catalog" / "corporate")
+    (tmp_path / ".env.example").write_text((repository / ".env.example").read_text(encoding="utf-8"), encoding="utf-8")
+    (tmp_path / "mcp-creds.example.env").write_text((repository / "mcp-creds.example.env").read_text(encoding="utf-8"), encoding="utf-8")
+    path = tmp_path / "catalog" / "corporate" / "mcp.yaml"
+    catalog = load_yaml(path)
+    next(entry for entry in catalog["servers"] if entry["id"] == "gitlab")["boundaries"]["allowed_hosts"] = ["gitlab.company.example"]
+    write_yaml(path, catalog)
+
+    assert validate_mcp(tmp_path).ok
+
+
 def test_mcp_validation_rejects_write_on_read_only_server(tmp_path: Path) -> None:
     from shutil import copytree
     from agent_engineering_kit.io import load_yaml

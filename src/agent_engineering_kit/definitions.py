@@ -205,8 +205,12 @@ def validate_mcp(repository: Path) -> ValidationResult:
             identifier = entry.get("id")
             if identifier not in identifiers:
                 result.error("mcp", f"Corporate MCP {identifier}: отсутствует в registry")
-            endpoint = (registry_by_id.get(identifier, {}).get("installation") or {}).get("endpoint")
-            if endpoint and urlsplit(endpoint).hostname not in (entry.get("boundaries") or {}).get("allowed_hosts", []):
+            registry_entry = registry_by_id.get(identifier, {})
+            endpoint = (registry_entry.get("installation") or {}).get("endpoint")
+            # URL с endpoint_environment разрешается только machine-local vault.
+            # Его hostname проверяется при построении effective MCP, а fallback
+            # public endpoint не должен навязываться корпоративному fork.
+            if endpoint and not registry_entry.get("endpoint_environment") and urlsplit(endpoint).hostname not in (entry.get("boundaries") or {}).get("allowed_hosts", []):
                 result.error("mcp", f"Corporate MCP {identifier}: endpoint host отсутствует в allowed_hosts")
             if not set(entry.get("data_classes", [])) <= known_classes:
                 result.error("mcp", f"Corporate MCP {identifier}: неизвестный класс данных")
