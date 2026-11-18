@@ -199,6 +199,11 @@ def test_launcher_passes_datacenter_credentials_only_to_child_process(tmp_path, 
         target: source.removeprefix("env:") for target, source in environment.items()
     }
     assert all(secret not in contract.read_text() for secret in ("jira-token", "confluence-token"))
+    shared_config = Path(child_environment["ATLASSIAN_DC_MCP_CONFIG_FILE"])
+    assert shared_config.is_absolute()
+    assert shared_config.parent == paths.secrets
+    assert "jira-token" not in contract.read_text()
+    assert "confluence-token" not in contract.read_text()
 
 
 def test_launch_keeps_unset_optional_target_and_removes_only_renamed_sources(tmp_path):

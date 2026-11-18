@@ -195,6 +195,12 @@ def launch(
     for target, source in contract.environment.items():
         if resolved[source]:
             child_environment[target] = resolved[source]
+    if contract.mcp_id in {"jira-datacenter", "twiki-datacenter"}:
+        # Community Atlassian MCP умеет читать общий dotenv. Путь создаётся
+        # локально с private permissions; его значение не попадает в client config.
+        shared_config = McpCredentialStore(paths).write_atlassian_config(vault)
+        if shared_config is not None:
+            child_environment["ATLASSIAN_DC_MCP_CONFIG_FILE"] = str(shared_config)
     try:
         exec_process(contract.command, [contract.command, *contract.args], child_environment)
     except (OSError, ValueError):
