@@ -14,6 +14,16 @@
 
 ```bash
 # Выполнять из полного Git checkout, а не из скачанного ZIP-архива.
+# Создать private env-файлы до bootstrap. Они уже исключены из Git.
+cp mcp-creds.example.env mcp-creds.env
+cp model-creds.example.env model-creds.env
+
+# Заполнить только нужные значения: URL и token корпоративных MCP,
+# а также ключи provider моделей. Пустые строки допустимы.
+$EDITOR mcp-creds.env
+$EDITOR model-creds.env
+
+# Bootstrap импортирует оба файла в private vault и применяет разрешённые MCP.
 ./bootstrap/install.sh
 
 # Проверить переносимую конфигурацию и подготовить локальное окружение.
@@ -23,6 +33,14 @@ agent-kit doctor
 
 # Открыть встроенную справку.
 agent-kit help
+```
+
+Не добавляйте `mcp-creds.env` и `model-creds.env` в Git, не передавайте их в чат и не помещайте literal secrets в YAML. Если env-файлы создаются после установки, импортируйте их вручную и повторите reconciliation:
+
+```bash
+agent-kit mcp creds import --from ./mcp-creds.env
+agent-kit models creds import --from ./model-creds.env
+agent-kit resync --no-update
 ```
 
 Для подключения продуктового репозитория перейдите в его корень и выполните:
