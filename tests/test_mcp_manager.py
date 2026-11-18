@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from shutil import copytree
 import pytest
 
 from agent_engineering_kit.mcp_manager import McpManager
@@ -78,6 +79,38 @@ def test_sentry_without_token_is_inactive_and_does_not_fail_doctor(
     assert sentry["enabled"] is False
     assert sentry["status"] == "inactive"
     assert result.ok
+
+
+def test_repository_activation_enables_conditional_mcp_without_project_signal(tmp_path: Path) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    kit = tmp_path / "kit"
+    copytree(repository, kit, ignore=__import__("shutil").ignore_patterns(".git", "uv.lock", ".venv"))
+    data = tmp_path / "data"
+    paths = KitPaths(kit, data, data / "runtime", data / "projects", data / "overrides")
+
+    from agent_engineering_kit.mcp_activation import set_activation
+
+    set_activation(kit, "sentry", enabled=True)
+    state = next(item for item in McpManager(kit, paths).list() if item["id"] == "sentry")
+
+    assert state["enabled"] is True
+    assert state["status"] != "inactive"
+
+
+def test_repository_activation_can_disable_always_active_mcp(tmp_path: Path) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    kit = tmp_path / "kit"
+    copytree(repository, kit, ignore=__import__("shutil").ignore_patterns(".git", "uv.lock", ".venv"))
+    data = tmp_path / "data"
+    paths = KitPaths(kit, data, data / "runtime", data / "projects", data / "overrides")
+
+    from agent_engineering_kit.mcp_activation import set_activation
+
+    set_activation(kit, "context7", enabled=False)
+    state = next(item for item in McpManager(kit, paths).list() if item["id"] == "context7")
+
+    assert state["enabled"] is False
+    assert state["status"] == "inactive"
 
 
 def test_sentry_vault_token_is_an_activation_signal(tmp_path: Path, monkeypatch) -> None:

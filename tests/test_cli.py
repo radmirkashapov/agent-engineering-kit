@@ -653,6 +653,28 @@ def test_reset_without_changes_does_not_run_resync(
     assert calls == []
 
 
+def test_mcp_repository_scope_updates_committed_activation_policy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from shutil import copytree, ignore_patterns
+
+    repository = tmp_path / "kit"
+    copytree(REPOSITORY, repository, ignore=ignore_patterns(".git", "uv.lock", ".venv"))
+    monkeypatch.setenv("AGENT_KIT_REPOSITORY", str(repository))
+    monkeypatch.setenv("AGENT_KIT_DATA_HOME", str(tmp_path / "data"))
+    monkeypatch.chdir(tmp_path)
+
+    assert run(["mcp", "enable", "sentry", "--scope", "repository"]) == 0
+    assert load_yaml(repository / "mcp/activation.yaml")["enabled"] == ["sentry"]
+    assert run(["mcp", "disable", "sentry", "--scope", "repository"]) == 0
+    assert load_yaml(repository / "mcp/activation.yaml")["disabled"] == ["sentry"]
+    assert run(["mcp", "reset", "sentry", "--scope", "repository"]) == 0
+    assert load_yaml(repository / "mcp/activation.yaml") == {
+        "version": 1, "enabled": [], "disabled": [],
+    }
+
+
 def test_generic_override_requires_reason_and_explicit_scope() -> None:
     with pytest.raises(SystemExit):
         _parser().parse_args([

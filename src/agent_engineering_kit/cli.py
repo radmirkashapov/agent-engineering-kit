@@ -143,7 +143,7 @@ def _parser() -> argparse.ArgumentParser:
     ):
         command = mcp.add_parser(name, help=help_text)
         command.add_argument("id", help="ID MCP")
-        command.add_argument("--scope", choices=["global", "project"], required=True, help="Область изменения")
+        command.add_argument("--scope", choices=["global", "project", "repository"], required=True, help="Область изменения")
         command.add_argument("--resync", action="store_true", help="Выполнить resync после успешного изменения")
     mcp_override = mcp.add_parser("override", help="Установить локальную конфигурацию MCP")
     mcp_override.add_argument("id", help="ID MCP")
@@ -517,27 +517,35 @@ def _mutate_resource(
     paths: KitPaths,
     project: LogicalProject | None,
 ) -> int:
-    """Выполнить проверенную мутацию через сервис локальных переопределений."""
+    """Выполнить проверенную мутацию через локальные или repository настройки."""
     label = "Skill" if kind == "skills" else "MCP"
     available = _available_resources(kind, repository, paths, project)
     if not any(row["id"] == args.id for row in available):
         raise AgentKitError(f"{label} не найден: {args.id}")
 
-    scope = resolve_scope(paths, args.scope, Path.cwd())
     command = getattr(args, f"{kind}_command")
-    if command == "enable":
-        changed = [set_component_access(scope, kind, args.id, enabled=True)]
-    elif command == "disable":
-        changed = [set_component_access(scope, kind, args.id, enabled=False)]
-    elif command == "override":
-        source = Path(args.source)
-        changed = [
-            install_skill_override(scope, args.id, source)
-            if kind == "skills"
-            else install_mcp_override(scope, args.id, source)
-        ]
+    if kind == "mcp" and args.scope == "repository":
+        from .mcp_activation import set_activation
+
+        if command == "override":
+            raise AgentKitError("MCP override поддерживается только в local scope global или project")
+        desired = True if command == "enable" else False if command == "disable" else None
+        changed = [set_activation(repository, args.id, enabled=desired)]
     else:
-        changed = reset_component_override(scope, kind, args.id, paths.overrides / "backups")
+        scope = resolve_scope(paths, args.scope, Path.cwd())
+        if command == "enable":
+            changed = [set_component_access(scope, kind, args.id, enabled=True)]
+        elif command == "disable":
+            changed = [set_component_access(scope, kind, args.id, enabled=False)]
+        elif command == "override":
+            source = Path(args.source)
+            changed = [
+                install_skill_override(scope, args.id, source)
+                if kind == "skills"
+                else install_mcp_override(scope, args.id, source)
+            ]
+        else:
+            changed = reset_component_override(scope, kind, args.id, paths.overrides / "backups")
 
     if changed:
         for path in changed:

@@ -286,7 +286,20 @@ agent-kit mcp explain <id>
 
 ### Включение MCP в repository policy
 
-Реестр `mcp/registry.yaml` определяет доступный состав, но не отменяет corporate policy и project signals. Чтобы сервер был включён для всех подходящих проектов, в корпоративном fork измените его `activation` на `always`; чтобы оставить включение по наличию credentials, используйте отдельный идентификатор activation и объявите его в `McpManager._project_signals`. Поле `required: true` делает сервер обязательным для compatible harness, но не обходит policy безопасности.
+Реестр `mcp/registry.yaml` определяет доступный состав, но не отменяет corporate policy и project signals. Для корпоративного или продуктового fork явное решение об активации хранится в `mcp/activation.yaml`: это версионируемый файл, который работает для всех пользователей checkout. Поле `required: true` делает сервер обязательным для compatible harness, но не обходит policy безопасности.
+
+```bash
+# Добавляет gitlab в repository policy и запускает resync; затем закоммитьте mcp/activation.yaml обычным Git workflow.
+agent-kit mcp enable gitlab --scope repository --resync
+
+# Явно запрещает MCP на уровне Kit repository.
+agent-kit mcp disable gitlab --scope repository
+
+# Удаляет только repository решение и возвращает activation к registry/project signals.
+agent-kit mcp reset gitlab --scope repository
+```
+
+`mcp/activation.yaml` лишь заменяет условие project signal. Он не обходит выбранный `mcp.access_profile`, `allowed_hosts`, capability budget, обязательные credentials или пользовательский локальный blocklist. Например, Jira Data Center с read/write/admin surface требует profile `administrator`; включение только в `activation.yaml` не выдаёт ему write/admin права.
 
 Каждому новому или изменённому MCP соответствуют три синхронные записи: описание в `mcp/registry.yaml`, закреплённая ревизия в `locks/mcp.lock.yaml` и capability policy в `catalog/corporate/mcp.yaml`. Для remote/self-hosted endpoint добавьте hostname в `boundaries.allowed_hosts`. После commit в control-plane repository разработчик применяет новую desired state обычной командой:
 
@@ -295,7 +308,7 @@ agent-kit resync --no-update
 agent-kit mcp explain <id>
 ```
 
-Локальные `agent-kit mcp enable` и `disable` — только пользовательские overrides; они не изменяют repository policy и не заменяют corporate restrictions.
+Локальные `agent-kit mcp enable` и `disable` с `--scope global` или `--scope project` — только пользовательские overrides; они не изменяют repository policy и не заменяют corporate restrictions.
 
 ### Автоматическая регистрация OpenCode MCP
 
