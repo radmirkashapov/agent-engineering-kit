@@ -24,6 +24,8 @@ $EDITOR mcp-creds.env
 $EDITOR model-creds.env
 
 # Bootstrap импортирует оба файла в private vault и применяет разрешённые MCP.
+# Docker Desktop/Engine нужен для GitHub, SonarQube и выбранного Docker MCP Toolkit.
+# Перед их включением запустите Docker и проверьте `docker version`.
 ./bootstrap/install.sh
 
 # Проверить переносимую конфигурацию и подготовить локальное окружение.

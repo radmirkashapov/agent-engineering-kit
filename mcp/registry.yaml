@@ -157,7 +157,7 @@ servers:
     activation: sonar
     command: docker
     # Self-hosted SonarQube требует URL и user token; оба значения остаются в private vault.
-    args: [run, -i, --rm, -e, SONARQUBE_TOKEN, -e, SONARQUBE_URL, "sonarsource/sonarqube-mcp@sha256:25e9eabc440515651ae62e0dc8382ca2c41d243c2aca68759ddd721825d408bd"]
+    args: [run, --init, -i, --rm, -e, SONARQUBE_TOKEN, -e, SONARQUBE_URL, "sonarsource/sonarqube-mcp@sha256:25e9eabc440515651ae62e0dc8382ca2c41d243c2aca68759ddd721825d408bd"]
     source:
       type: git
       repository: https://github.com/SonarSource/sonarqube-mcp-server.git
