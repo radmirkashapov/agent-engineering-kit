@@ -260,7 +260,7 @@ agent-kit project init --help
 
 - `codebase-memory` — граф кода, архитектура, связи вызовов и анализ влияния;
 - `serena` — поиск символов и ссылок, семантическое редактирование и рефакторинг;
-- `context7` — актуальная документация библиотек, фреймворков и API;
+- `context7` — актуальная документация библиотек, фреймворков и API; API key передаётся только в локальный stdio bridge;
 - `sentry` — опциональное read-only чтение ошибок, issues, traces, проектов и release health; выключено по умолчанию, SaaS используется после включения, self-hosted задаётся через `SENTRY_HOST`.
 
 Условные интеграции:
@@ -784,7 +784,7 @@ agent-kit mcp creds status
 
 Codex получает ключ через локальную `auth.command` в момент запроса. OpenCode использует ссылку `{file:…}` на файл с правами только владельца. Если в существующем provider уже задан `env_key`, `env` или `settings.apiKey`, Kit сохраняет его и не заменяет. Глобальная конфигурация OpenCode находится в `~/.config/opencode/opencode.json`, либо в `~/.config/opencode/opencode.jsonc`, когда существует именно этот файл. Синхронизация обновляет только управляемые provider: `baseURL`, перечень моделей и технические поля provider.
 
-Корпоративные endpoints и tokens не коммитятся в реестр: GitLab берётся из `GITLAB_MCP_URL`, Jira Data Center — из `JIRA_HOST` и `JIRA_API_TOKEN`, Confluence Data Center — из `CONFLUENCE_HOST` и `CONFLUENCE_API_TOKEN` в `mcp-creds.env`. После импорта выполните `agent-kit mcp enable jira-datacenter --scope global --resync` и при необходимости аналогичную команду для `twiki-datacenter`. MCP запускаются локально через `npx`; каждому пользователю нужен персональный token с минимальными необходимыми правами.
+Корпоративные endpoints и tokens не коммитятся в реестр: GitLab берётся из `GITLAB_MCP_URL`, Jira Data Center — из `JIRA_HOST` и `JIRA_API_TOKEN`, Confluence Data Center — из `CONFLUENCE_HOST` и `CONFLUENCE_API_TOKEN` в `mcp-creds.env`. Context7 запускается локально через `npx`; необязательный `CONTEXT7_API_KEY` повышает лимиты, передаётся launcher только дочернему процессу и не записывается в client config. После импорта выполните `agent-kit mcp enable jira-datacenter --scope global --resync` и при необходимости аналогичную команду для `twiki-datacenter`. Каждому пользователю нужен персональный token с минимальными необходимыми правами.
 
 Self-hosted SonarQube требует оба значения: `SONARQUBE_URL` (полный HTTPS URL сервера) и `SONARQUBE_TOKEN` (персональный user token). Kit передаёт их в изолированный Docker-контейнер только при запуске `sonarqube` MCP.
 

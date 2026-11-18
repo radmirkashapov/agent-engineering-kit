@@ -38,7 +38,8 @@ servers:
     owner: engineering-platform
     trust: trusted
     data_classes: [public]
-    auth: {method: oauth}
+    # Local bridge берёт необязательный персональный key из machine-local vault.
+    auth: {method: environment, reference: env:CONTEXT7_API_KEY}
     boundaries:
       allowed_hosts: [mcp.context7.com]
       read_only: true
