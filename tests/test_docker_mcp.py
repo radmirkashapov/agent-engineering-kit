@@ -41,6 +41,7 @@ def test_effective_config_merges_global_and_project_overrides(tmp_path: Path) ->
     assert config["profile"] == "team-profile"
     assert config["mappings"]["github"] == "catalog://custom-github"
     assert config["mappings"]["playwright"] == "catalog://playwright"
+    assert config["mappings"]["sonarqube"] == "catalog://sonarqube"
 
 
 def test_mapping_uri_with_credentials_is_rejected(tmp_path: Path) -> None:

@@ -24,8 +24,8 @@ $EDITOR mcp-creds.env
 $EDITOR model-creds.env
 
 # Bootstrap импортирует оба файла в private vault и применяет разрешённые MCP.
-# Docker Desktop/Engine нужен для GitHub, SonarQube и выбранного Docker MCP Toolkit.
-# Перед их включением запустите Docker и проверьте `docker version`.
+# Docker Desktop/Engine актуальной версии с включённым MCP Toolkit нужен для GitHub,
+# SonarQube и выбранного Docker MCP Toolkit. Проверьте `docker version` и `docker mcp --help`.
 ./bootstrap/install.sh
 
 # Проверить переносимую конфигурацию и подготовить локальное окружение.
@@ -330,7 +330,7 @@ agent-kit mcp explain <id>
 
 ### Docker MCP Toolkit
 
-Docker MCP Toolkit поддерживается как опциональный способ запуска `github` и `playwright`. По умолчанию он отключён, поэтому все серверы используют прежнюю нативную регистрацию. После включения Kit управляет только выделенным профилем `agent-engineering-kit` и гарантирует для каждого MCP единственный маршрут: native либо Docker gateway.
+Docker MCP Toolkit поддерживается как опциональный способ запуска `github`, `playwright` и `sonarqube`. Нужна актуальная версия Docker Desktop или Docker Engine с включённой командой `docker mcp`; проверьте её через `docker mcp --help`. По умолчанию Toolkit отключён, поэтому все серверы используют прежнюю нативную регистрацию. После включения Kit управляет только выделенным профилем `agent-engineering-kit` и гарантирует для каждого MCP единственный маршрут: native либо Docker gateway.
 
 ```bash
 agent-kit mcp docker status

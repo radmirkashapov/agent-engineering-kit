@@ -15,3 +15,5 @@ mappings:
   # Используются только server IDs, подтверждённые официальной документацией Docker.
   github: catalog://github-official
   playwright: catalog://playwright
+  # SonarQube запускается через Docker MCP Catalog вместо локального container command.
+  sonarqube: catalog://sonarqube
