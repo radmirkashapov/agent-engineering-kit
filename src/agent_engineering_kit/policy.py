@@ -176,6 +176,25 @@ def effective_policy(repository: Path, paths: KitPaths, project: LogicalProject 
             "source": "corporate:models/corporate.yaml",
             "entries": [{"key": "models.allowed", "value": allowed, "classification": "restriction"}],
         })
+    profile_path = repository / "catalog" / "corporate" / "mcp-profile.yaml"
+    profile_document = load_yaml(profile_path)
+    profile_validation = validate_instance(
+        profile_document, repository / "schemas" / "mcp-profile.schema.json", str(profile_path),
+    )
+    if not profile_validation.ok:
+        errors = "; ".join(item.message for item in profile_validation.diagnostics)
+        raise AgentKitError(f"Некорректный corporate MCP profile: {errors}")
+    profile_catalog = load_yaml(repository / "catalog" / "corporate" / "access-profiles.yaml")
+    known_profiles = {entry.get("id") for entry in profile_catalog.get("profiles", [])}
+    selected_profile = profile_document["access_profile"]
+    if selected_profile not in known_profiles:
+        raise AgentKitError(
+            f"Corporate MCP profile {selected_profile!r} отсутствует в catalog/corporate/access-profiles.yaml"
+        )
+    layers.append({
+        "source": "corporate:catalog/corporate/mcp-profile.yaml",
+        "entries": [{"key": "mcp.access_profile", "value": selected_profile, "classification": "restriction"}],
+    })
     if project and isinstance(project.manifest.get("harness"), dict):
         preferred = project.manifest["harness"].get("preferred_client")
         if preferred:
