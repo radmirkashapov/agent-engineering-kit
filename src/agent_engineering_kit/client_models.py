@@ -210,8 +210,8 @@ def _opencode_document(providers: Iterable[dict[str, Any]], models: dict[str, li
 
 
 def _sync_opencode(providers: Iterable[dict[str, Any]], models: dict[str, list[dict[str, Any]]], paths: KitPaths, home: Path) -> dict[str, Any]:
-    json_path = home / ".opencode" / "opencode.json"
-    jsonc_path = home / ".opencode" / "opencode.jsonc"
+    json_path = home / ".config" / "opencode" / "opencode.json"
+    jsonc_path = home / ".config" / "opencode" / "opencode.jsonc"
     config_path = jsonc_path if jsonc_path.is_file() else json_path
     state = _load_state(paths)
     if config_path.exists():

@@ -143,7 +143,7 @@ def test_sync_does_not_open_or_change_existing_opencode_credentials(tmp_path: Pa
     declare_compatible_provider(repository)
     paths = make_paths(tmp_path, repository)
     home = tmp_path / "home"
-    config_path = home / ".opencode/opencode.json"
+    config_path = home / ".config/opencode/opencode.json"
     config_path.parent.mkdir(parents=True)
     config_path.write_text(json.dumps({"providers": {"company-ai": {
         "_agent_kit_managed": True,
@@ -168,7 +168,7 @@ def test_second_opencode_sync_leaves_agent_created_config_untouched(tmp_path: Pa
     home = tmp_path / "home"
 
     sync_client_models(repository, paths, home=home, clients=("opencode",))
-    config_path = home / ".opencode/opencode.json"
+    config_path = home / ".config/opencode/opencode.json"
     original = config_path.read_text(encoding="utf-8")
     second = sync_client_models(repository, paths, home=home, clients=("opencode",))
 
@@ -181,7 +181,7 @@ def test_sync_leaves_opencode_jsonc_untouched(tmp_path: Path, real_repository: P
     declare_compatible_provider(repository)
     paths = make_paths(tmp_path, repository)
     home = tmp_path / "home"
-    config_path = home / ".opencode/opencode.jsonc"
+    config_path = home / ".config/opencode/opencode.jsonc"
     config_path.parent.mkdir(parents=True)
     original = '{\n  // user-owned configuration\n  "providers": {}\n}\n'
     config_path.write_text(original, encoding="utf-8")
@@ -191,7 +191,7 @@ def test_sync_leaves_opencode_jsonc_untouched(tmp_path: Path, real_repository: P
     assert report["opencode"]["status"] == "SYNCED"
     document = json.loads(config_path.read_text(encoding="utf-8"))
     assert document["providers"]["company-ai"]["settings"]["baseURL"] == "https://ai.example.test/v1"
-    assert not (home / ".opencode/opencode.json").exists()
+    assert not (home / ".config/opencode/opencode.json").exists()
 
 
 def test_sync_rejects_invalid_local_model_catalog_before_client_write(tmp_path: Path, real_repository: Path) -> None:

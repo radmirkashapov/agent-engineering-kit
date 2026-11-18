@@ -13,6 +13,7 @@ from .bindings import attach_project, bind_repository, load_attached_project, pr
 from .bindings import repository_paths
 from .agent_kit_state import read_status, reset as reset_agent_kit_status, set_enabled
 from .client_models import CLIENT_MODEL_CAPABILITIES, client_model_status, list_client_models, sync_client_models
+from .model_credentials import ModelCredentialStore
 from .conventions import load_conventions
 from .doctor import doctor
 from .docker_mcp import DockerMcpToolkit
@@ -92,6 +93,10 @@ def _parser() -> argparse.ArgumentParser:
     )
     models.add_parser("list", help="Показать effective каталог provider и моделей")
     models.add_parser("status", help="Показать режимы и состояние client model adapters")
+    model_creds = models.add_parser("creds", help="Управлять локальными credentials provider моделей").add_subparsers(dest="model_creds_command", required=True)
+    model_creds_import = model_creds.add_parser("import", help="Импортировать model credentials из env-файла")
+    model_creds_import.add_argument("--from", dest="source", required=True, type=Path)
+    model_creds.add_parser("status", help="Показать статус model credentials без значений")
     models_sync = models.add_parser("sync", help="Синхронизировать модели без записи credentials")
     models_sync.add_argument("--client", action="append", choices=sorted(CLIENT_MODEL_CAPABILITIES),
                              help="Ограничить синхронизацию указанным клиентом; можно повторять")
@@ -640,6 +645,13 @@ def run(argv: list[str] | None = None) -> int:
                     "client": args.client,
                     **CLIENT_MODEL_CAPABILITIES[args.client],
                 }, ensure_ascii=False, indent=2))
+            elif args.models_command == "creds":
+                store = ModelCredentialStore(paths)
+                providers = list_client_models(repository, paths)
+                if args.model_creds_command == "import":
+                    print(store.import_file(args.source, providers))
+                else:
+                    print(json.dumps(store.status(providers), ensure_ascii=False, indent=2))
             else:
                 print(json.dumps(
                     sync_client_models(repository, paths, clients=args.client),

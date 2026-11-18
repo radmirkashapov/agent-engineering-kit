@@ -21,6 +21,9 @@ projects/
 mcp-creds.env
 mcp-creds.*.env
 !mcp-creds.example.env
+model-creds.env
+model-creds.*.env
+!model-creds.example.env
 secrets/
 *.token
 *.secret
