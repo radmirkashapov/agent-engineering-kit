@@ -122,19 +122,35 @@ servers:
       - {id: browser.inspect, mode: read, tool_cost: 2, data_classes: [internal, confidential]}
       - {id: browser.execute, mode: write, tool_cost: 2, data_classes: [internal, confidential]}
 
-  # Jira и Confluence содержат корпоративный контекст; admin остаётся отдельной возможностью.
-  - id: atlassian
+  # Jira Data Center содержит рабочий контекст; read-only профиль не даёт серверу write surface.
+  - id: jira-datacenter
     owner: collaboration-platform
     trust: trusted
     data_classes: [internal, confidential]
-    auth: {method: oauth}
+    auth: {method: environment, reference: env:JIRA_API_TOKEN}
     boundaries:
-      allowed_hosts: [mcp.atlassian.com]
+      # Hostname из JIRA_HOST проверяется корпоративным fork перед включением.
+      allowed_hosts: []
       read_only: false
       model_endpoint: approved-only
     audit: {decisions: true, arguments: redacted, results: metadata-only}
     capabilities:
       - {id: jira.issue.read, mode: read, tool_cost: 2, data_classes: [internal]}
-      - {id: confluence.page.read, mode: read, tool_cost: 2, data_classes: [internal, confidential]}
       - {id: jira.issue.write, mode: write, tool_cost: 1, data_classes: [internal]}
       - {id: jira.project.admin, mode: admin, tool_cost: 1, data_classes: [internal]}
+
+  # Confluence Data Center отделён от Jira: это позволяет выдать только knowledge-read доступ.
+  - id: twiki-datacenter
+    owner: collaboration-platform
+    trust: trusted
+    data_classes: [internal, confidential]
+    auth: {method: environment, reference: env:CONFLUENCE_API_TOKEN}
+    boundaries:
+      # Hostname из CONFLUENCE_HOST проверяется корпоративным fork перед включением.
+      allowed_hosts: []
+      read_only: false
+      model_endpoint: approved-only
+    audit: {decisions: true, arguments: redacted, results: metadata-only}
+    capabilities:
+      - {id: confluence.page.read, mode: read, tool_cost: 2, data_classes: [internal, confidential]}
+      - {id: confluence.page.write, mode: write, tool_cost: 1, data_classes: [internal, confidential]}

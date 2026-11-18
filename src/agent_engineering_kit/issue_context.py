@@ -51,11 +51,9 @@ def resolve_issue(
         return IssueContext(task_id, None, None, False)
     if not jira:
         return IssueContext(task_id, None, None, False)
-    arguments: dict[str, Any] = {"issueIdOrKey": task_id}
-    if jira.get("cloud_id"):
-        arguments["cloudId"] = jira["cloud_id"]
+    arguments: dict[str, Any] = {"issueKey": task_id}
     try:
-        response = client.call("atlassian", "getJiraIssue", arguments)
+        response = client.call("jira-datacenter", "jira_getIssue", arguments)
     except Exception:
         return IssueContext(task_id, None, None, False)
     issue = response.get("issue", response)

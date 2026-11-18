@@ -677,7 +677,7 @@ SENTRY_ACCESS_TOKEN=
 SENTRY_HOST=
 SONARQUBE_TOKEN=
 
-# Atlassian, GitLab и Context7 используют OAuth отдельно в каждом AI-клиенте.
+# GitLab и Context7 используют OAuth отдельно в каждом AI-клиенте.
 ```
 
 Добавить `mcp-creds.env` и `mcp-creds.*.env` в `.gitignore`; сохранить исключение `!mcp-creds.example.env`. Оставить `.env.example` для совместимости и добавить в него русскую ссылку на специализированный шаблон. Изменить `validate_mcp`, чтобы каждая запись `env:NAME` и `required_environment` присутствовала в `mcp-creds.example.env`.

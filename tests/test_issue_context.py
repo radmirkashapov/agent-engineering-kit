@@ -5,9 +5,9 @@ from agent_engineering_kit.issue_context import IssueContext, resolve_issue
 
 class FakeMcpClient:
     def call(self, server_id: str, tool: str, arguments: dict) -> dict:
-        assert server_id == "atlassian"
-        assert tool == "getJiraIssue"
-        assert arguments["issueIdOrKey"] == "TASK-123"
+        assert server_id == "jira-datacenter"
+        assert tool == "jira_getIssue"
+        assert arguments["issueKey"] == "TASK-123"
         return {
             "key": "TASK-123",
             "fields": {
@@ -24,8 +24,8 @@ class FailingMcpClient:
 
 def test_jira_url_is_enriched_through_read_tool() -> None:
     issue = resolve_issue(
-        "https://company.atlassian.net/browse/TASK-123",
-        jira={"cloud_id": "cloud-1"},
+        "https://jira.company.example/browse/TASK-123",
+        jira={"project_key": "TASK"},
         client=FakeMcpClient(),
     )
 
