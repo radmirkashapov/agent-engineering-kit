@@ -579,7 +579,7 @@ def test_cli_mcp_override_and_reset(
     assert list((isolated_data / "overrides" / "backups").glob("*/mcp/context7.yaml"))
     reset_output = capsys.readouterr().out
     assert str(isolated_data / "overrides" / "backups") in reset_output
-    assert '"transport": "http"' in reset_output
+    assert '"transport": "stdio"' in reset_output
 
 
 @pytest.mark.parametrize("resource", ["skills", "mcp"])

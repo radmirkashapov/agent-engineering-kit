@@ -179,6 +179,28 @@ def test_launch_resolves_required_only_and_same_name_sources(tmp_path):
     assert calls[0][2] == {"SOURCE": "vault-value", "OTHER": "required-only"}
 
 
+@pytest.mark.parametrize("identifier,environment,credentials", [
+    ("jira-datacenter", {"JIRA_HOST": "env:JIRA_HOST", "JIRA_API_TOKEN": "env:JIRA_API_TOKEN"}, "JIRA_HOST=https://jira.example.test\nJIRA_API_TOKEN=jira-token\n"),
+    ("twiki-datacenter", {"CONFLUENCE_HOST": "env:CONFLUENCE_HOST", "CONFLUENCE_API_TOKEN": "env:CONFLUENCE_API_TOKEN"}, "CONFLUENCE_HOST=https://wiki.example.test\nCONFLUENCE_API_TOKEN=confluence-token\n"),
+])
+def test_launcher_passes_datacenter_credentials_only_to_child_process(tmp_path, identifier, environment, credentials):
+    paths, contract = prepared_contract(
+        tmp_path, id=identifier, environment=environment, required_environment=list(environment),
+    )
+    write_private_vault(paths, credentials)
+    calls = []
+
+    launcher.launch(contract, paths=paths, environ={"KEEP": "yes"}, exec_process=lambda *args: calls.append(args))
+
+    child_environment = calls[0][2]
+    assert child_environment["KEEP"] == "yes"
+    assert all(child_environment[name] for name in environment)
+    assert json.loads(contract.read_text())["environment"] == {
+        target: source.removeprefix("env:") for target, source in environment.items()
+    }
+    assert all(secret not in contract.read_text() for secret in ("jira-token", "confluence-token"))
+
+
 def test_launch_keeps_unset_optional_target_and_removes_only_renamed_sources(tmp_path):
     paths, contract = prepared_contract(tmp_path, required_environment=[])
     calls = []

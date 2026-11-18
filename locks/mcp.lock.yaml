@@ -9,8 +9,8 @@ components:
     version: 1.7.0
     revision: 949a27ef1e5fda1a6e7b561e777bcece345c6ffd
   - id: context7
-    version: remote-4.1.1
-    revision: 12db78ea043954de047277960fda7e1d28f1d420
+    version: 4.6.0
+    revision: 6e68ffcbad0e23cf4fa8c11795ce9e551aeef19b
   - id: sentry
     version: 0.42.0
     revision: 54f66d8d77bdee0d036d4754806d782b58217ef7

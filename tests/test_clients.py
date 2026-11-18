@@ -193,7 +193,7 @@ def test_sync_generates_thin_runtime_adapters(tmp_path: Path) -> None:
     assert str(tmp_path) not in "\n".join(path.read_text(encoding="utf-8") for path in repository.glob("clients/*/adapter.yaml"))
 
 
-def test_core_mcp_registration_is_namespaced_and_oauth_safe(tmp_path: Path, monkeypatch) -> None:
+def test_core_mcp_registration_is_namespaced_and_context7_key_safe(tmp_path: Path, monkeypatch) -> None:
     repository = Path(__file__).resolve().parents[1]
     data = tmp_path / "data"
     paths = KitPaths(repository, data, data / "runtime", data / "projects", data / "overrides")
@@ -201,7 +201,7 @@ def test_core_mcp_registration_is_namespaced_and_oauth_safe(tmp_path: Path, monk
         binary = paths.installations / "mcp" / identifier / "bin" / command
         binary.parent.mkdir(parents=True)
         binary.write_text("fixture", encoding="utf-8")
-    monkeypatch.setattr("agent_engineering_kit.clients.shutil.which", lambda name: f"/usr/bin/{name}" if name in {"codex", "claude"} else None)
+    monkeypatch.setattr("agent_engineering_kit.clients.shutil.which", lambda name: f"/usr/bin/{name}" if name in {"codex", "claude", "npx"} else None)
     calls: list[list[str]] = []
 
     def runner(args, **kwargs):
@@ -212,9 +212,10 @@ def test_core_mcp_registration_is_namespaced_and_oauth_safe(tmp_path: Path, monk
     additions = [args for args in calls if "add" in args]
     assert len(additions) == 2
     assert all(any(value.startswith("agent-kit-") for value in args) for args in additions)
-    assert sum("https://mcp.context7.com/mcp/oauth" in args for args in additions) == 2
+    assert sum("agent-kit-context7" in args for args in additions) == 2
+    assert all("CONTEXT7_API_KEY" not in " ".join(args) for args in additions)
     registrations = json.loads(state_path.read_text(encoding="utf-8"))["registrations"]
-    assert sum(item.get("mcp") == "context7" and item["status"] == "AUTH_REQUIRED" for item in registrations) == 2
+    assert sum(item.get("mcp") == "context7" and item["status"] == "ACTIVE" for item in registrations) == 2
 
 
 @pytest.mark.parametrize("credential_source", ["missing", "vault", "shell"])
@@ -321,7 +322,9 @@ def test_stale_launcher_cleanup_is_limited_to_managed_directory(tmp_path: Path, 
 
     register_native_mcp(repository, paths)
 
-    assert all(not path.exists() for path in stale)
+    assert not stale[0].exists()
+    assert stale[1].exists()
+    assert not stale[2].exists()
     assert not (launcher_root / "external.json").is_symlink()
     assert outside.read_text(encoding="utf-8") == "preserve"
     assert notes.read_text(encoding="utf-8") == "preserve"
@@ -504,7 +507,7 @@ def test_write_capable_scm_server_is_not_registered_under_readonly_profile(
         root / ".ai-team/project.yaml",
         {"id": "project", "repositories": [{"id": "root", "path": "."}]},
     )
-    monkeypatch.setattr("agent_engineering_kit.clients.shutil.which", lambda name: f"/usr/bin/{name}" if name in {"codex", "claude"} else None)
+    monkeypatch.setattr("agent_engineering_kit.clients.shutil.which", lambda name: f"/usr/bin/{name}" if name in {"codex", "claude", "npx"} else None)
     calls: list[list[str]] = []
 
     def runner(args, **kwargs):
@@ -529,7 +532,7 @@ def test_blocked_mcp_is_removed_from_previously_registered_native_clients(tmp_pa
     repository = Path(__file__).resolve().parents[1]
     data = tmp_path / "data"
     paths = KitPaths(repository, data, data / "runtime", data / "projects", data / "overrides")
-    monkeypatch.setattr("agent_engineering_kit.clients.shutil.which", lambda name: f"/usr/bin/{name}" if name in {"codex", "claude"} else None)
+    monkeypatch.setattr("agent_engineering_kit.clients.shutil.which", lambda name: f"/usr/bin/{name}" if name in {"codex", "claude", "npx"} else None)
     client_state = {
         "codex": {"user-owned"},
         "claude-code": {"user-owned"},
@@ -548,7 +551,7 @@ def test_blocked_mcp_is_removed_from_previously_registered_native_clients(tmp_pa
             )
             return CommandResult(tuple(args), 0, output, "")
         if args[2] == "add":
-            name = args[3] if client == "codex" else args[-2]
+            name = args[3] if client == "codex" else args[args.index("--scope") + 2]
             client_state[client].add(name)
             return CommandResult(tuple(args), 0, "", "")
         if args[2] == "remove":

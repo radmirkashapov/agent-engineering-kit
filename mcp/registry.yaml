@@ -47,21 +47,28 @@ servers:
     state: native
     policy: locked
 
-  # Core: актуальная внешняя документация через remote OAuth endpoint.
+  # Core: актуальная внешняя документация через локальный stdio bridge с необязательным API key.
   - id: context7
     description: Retrieve current library, framework, and API documentation from authoritative sources
     category: core
     required: true
-    transport: http
+    transport: stdio
     activation: always
+    command: npx
+    args: [-y, "@upstash/context7-mcp@4.6.0"]
     source:
       type: git
       repository: https://github.com/upstash/context7.git
     installation:
-      type: remote
-      endpoint: https://mcp.context7.com/mcp/oauth
-      authentication: oauth
-    state: stateless
+      type: external-command
+      command: npx
+      package: "@upstash/context7-mcp@4.6.0"
+      # Endpoint фиксирует network boundary локального bridge; client не получает этот URL или key.
+      endpoint: https://mcp.context7.com/mcp
+    # Key необязателен: launcher передаёт его в дочерний process, но не в client config.
+    environment:
+      CONTEXT7_API_KEY: env:CONTEXT7_API_KEY
+    state: native
     policy: locked
 
   # Optional: чтение ошибок, issues и traces из Sentry SaaS или self-hosted после явного включения.
