@@ -462,6 +462,7 @@ def register_native_mcp(
 ) -> Path:
     """Добавить namespaced core MCP, не изменяя чужие client entries."""
     from .mcp_manager import McpManager
+    from .mcp_endpoint import resolved_endpoint
     from .mcp_credentials import McpCredentialStore
     from .mcp_launcher import registration_command
     from .docker_mcp import confirmed_docker_routes
@@ -512,7 +513,9 @@ def register_native_mcp(
         for stale in launcher_root.glob("*.json"):
             if stale.stem not in launcher_ids and (stale.is_symlink() or stale.is_file()):
                 stale.unlink()
-    credential_status = {row["name"]: row["status"] for row in McpCredentialStore(paths).status(desired.values())}
+    credential_store = McpCredentialStore(paths)
+    credential_status = {row["name"]: row["status"] for row in credential_store.status(desired.values())}
+    endpoint_values = {**os.environ, **credential_store.load()}
     target = paths.state / "client-mcp-registrations.json"
     previous_rows: list[dict] = []
     if target.is_file():
@@ -588,14 +591,14 @@ def register_native_mcp(
                 try:
                     transport = json.loads(probe.stdout).get("transport", {})
                     matches = (
-                        transport.get("url") == installation.get("endpoint")
+                        transport.get("url") == resolved_endpoint(item, endpoint_values)
                         if installation["type"] == "remote"
                         else transport.get("command") == registration_binary and transport.get("args", []) == expected_args
                     )
                 except json.JSONDecodeError:
                     matches = False
             elif probe.ok:
-                expected_values = [installation["endpoint"]] if installation["type"] == "remote" else [registration_binary, *expected_args]
+                expected_values = [resolved_endpoint(item, endpoint_values)] if installation["type"] == "remote" else [registration_binary, *expected_args]
                 matches = all(value in probe.stdout for value in expected_values)
             if matches:
                 rows.append({"client": client, "mcp": identifier, "status": ready_status, "changed": False, "desired_verified": True, **readiness})
@@ -610,9 +613,9 @@ def register_native_mcp(
                     continue
             if installation["type"] == "remote":
                 command = (
-                    [executable, "mcp", "add", name, "--url", installation["endpoint"]]
+                    [executable, "mcp", "add", name, "--url", resolved_endpoint(item, endpoint_values)]
                     if client == "codex"
-                    else [executable, "mcp", "add", "--transport", "http", "--scope", "user", name, installation["endpoint"]]
+                    else [executable, "mcp", "add", "--transport", "http", "--scope", "user", name, resolved_endpoint(item, endpoint_values)]
                 )
             else:
                 if not binary:

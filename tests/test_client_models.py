@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from agent_engineering_kit.client_models import sync_client_models
+from agent_engineering_kit.model_credentials import ModelCredentialStore
 from agent_engineering_kit.paths import KitPaths
 from conftest import make_model_repository, model, write_yaml
 
@@ -55,6 +56,24 @@ def test_sync_creates_codex_provider_without_secret_value(tmp_path: Path, real_r
     assert 'base_url = "https://ai.example.test/v1"' in config
     assert 'env_key = "COMPANY_AI_API_KEY"' in config
     assert "COMPANY_AI_API_KEY=" not in config
+
+
+def test_sync_uses_private_model_credential_for_codex_and_opencode(tmp_path: Path, real_repository: Path) -> None:
+    repository = make_model_repository(tmp_path, real_repository, [])
+    declare_compatible_provider(repository)
+    paths = make_paths(tmp_path, repository)
+    source = tmp_path / "model-creds.env"
+    source.write_text("COMPANY_AI_API_KEY=super-secret\n", encoding="utf-8")
+    ModelCredentialStore(paths).import_file(source, [{"id": "company-ai", "api_key_env": "COMPANY_AI_API_KEY"}])
+
+    sync_client_models(repository, paths, home=tmp_path / "home", clients=("codex", "opencode"))
+
+    codex = (tmp_path / "home/.codex/config.toml").read_text(encoding="utf-8")
+    opencode = json.loads((tmp_path / "home/.config/opencode/opencode.json").read_text(encoding="utf-8"))
+    assert 'command = "agent-kit"' in codex
+    assert "super-secret" not in codex
+    assert opencode["providers"]["company-ai"]["settings"]["apiKey"].startswith("{file:")
+    assert "super-secret" not in json.dumps(opencode)
 
 
 def test_sync_keeps_existing_codex_env_key_unchanged(tmp_path: Path, real_repository: Path) -> None:

@@ -97,6 +97,8 @@ def _parser() -> argparse.ArgumentParser:
     model_creds_import = model_creds.add_parser("import", help="Импортировать model credentials из env-файла")
     model_creds_import.add_argument("--from", dest="source", required=True, type=Path)
     model_creds.add_parser("status", help="Показать статус model credentials без значений")
+    model_creds_read = model_creds.add_parser("read", help=argparse.SUPPRESS)
+    model_creds_read.add_argument("name", help=argparse.SUPPRESS)
     models_sync = models.add_parser("sync", help="Синхронизировать модели без записи credentials")
     models_sync.add_argument("--client", action="append", choices=sorted(CLIENT_MODEL_CAPABILITIES),
                              help="Ограничить синхронизацию указанным клиентом; можно повторять")
@@ -650,6 +652,8 @@ def run(argv: list[str] | None = None) -> int:
                 providers = list_client_models(repository, paths)
                 if args.model_creds_command == "import":
                     print(store.import_file(args.source, providers))
+                elif args.model_creds_command == "read":
+                    print(store.read_value(args.name, providers))
                 else:
                     print(json.dumps(store.status(providers), ensure_ascii=False, indent=2))
             else:

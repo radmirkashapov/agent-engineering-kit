@@ -10,6 +10,7 @@ from typing import Any, Iterable
 
 from .errors import AgentKitError
 from .io import atomic_write, load_json, load_yaml
+from .model_credentials import ModelCredentialStore
 from .models import load_policy, validate_models
 from .paths import KitPaths, ensure_runtime
 
@@ -113,7 +114,7 @@ def _toml_value(value: str) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
-def _codex_block(provider: dict[str, Any]) -> str:
+def _codex_block(provider: dict[str, Any], *, use_credential_command: bool = False) -> str:
     identifier = provider["id"]
     lines = [
         f"# agent-kit:model-provider:{identifier}:start",
@@ -121,7 +122,15 @@ def _codex_block(provider: dict[str, Any]) -> str:
         f"name = {_toml_value(str(provider.get('name') or identifier))}",
         f"base_url = {_toml_value(str(provider['base_url']))}",
     ]
-    if provider.get("api_key_env"):
+    if use_credential_command and provider.get("api_key_env"):
+        # Codex запускает команду только при запросе bearer-токена. Значение не
+        # попадает ни в config.toml, ни в окружение desktop-процесса.
+        lines.extend([
+            "[model_providers." + identifier + ".auth]",
+            'command = "agent-kit"',
+            'args = ["models", "creds", "read", ' + _toml_value(str(provider["api_key_env"])) + "]",
+        ])
+    elif provider.get("api_key_env"):
         lines.append(f"env_key = {_toml_value(str(provider['api_key_env']))}")
     lines.append(f"wire_api = {_toml_value(str(provider.get('wire_api') or 'responses'))}")
     lines.append(f"# agent-kit:model-provider:{identifier}:end")
@@ -162,7 +171,13 @@ def _sync_codex(providers: Iterable[dict[str, Any]], paths: KitPaths, home: Path
         if existing:
             if env_key := _preserved_codex_env_key(existing.group(0)):
                 rendered_provider["api_key_env"] = env_key
-        block = _codex_block(rendered_provider)
+        use_credential_command = bool(
+            not existing or not _preserved_codex_env_key(existing.group(0))
+        ) and bool(
+            rendered_provider.get("api_key_env")
+            and ModelCredentialStore(paths).value_file(str(rendered_provider["api_key_env"]))
+        )
+        block = _codex_block(rendered_provider, use_credential_command=use_credential_command)
         if existing:
             updated = content[:existing.start()] + block + content[existing.end():]
         else:
@@ -237,6 +252,12 @@ def _sync_opencode(providers: Iterable[dict[str, Any]], models: dict[str, list[d
             raise AgentKitError(f"Некорректный provider OpenCode: {identifier}")
         settings = dict(existing.get("settings") or {})
         settings["baseURL"] = provider["base_url"]
+        credential_file = (
+            ModelCredentialStore(paths).value_file(str(provider["api_key_env"]))
+            if provider.get("api_key_env") else None
+        )
+        if "apiKey" not in settings and credential_file:
+            settings["apiKey"] = "{file:" + str(credential_file) + "}"
         updated = {**existing, "name": provider.get("name") or identifier,
                    "package": "@opencode/ai/providers/openai-compatible",
                    "settings": settings, "models": _opencode_models(models.get(identifier, []))}

@@ -16,6 +16,7 @@ from .catalog import LockedComponent, resolve_desired
 from .component_state import Lifecycle, read_state, write_state
 from .definitions import url_contains_credentials
 from .errors import AgentKitError
+from .mcp_endpoint import resolved_endpoint
 from .io import load_yaml
 from .mcp_credentials import McpCredentialStore
 from .paths import KitPaths, ensure_runtime
@@ -119,7 +120,7 @@ class McpManager:
                 item["access_reason"] = "corporate:capability-policy-missing"
                 continue
             boundary = policy["boundaries"]
-            endpoint = item.get("installation", {}).get("endpoint")
+            endpoint = resolved_endpoint(item, {**os.environ, **McpCredentialStore(self.paths).load()})
             host_allowed = not endpoint or urlsplit(endpoint).hostname in boundary["allowed_hosts"]
             host_allowed_by_server[item["id"]] = host_allowed
             planned_by_server[item["id"]] = select_capabilities(
@@ -250,7 +251,7 @@ class McpManager:
                 result.info("mcp-install", f"{identifier}: уже ACTIVE")
                 continue
             if installation["type"] == "remote":
-                write_state(self.paths, "mcp", identifier, Lifecycle.ACTIVE, revision=lock.revision, version=lock.version, endpoint=installation["endpoint"], transport=item["transport"])
+                write_state(self.paths, "mcp", identifier, Lifecycle.ACTIVE, revision=lock.revision, version=lock.version, endpoint=resolved_endpoint(item, {**os.environ, **McpCredentialStore(self.paths).load()}), transport=item["transport"])
                 result.info("mcp-install", f"{identifier}: remote endpoint ACTIVE")
                 continue
             if installation["type"] == "external-command":

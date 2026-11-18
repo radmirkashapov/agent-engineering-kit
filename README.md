@@ -687,7 +687,7 @@ agent-kit security validate
 
 ### Регистрация моделей в клиентах
 
-`agent-kit models` публикует provider endpoint и перечень моделей из effective каталога. Он не является менеджером секретов: ключи, OAuth-токены и значения переменных окружения никогда не читаются, не записываются и не выводятся в консоль.
+`agent-kit models` публикует provider endpoint и перечень моделей из effective каталога. Значения ключей не попадают в Git, вывод команд и конфигурационные файлы клиентов. Для этого Kit хранит их только в локальном private vault.
 
 ```bash
 # Проверить единый каталог и контракт конкретного клиента.
@@ -700,7 +700,21 @@ agent-kit models sync --client codex
 agent-kit models sync
 ```
 
-Codex поддерживает безопасную синхронизацию provider: Kit обновляет `base_url` и transport, но сохраняет уже заданный `env_key`. OpenCode синхронизируется в пользовательский `~/.config/opencode/opencode.json` либо, при его наличии, `opencode.jsonc`: Kit обновляет models и `baseURL`, сохраняя `env`, `settings.apiKey` и остальные поля provider. Для нового provider в YAML указывается только имя переменной `api_key_env`, например `COMPANY_AI_API_KEY`; её значение пользователь задаёт в своей среде или внешнем secret store. Если Kit обнаруживает одноимённый provider Codex, которым он не владеет, команда прекращается без изменения файла.
+### Локальные ключи моделей и MCP
+
+Скопируйте `model-creds.example.env` в `model-creds.env`, а `mcp-creds.example.env` — в `mcp-creds.env`, заполните их и не добавляйте эти файлы в Git. При `./bootstrap/install.sh` оба файла автоматически импортируются до синхронизации клиентов; вручную это делается так:
+
+```bash
+agent-kit models creds import --from model-creds.env
+agent-kit mcp creds import --from mcp-creds.env
+agent-kit models sync
+agent-kit models creds status
+agent-kit mcp creds status
+```
+
+Codex получает ключ через локальную `auth.command` в момент запроса. OpenCode использует ссылку `{file:…}` на файл с правами только владельца. Если в существующем provider уже задан `env_key`, `env` или `settings.apiKey`, Kit сохраняет его и не заменяет. Глобальная конфигурация OpenCode находится в `~/.config/opencode/opencode.json`, либо в `~/.config/opencode/opencode.jsonc`, когда существует именно этот файл. Синхронизация обновляет только управляемые provider: `baseURL`, перечень моделей и технические поля provider.
+
+Корпоративные endpoints не коммитятся в реестр: GitLab берётся из `GITLAB_MCP_URL`, а единый Atlassian MCP для Jira и Confluence — из `ATLASSIAN_MCP_URL` в `mcp-creds.env`. Sentry использует `SENTRY_HOST` и `SENTRY_ACCESS_TOKEN`. Корпоративный форк также обязан внести hostname GitLab и Atlassian в `catalog/corporate/mcp.yaml` → `boundaries.allowed_hosts`: это намеренная проверка, не позволяющая локальному env перенаправить корпоративный MCP на произвольный сервер. После импорта выполните `agent-kit mcp enable gitlab --scope global --resync` или аналогичную команду для нужного MCP. OAuth для GitLab и Atlassian всё равно подтверждается в каждом клиенте при первом подключении: URL определяет сервер, но не заменяет пользовательскую OAuth-сессию.
 
 Cline хранит profile и secrets во внутреннем хранилище приложения, поэтому Kit выводит только инструкцию: настройте provider через UI либо `cline auth`. Claude Code использует Anthropic-compatible API, а не произвольный OpenAI-compatible transport; Claude Desktop не имеет поддерживаемого контракта регистрации пользовательских provider. Для этих трёх клиентов `models sync` ничего не меняет. `agent-kit resync` запускает ту же безопасную синхронизацию автоматически.
 
