@@ -106,7 +106,7 @@ def test_vault_scm_and_sonar_tokens_still_require_project_signals(tmp_path: Path
 
     manager = McpManager(repository, paths, runner=runner)
     source = tmp_path / "credentials.env"
-    source.write_text("GITHUB_PERSONAL_ACCESS_TOKEN=fixture-token\nSONARQUBE_TOKEN=fixture-token\n", encoding="utf-8")
+    source.write_text("GITHUB_PERSONAL_ACCESS_TOKEN=fixture-token\nSONARQUBE_TOKEN=fixture-token\nSONARQUBE_URL=https://sonarqube.example.test\n", encoding="utf-8")
     McpCredentialStore(paths).import_file(source, manager.available())
     servers = [item for item in manager.available() if item["id"] in {"github", "gitlab", "sonarqube"}]
     assert len(servers) == 3

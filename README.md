@@ -717,6 +717,8 @@ Codex получает ключ через локальную `auth.command` в 
 
 Корпоративные endpoints и tokens не коммитятся в реестр: GitLab берётся из `GITLAB_MCP_URL`, Jira Data Center — из `JIRA_HOST` и `JIRA_API_TOKEN`, Confluence Data Center — из `CONFLUENCE_HOST` и `CONFLUENCE_API_TOKEN` в `mcp-creds.env`. После импорта выполните `agent-kit mcp enable jira-datacenter --scope global --resync` и при необходимости аналогичную команду для `twiki-datacenter`. MCP запускаются локально через `npx`; каждому пользователю нужен персональный token с минимальными необходимыми правами.
 
+Self-hosted SonarQube требует оба значения: `SONARQUBE_URL` (полный HTTPS URL сервера) и `SONARQUBE_TOKEN` (персональный user token). Kit передаёт их в изолированный Docker-контейнер только при запуске `sonarqube` MCP.
+
 Cline хранит profile и secrets во внутреннем хранилище приложения, поэтому Kit выводит только инструкцию: настройте provider через UI либо `cline auth`. Claude Code использует Anthropic-compatible API, а не произвольный OpenAI-compatible transport; Claude Desktop не имеет поддерживаемого контракта регистрации пользовательских provider. Для этих трёх клиентов `models sync` ничего не меняет. `agent-kit resync` запускает ту же безопасную синхронизацию автоматически.
 
 ## Локальные переопределения

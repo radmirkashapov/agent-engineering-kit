@@ -191,10 +191,10 @@ def test_core_mcp_registration_is_namespaced_and_oauth_safe(tmp_path: Path, monk
 
 
 @pytest.mark.parametrize("credential_source", ["missing", "vault", "shell"])
-@pytest.mark.parametrize("server,variable", [("github", "GITHUB_PERSONAL_ACCESS_TOKEN"), ("sonarqube", "SONARQUBE_TOKEN")])
+@pytest.mark.parametrize("server,variables", [("github", ("GITHUB_PERSONAL_ACCESS_TOKEN",)), ("sonarqube", ("SONARQUBE_TOKEN", "SONARQUBE_URL"))])
 @pytest.mark.parametrize("required_only", [False, True])
 def test_stdio_mcp_with_environment_is_registered_through_launcher(
-    tmp_path: Path, monkeypatch, credential_source: str, server: str, variable: str, required_only: bool,
+    tmp_path: Path, monkeypatch, credential_source: str, server: str, variables: tuple[str, ...], required_only: bool,
 ) -> None:
     repository = Path(__file__).resolve().parents[1]
     data = tmp_path / "data"
@@ -213,14 +213,16 @@ def test_stdio_mcp_with_environment_is_registered_through_launcher(
         definition = next(item for item in registry["servers"] if item["id"] == server)
         definition.pop("environment")
         write_yaml(paths.overrides / f"global/mcp/{server}.yaml", {"target": server, "override": {"mode": "replace", "value": definition}})
-    monkeypatch.delenv(variable, raising=False)
+    for variable in variables:
+        monkeypatch.delenv(variable, raising=False)
     monkeypatch.setattr("agent_engineering_kit.clients.shutil.which", lambda name: f"/usr/bin/{name}" if name in {"codex", "claude", "docker"} else None)
     if credential_source == "vault":
         source = tmp_path / "credentials.env"
-        source.write_text(f"{variable}=fixture-secret\n", encoding="utf-8")
+        source.write_text("".join(f"{variable}=fixture-value\n" for variable in variables), encoding="utf-8")
         McpCredentialStore(paths).import_file(source, McpManager(repository, paths).available())
     elif credential_source == "shell":
-        monkeypatch.setenv(variable, "fixture-secret")
+        for variable in variables:
+            monkeypatch.setenv(variable, "fixture-value")
     calls: list[list[str]] = []
     client_commands: dict[str, list[str]] = {
         "/usr/bin/codex": ["/usr/bin/docker", "run"],
@@ -246,18 +248,18 @@ def test_stdio_mcp_with_environment_is_registered_through_launcher(
     assert len(additions) == 2
     assert sum("remove" in call and f"agent-kit-{server}" in call for call in calls) == 2
     assert all(call[call.index("--") + 1:] == [sys.executable, "-m", "agent_engineering_kit.mcp_launcher", str(contract_path.resolve())] for call in additions)
-    assert variable not in json.dumps(additions)
+    assert all(variable not in json.dumps(additions) for variable in variables)
     contract = json.loads(contract_path.read_text(encoding="utf-8"))
-    assert contract["required_environment"] == [variable]
+    assert contract["required_environment"] == list(variables)
     assert contract["command"] == str(Path("/usr/bin/docker").resolve())
     state_text = state_path.read_text(encoding="utf-8")
-    assert "fixture-secret" not in json.dumps(calls) + state_text + contract_path.read_text(encoding="utf-8")
+    assert "fixture-value" not in json.dumps(calls) + state_text + contract_path.read_text(encoding="utf-8")
     server_rows = [row for row in json.loads(state_text)["registrations"] if row.get("mcp") == server and row["client"] in {"codex", "claude-code"}]
     assert len(server_rows) == 2
     assert all(row["desired_verified"] for row in server_rows)
     assert all(row["status"] == ("CONFIG_REQUIRED" if credential_source == "missing" else "ACTIVE") for row in server_rows)
     if credential_source == "missing":
-        assert all(row["missing_environment"] == [variable] for row in server_rows)
+        assert all(row["missing_environment"] == list(variables) for row in server_rows)
 
     calls.clear()
     register_native_mcp(repository, paths, project=project, access_profile="administrator", runner=runner)
@@ -266,7 +268,7 @@ def test_stdio_mcp_with_environment_is_registered_through_launcher(
     assert all(row["changed"] is False and row["desired_verified"] for row in server_rows)
     assert all(row["status"] == ("CONFIG_REQUIRED" if credential_source == "missing" else "ACTIVE") for row in server_rows)
     if credential_source == "missing":
-        assert all(row["missing_environment"] == [variable] for row in server_rows)
+        assert all(row["missing_environment"] == list(variables) for row in server_rows)
 
 
 def test_stale_launcher_cleanup_is_limited_to_managed_directory(tmp_path: Path, monkeypatch) -> None:
