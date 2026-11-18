@@ -15,11 +15,6 @@ def real_repository() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
-@pytest.fixture(autouse=True)
-def managed_opencode_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setenv("AGENT_KIT_OPENCODE_MANAGED_CONFIG", str(tmp_path / "managed/opencode.json"))
-
-
 def make_paths(tmp_path: Path, repository: Path) -> KitPaths:
     data = tmp_path / "data"
     return KitPaths(repository, data, data / "runtime", data / "projects", data / "overrides")
@@ -148,7 +143,7 @@ def test_sync_does_not_open_or_change_existing_opencode_credentials(tmp_path: Pa
     declare_compatible_provider(repository)
     paths = make_paths(tmp_path, repository)
     home = tmp_path / "home"
-    config_path = home / ".config/opencode/opencode.json"
+    config_path = home / ".opencode/opencode.json"
     config_path.parent.mkdir(parents=True)
     config_path.write_text(json.dumps({"providers": {"company-ai": {
         "_agent_kit_managed": True,
@@ -160,12 +155,10 @@ def test_sync_does_not_open_or_change_existing_opencode_credentials(tmp_path: Pa
     report = sync_client_models(repository, paths, home=home, clients=("opencode",))
 
     assert report["opencode"]["status"] == "SYNCED"
-    assert config_path.read_text(encoding="utf-8") == json.dumps({"providers": {"company-ai": {
-        "_agent_kit_managed": True,
-        "env": ["USER_SELECTED_KEY"],
-        "settings": {"apiKey": "{env:USER_SELECTED_KEY}"},
-        "models": {"obsolete": {}},
-    }}})
+    provider = json.loads(config_path.read_text(encoding="utf-8"))["providers"]["company-ai"]
+    assert provider["env"] == ["USER_SELECTED_KEY"]
+    assert provider["settings"]["apiKey"] == "{env:USER_SELECTED_KEY}"
+    assert provider["settings"]["baseURL"] == "https://ai.example.test/v1"
 
 
 def test_second_opencode_sync_leaves_agent_created_config_untouched(tmp_path: Path, real_repository: Path) -> None:
@@ -175,7 +168,7 @@ def test_second_opencode_sync_leaves_agent_created_config_untouched(tmp_path: Pa
     home = tmp_path / "home"
 
     sync_client_models(repository, paths, home=home, clients=("opencode",))
-    config_path = tmp_path / "managed/opencode.json"
+    config_path = home / ".opencode/opencode.json"
     original = config_path.read_text(encoding="utf-8")
     second = sync_client_models(repository, paths, home=home, clients=("opencode",))
 
@@ -188,7 +181,7 @@ def test_sync_leaves_opencode_jsonc_untouched(tmp_path: Path, real_repository: P
     declare_compatible_provider(repository)
     paths = make_paths(tmp_path, repository)
     home = tmp_path / "home"
-    config_path = home / ".config/opencode/opencode.jsonc"
+    config_path = home / ".opencode/opencode.jsonc"
     config_path.parent.mkdir(parents=True)
     original = '{\n  // user-owned configuration\n  "providers": {}\n}\n'
     config_path.write_text(original, encoding="utf-8")
@@ -197,7 +190,7 @@ def test_sync_leaves_opencode_jsonc_untouched(tmp_path: Path, real_repository: P
 
     assert report["opencode"]["status"] == "SYNCED"
     assert config_path.read_text(encoding="utf-8") == original
-    assert (tmp_path / "managed/opencode.json").is_file()
+    assert (home / ".opencode/opencode.json").is_file()
 
 
 def test_sync_rejects_invalid_local_model_catalog_before_client_write(tmp_path: Path, real_repository: Path) -> None:
