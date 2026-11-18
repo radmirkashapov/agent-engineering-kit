@@ -255,6 +255,18 @@ def test_canonical_ai_instructions_list_every_default_agent_role() -> None:
     assert documented == DEFAULT_AGENT_IDS
 
 
+def test_mcp_execution_protocol_has_deterministic_routes_for_collaboration_links() -> None:
+    repository = Path(__file__).resolve().parents[1]
+    protocol = (repository / "rules" / "mcp-execution.md").read_text(encoding="utf-8")
+    instructions = (repository / "AI.md").read_text(encoding="utf-8")
+
+    assert "`jira_getIssue({issueKey: \"<KEY>\"})`" in protocol
+    assert "`get_merge_request({url: \"<MR_URL>\"})`" in protocol
+    assert "`twiki-datacenter`" in protocol
+    assert "Не добавляй недокументированные поля" in protocol
+    assert "не открывай browser" in instructions.lower()
+
+
 def test_default_skill_and_mcp_descriptions_are_english() -> None:
     repository = Path(__file__).resolve().parents[1]
 
