@@ -1,0 +1,6 @@
+# Политика repository-level activation: включает MCP независимо от project signals, но не обходит access profile, boundaries и credentials.
+version: 1
+# ID серверов, которые должны активироваться во всех подходящих logical projects.
+enabled: []
+# ID серверов, которые repository запрещает активировать; пользовательские локальные overrides не изменяются этим файлом.
+disabled: []

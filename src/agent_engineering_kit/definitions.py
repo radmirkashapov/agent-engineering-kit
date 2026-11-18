@@ -164,6 +164,17 @@ def validate_mcp(repository: Path) -> ValidationResult:
                 continue
             if url_contains_credentials(url):
                 result.error("mcp", f"MCP {identifier}: credentials запрещены в {field} URL")
+    activation_path = repository / "mcp" / "activation.yaml"
+    activation = load_yaml(activation_path)
+    result.extend(validate_instance(activation, repository / "schemas" / "mcp-activation.schema.json", "mcp/activation.yaml"))
+    activation_enabled = set(activation.get("enabled", []))
+    activation_disabled = set(activation.get("disabled", []))
+    unknown_activation = sorted((activation_enabled | activation_disabled) - identifiers)
+    if unknown_activation:
+        result.error("mcp", f"mcp/activation.yaml содержит неизвестные MCP ID: {unknown_activation}")
+    overlap = sorted(activation_enabled & activation_disabled)
+    if overlap:
+        result.error("mcp", f"mcp/activation.yaml содержит ID одновременно в enabled и disabled: {overlap}")
     corporate_path = repository / "catalog" / "corporate" / "mcp.yaml"
     if corporate_path.is_file():
         corporate = load_yaml(corporate_path)

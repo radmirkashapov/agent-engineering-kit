@@ -19,6 +19,7 @@ from .errors import AgentKitError
 from .mcp_endpoint import resolved_endpoint
 from .io import load_yaml
 from .mcp_credentials import McpCredentialStore
+from .mcp_activation import load_activation
 from .paths import KitPaths, ensure_runtime
 from .overrides import apply_local_overrides
 from .process import CommandResult, run_command
@@ -200,6 +201,9 @@ class McpManager:
 
     def _project_signals(self, project: LogicalProject | None) -> set[str]:
         signals: set[str] = set()
+        # Committed activation is an explicit repository signal; it only augments
+        # discovery signals and cannot bypass access, host or credential checks.
+        signals.update(load_activation(self.repository)["enabled"])
         environment_names = {name for name, value in os.environ.items() if value}
         environment_names.update(name for name, value in McpCredentialStore(self.paths).load().items() if value)
         # Наличие token является локальным сигналом готовности опционального Sentry MCP.
@@ -226,6 +230,9 @@ class McpManager:
         return signals
 
     def is_enabled(self, item: dict[str, Any], project: LogicalProject | None = None) -> bool:
+        activation_policy = load_activation(self.repository)
+        if item["id"] in activation_policy["disabled"]:
+            return False
         activation = item.get("activation", "always")
         return activation == "always" or activation in self._project_signals(project)
 
