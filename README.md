@@ -266,6 +266,23 @@ agent-kit mcp status
 agent-kit mcp explain <id>
 ```
 
+### Включение MCP в repository policy
+
+Реестр `mcp/registry.yaml` определяет доступный состав, но не отменяет corporate policy и project signals. Чтобы сервер был включён для всех подходящих проектов, в корпоративном fork измените его `activation` на `always`; чтобы оставить включение по наличию credentials, используйте отдельный идентификатор activation и объявите его в `McpManager._project_signals`. Поле `required: true` делает сервер обязательным для compatible harness, но не обходит policy безопасности.
+
+Каждому новому или изменённому MCP соответствуют три синхронные записи: описание в `mcp/registry.yaml`, закреплённая ревизия в `locks/mcp.lock.yaml` и capability policy в `catalog/corporate/mcp.yaml`. Для remote/self-hosted endpoint добавьте hostname в `boundaries.allowed_hosts`. После commit в control-plane repository разработчик применяет новую desired state обычной командой:
+
+```bash
+agent-kit resync --no-update
+agent-kit mcp explain <id>
+```
+
+Локальные `agent-kit mcp enable` и `disable` — только пользовательские overrides; они не изменяют repository policy и не заменяют corporate restrictions.
+
+### Автоматическая регистрация OpenCode MCP
+
+При `resync` Kit безопасно сливает свои MCP в глобальный `~/.config/opencode/opencode.json` или существующий `opencode.jsonc`. Записи Kit всегда называются `agent-kit-<id>` и находятся в `mcp.servers`. Только они заменяются или удаляются при следующей синхронизации; все остальные серверы и поля пользователя сохраняются. Для stdio MCP Kit регистрирует private launcher, который получает credentials из local vault, поэтому значения token не записываются в OpenCode config. Remote OAuth MCP после регистрации требуют входа в самом OpenCode.
+
 ### Docker MCP Toolkit
 
 Docker MCP Toolkit поддерживается как опциональный способ запуска `github` и `playwright`. По умолчанию он отключён, поэтому все серверы используют прежнюю нативную регистрацию. После включения Kit управляет только выделенным профилем `agent-engineering-kit` и гарантирует для каждого MCP единственный маршрут: native либо Docker gateway.
