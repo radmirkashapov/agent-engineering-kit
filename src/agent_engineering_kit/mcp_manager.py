@@ -201,9 +201,6 @@ class McpManager:
 
     def _project_signals(self, project: LogicalProject | None) -> set[str]:
         signals: set[str] = set()
-        # Committed activation is an explicit repository signal; it only augments
-        # discovery signals and cannot bypass access, host or credential checks.
-        signals.update(load_activation(self.repository)["enabled"])
         environment_names = {name for name, value in os.environ.items() if value}
         environment_names.update(name for name, value in McpCredentialStore(self.paths).load().items() if value)
         # Наличие token является локальным сигналом готовности опционального Sentry MCP.
@@ -233,6 +230,11 @@ class McpManager:
         activation_policy = load_activation(self.repository)
         if item["id"] in activation_policy["disabled"]:
             return False
+        # Repository policy names MCP by stable server ID, whereas project
+        # signals may use a different semantic label (for example sonar).
+        # An explicit ID must therefore activate the matching server directly.
+        if item["id"] in activation_policy["enabled"]:
+            return True
         activation = item.get("activation", "always")
         return activation == "always" or activation in self._project_signals(project)
 

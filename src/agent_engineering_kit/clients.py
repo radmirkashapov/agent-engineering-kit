@@ -104,6 +104,45 @@ def _sync_opencode_mcp(
     return "SYNCED", changed, str(config_path)
 
 
+def _sync_opencode_instructions(
+    repository: Path,
+    paths: KitPaths,
+    *,
+    home: Path,
+    agent_kit_enabled: bool,
+) -> Path:
+    """Подключить canonical AI.md через нативное поле OpenCode instructions."""
+    config_path = _opencode_config_path(home)
+    document = _load_opencode_config(config_path)
+    configured = document.get("instructions", [])
+    if not isinstance(configured, list) or not all(isinstance(item, str) for item in configured):
+        raise AgentKitError(f"OpenCode instructions должен быть массивом строк: {config_path}")
+    managed_path = str((repository / "AI.md").resolve())
+    state_path = paths.state / "opencode-managed-instructions.json"
+    owned: set[str] = set()
+    if state_path.is_file():
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            candidates = state.get("paths", [])
+            if isinstance(candidates, list) and all(isinstance(item, str) for item in candidates):
+                owned = set(candidates)
+        except (OSError, json.JSONDecodeError):
+            pass
+    updated = list(configured)
+    if agent_kit_enabled:
+        if managed_path not in updated:
+            updated.append(managed_path)
+            owned.add(managed_path)
+    elif managed_path in owned:
+        updated = [item for item in updated if item != managed_path]
+        owned.discard(managed_path)
+    changed = updated != configured or not config_path.is_file()
+    if changed:
+        atomic_write(config_path, json.dumps({**document, "instructions": updated}, ensure_ascii=False, indent=2) + "\n")
+    atomic_write(state_path, json.dumps({"version": 1, "paths": sorted(owned)}, ensure_ascii=False, indent=2) + "\n")
+    return config_path
+
+
 @dataclass(frozen=True)
 class EffectiveSkillSource:
     identifier: str
@@ -515,6 +554,11 @@ def expose_native_instructions(
             f"{end}"
         )
     generated: list[Path] = []
+    # OpenCode поддерживает instructions в JSON/JSONC. Используем это поле,
+    # а AGENTS.md оставляем как совместимый discovery bridge для старых версий.
+    generated.append(_sync_opencode_instructions(
+        repository, paths, home=user_home, agent_kit_enabled=agent_kit_enabled,
+    ))
     for target in targets:
         existing = target.read_text(encoding="utf-8") if target.is_file() else ""
         if start in existing and end in existing:

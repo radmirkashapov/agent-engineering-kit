@@ -615,6 +615,22 @@ def test_instruction_bridge_preserves_user_text_and_is_idempotent(tmp_path: Path
     assert target.read_text(encoding="utf-8") == first
     assert "# Мои инструкции" in first
     assert first.count("agent-engineering-kit:start") == 1
+    config = tmp_path / ".config/opencode/opencode.json"
+    document = json.loads(config.read_text(encoding="utf-8"))
+    assert document["instructions"] == [str((repository / "AI.md").resolve())]
+
+
+def test_opencode_instruction_bridge_preserves_user_entries_and_removes_only_owned_path(tmp_path: Path) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    paths = KitPaths(repository, tmp_path / "data", tmp_path / "runtime", tmp_path / "projects", tmp_path / "overrides")
+    config = tmp_path / ".config/opencode/opencode.json"
+    config.parent.mkdir(parents=True)
+    config.write_text(json.dumps({"instructions": ["/user/guide.md"]}), encoding="utf-8")
+
+    expose_native_instructions(repository, paths, home=tmp_path)
+    expose_native_instructions(repository, paths, home=tmp_path, agent_kit_enabled=False)
+
+    assert json.loads(config.read_text(encoding="utf-8"))["instructions"] == ["/user/guide.md"]
 
 
 def test_stale_managed_skill_exposure_is_removed(tmp_path: Path) -> None:

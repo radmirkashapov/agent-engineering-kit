@@ -97,6 +97,22 @@ def test_repository_activation_enables_conditional_mcp_without_project_signal(tm
     assert state["status"] != "inactive"
 
 
+def test_repository_activation_uses_server_id_not_internal_project_signal(tmp_path: Path) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    kit = tmp_path / "kit"
+    copytree(repository, kit, ignore=__import__("shutil").ignore_patterns(".git", "uv.lock", ".venv"))
+    data = tmp_path / "data"
+    paths = KitPaths(kit, data, data / "runtime", data / "projects", data / "overrides")
+
+    from agent_engineering_kit.mcp_activation import set_activation
+
+    set_activation(kit, "sonarqube", enabled=True)
+    state = next(item for item in McpManager(kit, paths).list() if item["id"] == "sonarqube")
+
+    assert state["enabled"] is True
+    assert state["status"] != "inactive"
+
+
 def test_repository_activation_can_disable_always_active_mcp(tmp_path: Path) -> None:
     repository = Path(__file__).resolve().parents[1]
     kit = tmp_path / "kit"
