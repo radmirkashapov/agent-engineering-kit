@@ -189,8 +189,9 @@ def test_sync_leaves_opencode_jsonc_untouched(tmp_path: Path, real_repository: P
     report = sync_client_models(repository, paths, home=home, clients=("opencode",))
 
     assert report["opencode"]["status"] == "SYNCED"
-    assert config_path.read_text(encoding="utf-8") == original
-    assert (home / ".opencode/opencode.json").is_file()
+    document = json.loads(config_path.read_text(encoding="utf-8"))
+    assert document["providers"]["company-ai"]["settings"]["baseURL"] == "https://ai.example.test/v1"
+    assert not (home / ".opencode/opencode.json").exists()
 
 
 def test_sync_rejects_invalid_local_model_catalog_before_client_write(tmp_path: Path, real_repository: Path) -> None:

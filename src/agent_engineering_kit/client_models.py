@@ -210,11 +210,18 @@ def _opencode_document(providers: Iterable[dict[str, Any]], models: dict[str, li
 
 
 def _sync_opencode(providers: Iterable[dict[str, Any]], models: dict[str, list[dict[str, Any]]], paths: KitPaths, home: Path) -> dict[str, Any]:
-    config_path = home / ".opencode" / "opencode.json"
+    json_path = home / ".opencode" / "opencode.json"
+    jsonc_path = home / ".opencode" / "opencode.jsonc"
+    config_path = jsonc_path if jsonc_path.is_file() else json_path
     state = _load_state(paths)
     if config_path.exists():
         try:
-            document = json.loads(config_path.read_text(encoding="utf-8"))
+            raw = config_path.read_text(encoding="utf-8")
+            # JSONC отличается от JSON только комментариями и завершающими
+            # запятыми; значения credentials не изменяются при merge.
+            cleaned = re.sub(r"(?m)^\s*//[^\n]*|/\*[\s\S]*?\*/", "", raw)
+            cleaned = re.sub(r",\s*([}\]])", r"\1", cleaned)
+            document = json.loads(cleaned)
         except json.JSONDecodeError as error:
             raise AgentKitError(f"Некорректный JSON OpenCode: {config_path}") from error
         provider_map = document.setdefault("providers", {})
