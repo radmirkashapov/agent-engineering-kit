@@ -94,6 +94,8 @@ def _sync_opencode_mcp(
             entry = {"type": "local", "command": [command, *args]}
         if timeout := item.get("client_timeout"):
             entry["timeout"] = timeout
+        if item.get("direct_tool_exposure"):
+            entry["codemode"] = False
         # Пользовательские поля чужих MCP не читаются и не меняются; managed
         # server целиком принадлежит Kit и атомарно приводится к desired state.
         servers[name] = entry

@@ -135,6 +135,7 @@ servers:
     category: scm
     required: false
     transport: http
+    direct_tool_exposure: true
     activation: gitlab
     # Корпоративный GitLab задаёт URL только локально через mcp-creds.env.
     endpoint_environment: GITLAB_MCP_URL
@@ -197,6 +198,7 @@ servers:
     category: collaboration
     required: false
     transport: stdio
+    direct_tool_exposure: true
     activation: jira-datacenter
     command: npx
     args: [-y, "@atlassian-dc-mcp/jira"]
@@ -220,6 +222,7 @@ servers:
     category: collaboration
     required: false
     transport: stdio
+    direct_tool_exposure: true
     activation: twiki-datacenter
     command: npx
     args: [-y, "@atlassian-dc-mcp/confluence"]
