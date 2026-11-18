@@ -207,6 +207,12 @@ def validate_mcp(repository: Path) -> ValidationResult:
             profile_ids.add(profile_id)
         if profiles.get("version") != 1 or "readonly" not in profile_ids:
             result.error("mcp", "Corporate access profile readonly отсутствует или имеет неверную версию")
+        profile_path = corporate_path.with_name("mcp-profile.yaml")
+        repository_profile = load_yaml(profile_path, required=False)
+        result.extend(validate_instance(repository_profile, repository / "schemas" / "mcp-profile.schema.json", str(profile_path)))
+        selected_profile = repository_profile.get("access_profile")
+        if selected_profile not in profile_ids:
+            result.error("mcp", f"Corporate repository MCP profile не найден в access-profiles.yaml: {selected_profile!r}")
         registry_by_id = {entry.get("id"): entry for entry in document.get("servers", [])}
         corporate_ids = {entry.get("id") for entry in corporate.get("servers", [])}
         for identifier in sorted(identifiers - corporate_ids):

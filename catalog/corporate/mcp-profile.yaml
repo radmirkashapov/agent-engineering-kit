@@ -1,0 +1,4 @@
+# Базовый access profile MCP для данного Kit repository; допустимые значения объявлены в соседнем access-profiles.yaml.
+version: 1
+# readonly разрешает только read surface; корпоративный fork может выбрать editor или administrator через PR.
+access_profile: readonly

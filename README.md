@@ -301,6 +301,16 @@ agent-kit mcp reset gitlab --scope repository
 
 `mcp/activation.yaml` лишь заменяет условие project signal. Он не обходит выбранный `mcp.access_profile`, `allowed_hosts`, capability budget, обязательные credentials или пользовательский локальный blocklist. Например, Jira Data Center с read/write/admin surface требует profile `administrator`; включение только в `activation.yaml` не выдаёт ему write/admin права.
 
+Базовый профиль для всего Kit repository хранится в `catalog/corporate/mcp-profile.yaml` и обязан ссылаться на ID из `catalog/corporate/access-profiles.yaml`. В корпоративном fork его меняют отдельным PR вместе с `mcp/activation.yaml`:
+
+```yaml
+# catalog/corporate/mcp-profile.yaml
+version: 1
+access_profile: administrator
+```
+
+Это разрешает whole-server registration для MCP со смешанным read/write/admin surface. Значение `tool_budget` в `catalog/corporate/mcp.yaml` остаётся независимым ограничением: если суммарная стоимость выбранных capabilities выше бюджета, часть серверов будет отключена с причиной `corporate:tool-budget-or-conflict`. Локальный policy override пользователя применяется последним и может выбрать другой профиль с обязательным `reason`.
+
 Каждому новому или изменённому MCP соответствуют три синхронные записи: описание в `mcp/registry.yaml`, закреплённая ревизия в `locks/mcp.lock.yaml` и capability policy в `catalog/corporate/mcp.yaml`. Для remote/self-hosted endpoint добавьте hostname в `boundaries.allowed_hosts`. После commit в control-plane repository разработчик применяет новую desired state обычной командой:
 
 ```bash

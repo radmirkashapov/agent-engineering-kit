@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from shutil import copytree, ignore_patterns
 
 import pytest
 
 from agent_engineering_kit.errors import AgentKitError
 from agent_engineering_kit.explain import explain
 from agent_engineering_kit.paths import KitPaths
-from agent_engineering_kit.policy import load_policy_overrides, resolve_policy
+from agent_engineering_kit.policy import effective_policy, load_policy_overrides, resolve_policy
 from conftest import write_yaml
 
 
@@ -141,9 +142,22 @@ def test_policy_rejects_value_outside_target_domain() -> None:
             [{"source": "kit", "entries": [{"key": "approvals.profile", "value": "readonly", "classification": "restriction"}]}],
             [{"key": "approvals.profile", "value": "unsafe-magic", "reason": "test"}],
         )
-
     with pytest.raises(AgentKitError, match="mcp.access_profile"):
         resolve_policy(
             [{"source": "kit", "entries": [{"key": "mcp.access_profile", "value": "readonly", "classification": "restriction"}]}],
             [{"key": "mcp.access_profile", "value": "superuser", "reason": "test"}],
         )
+
+
+def test_repository_mcp_profile_is_loaded_from_corporate_catalog(tmp_path: Path) -> None:
+    repository = tmp_path / "kit"
+    copytree(REPOSITORY, repository, ignore=ignore_patterns(".git", "uv.lock", ".venv"))
+    write_yaml(repository / "catalog/corporate/mcp-profile.yaml", {
+        "version": 1, "access_profile": "administrator",
+    })
+    paths = KitPaths(repository, tmp_path / "data", tmp_path / "runtime", tmp_path / "projects", tmp_path / "overrides")
+
+    policy = effective_policy(repository, paths, include_local=False)
+
+    assert policy.values["mcp.access_profile"] == "administrator"
+    assert policy.provenance["mcp.access_profile"][-1]["source"] == "corporate:catalog/corporate/mcp-profile.yaml"
