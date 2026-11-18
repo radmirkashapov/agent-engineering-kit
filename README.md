@@ -107,6 +107,8 @@ Kit уже формирует контракты запусков, task workspac
 
 `AI.md` служит короткой точкой входа для агента. Каталоги задают желаемое состояние, lock-файлы закрепляют проверенные ревизии, а Python CLI создаёт только локальные артефакты машины.
 
+При `agent-kit resync` OpenCode получает абсолютный путь к canonical `AI.md` в собственном массиве `instructions` файла `~/.config/opencode/opencode.json(c)`. Пользовательские instruction paths сохраняются; при `agent-kit disable` удаляется только путь, добавленный Kit. Для Codex и Claude Code Kit сохраняет эквивалентные managed blocks в их нативных discovery-файлах.
+
 | Назначение | Unix по умолчанию | Windows по умолчанию |
 |---|---|---|
 | каноническая рабочая копия набора | полный Git checkout; путь записан в `<data>/state/repository-path` | полный Git checkout; путь записан в `<data>\state\repository-path` |
