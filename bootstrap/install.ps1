@@ -28,6 +28,14 @@ New-Item -ItemType Directory -Force -Path $StateDirectory | Out-Null
 [System.IO.File]::WriteAllText($PointerTemporary, "$Repository`n", (New-Object System.Text.UTF8Encoding($false)))
 Move-Item -Force -Path $PointerTemporary -Destination $Pointer
 
+if (Test-Path (Join-Path $Repository "mcp-creds.env")) {
+    python -m agent_engineering_kit.cli mcp creds import --from (Join-Path $Repository "mcp-creds.env")
+}
+if (Test-Path (Join-Path $Repository "model-creds.env")) {
+    python -m agent_engineering_kit.cli models creds import --from (Join-Path $Repository "model-creds.env")
+}
+python -m agent_engineering_kit.cli models sync
+
 Write-Output "agent-kit установлен. Канонический repository: $Repository"
 Write-Output "Не перемещайте checkout без повторного запуска bootstrap/install.ps1."
 Write-Output "Запустите: agent-kit resync --no-update; agent-kit validate --ci; agent-kit doctor"

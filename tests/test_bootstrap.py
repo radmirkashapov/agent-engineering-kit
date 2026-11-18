@@ -120,3 +120,32 @@ def test_posix_installer_switches_registered_checkout(tmp_path: Path) -> None:
     assert first.returncode == 0
     assert second.returncode == 0
     assert (data / "state/repository-path").read_text(encoding="utf-8").strip() == str(checkouts[1])
+
+
+def test_posix_installer_imports_present_private_env_files_before_model_sync(tmp_path: Path) -> None:
+    checkout = tmp_path / "checkout"
+    bootstrap = checkout / "bootstrap"
+    bootstrap.mkdir(parents=True)
+    shutil.copy2(REPOSITORY / "bootstrap/install.sh", bootstrap / "install.sh")
+    subprocess.run(["git", "init", "-q", str(checkout)], check=True)
+    (checkout / "mcp-creds.env").write_text("GITLAB_MCP_URL=https://gitlab.example.test/mcp\n", encoding="utf-8")
+    (checkout / "model-creds.env").write_text("COMPANY_AI_API_KEY=private\n", encoding="utf-8")
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_python = fake_bin / "python3"
+    fake_python.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$FAKE_LOG"\nexit 0\n', encoding="utf-8")
+    fake_python.chmod(fake_python.stat().st_mode | stat.S_IXUSR)
+    log = tmp_path / "calls.log"
+
+    completed = subprocess.run(
+        ["sh", "bootstrap/install.sh"], cwd=checkout,
+        env={**os.environ, "FAKE_LOG": str(log), "PATH": f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}"},
+        text=True, capture_output=True, check=False,
+    )
+
+    calls = log.read_text(encoding="utf-8")
+    assert completed.returncode == 0, completed.stderr
+    assert "mcp creds import --from" in calls
+    assert "models creds import --from" in calls
+    assert calls.index("mcp creds import --from") < calls.index("models sync")
+    assert calls.index("models creds import --from") < calls.index("models sync")

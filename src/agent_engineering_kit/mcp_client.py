@@ -21,6 +21,8 @@ from mcp.shared.auth import OAuthClientInformationFull, OAuthClientMetadata, OAu
 from .errors import AgentKitError
 from .io import atomic_write, load_yaml
 from .mcp_manager import McpManager
+from .mcp_credentials import McpCredentialStore
+from .mcp_endpoint import resolved_endpoint
 from .paths import KitPaths
 from .projects import LogicalProject
 
@@ -114,9 +116,7 @@ class McpToolClient:
                 "environment": environment,
             }
         installation = dict(server.get("installation", {}))
-        endpoint = str(installation.get("endpoint", ""))
-        if server_id == "gitlab":
-            endpoint = os.environ.get("GITLAB_MCP_URL", endpoint)
+        endpoint = resolved_endpoint(server, {**os.environ, **McpCredentialStore(self.paths).load()})
         headers: dict[str, str] = {}
         if server_id == "gitlab":
             headers["X-Gitlab-Enabled-Mcp-Server-Toolsets"] = "merge_requests"

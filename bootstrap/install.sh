@@ -28,6 +28,16 @@ mkdir -p "$STATE_DIR"
 printf '%s\n' "$REPOSITORY" > "$POINTER_TMP"
 mv "$POINTER_TMP" "$POINTER"
 
+# Заполненные env-файлы локальны и игнорируются Git. Импортируем их сразу,
+# чтобы первая синхронизация использовала тот же private vault, что и CLI.
+if [ -f "$REPOSITORY/mcp-creds.env" ]; then
+    python3 -m agent_engineering_kit.cli mcp creds import --from "$REPOSITORY/mcp-creds.env"
+fi
+if [ -f "$REPOSITORY/model-creds.env" ]; then
+    python3 -m agent_engineering_kit.cli models creds import --from "$REPOSITORY/model-creds.env"
+fi
+python3 -m agent_engineering_kit.cli models sync
+
 printf '%s\n' "agent-kit установлен. Канонический repository: $REPOSITORY"
 printf '%s\n' "Не перемещайте checkout без повторного запуска bootstrap/install.sh."
 printf '%s\n' "Запустите: agent-kit resync --no-update && agent-kit validate --ci && agent-kit doctor"

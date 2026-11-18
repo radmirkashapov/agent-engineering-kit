@@ -185,6 +185,9 @@ def credential_requirements(servers: Iterable[dict[str, Any]]) -> dict[str, Cred
             for value in server.get("environment", {}).values()
             if str(value).startswith("env:")
         } | required
+        endpoint_environment = server.get("endpoint_environment")
+        if isinstance(endpoint_environment, str):
+            referenced.add(endpoint_environment)
         for name in referenced:
             bucket = owners.setdefault(name, {"required": set(), "optional": set()})
             bucket["required" if name in required else "optional"].add(identifier)
