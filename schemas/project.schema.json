@@ -89,6 +89,15 @@
           "items": {"enum": ["instructions", "skills", "mcp"]}
         }
       }
+    },
+    "parent_project": {
+      "type": "object",
+      "required": ["id", "path"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "path": { "type": "string", "minLength": 1 }
+      }
     }
   },
   "$defs": {
@@ -107,7 +116,21 @@
         "id": { "$ref": "#/$defs/id" },
         "path": { "$ref": "#/$defs/relativePath" },
         "required": { "type": "boolean" },
-        "remote": { "type": "string", "minLength": 1, "not": { "pattern": "(?:[?#]|://[^/]*@)" } }
+        "remote": { "type": "string", "minLength": 1, "not": { "pattern": "(?:[?#]|://[^/]*@)" } },
+        "remotes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name"],
+            "additionalProperties": false,
+            "properties": {
+              "name": { "type": "string", "minLength": 1 },
+              "fetch_url": { "type": "string", "minLength": 1, "not": { "pattern": "(?:[?#]|://[^/]*@)" } },
+              "push_url": { "type": "string", "minLength": 1, "not": { "pattern": "(?:[?#]|://[^/]*@)" } },
+              "primary": { "type": "boolean" }
+            }
+          }
+        }
       }
     }
   }

@@ -353,6 +353,8 @@ def _sync_cline_rule(
             f"Используй canonical instructions: {repository / 'AI.md'}\n"
             f"Применяй effective local agents/rules из: {paths.installations / 'clients' / 'shared' / 'effective-policy.json'}\n"
             "В начале новой session выполни `agent-kit resync`; не копируй global rules в project.\n"
+            "Если Cline создаёт commit, выполняй только `agent-kit git commit --client cline -m \"<message>\"`; "
+            "не вызывай прямой `git commit`.\n"
             f"{_CLINE_RULE_END}\n"
         )
         atomic_write(target, content)
@@ -749,22 +751,24 @@ def expose_native_instructions(
     """Синхронизировать managed block, сохраняя пользовательский текст."""
     user_home = home or Path.home()
     targets = (
-        user_home / ".codex" / "AGENTS.md",
-        user_home / ".claude" / "CLAUDE.md",
-        user_home / ".config" / "opencode" / "AGENTS.md",
+        (user_home / ".codex" / "AGENTS.md", "codex"),
+        (user_home / ".claude" / "CLAUDE.md", "claude-code"),
+        (user_home / ".config" / "opencode" / "AGENTS.md", "opencode"),
     )
     start = "<!-- agent-engineering-kit:start -->"
     end = "<!-- agent-engineering-kit:end -->"
-    if agent_kit_enabled:
-        block = (
-            f"{start}\n"
-            f"Используй canonical instructions: {repository / 'AI.md'}\n"
-            f"Применяй effective local agents/rules из: {paths.installations / 'clients' / 'shared' / 'effective-policy.json'}\n"
-            "В начале новой session выполни `agent-kit resync`; не копируй global rules в project.\n"
-            f"{end}"
-        )
-    else:
-        block = (
+    def block(client: str) -> str:
+        if agent_kit_enabled:
+            return (
+                f"{start}\n"
+                f"Используй canonical instructions: {repository / 'AI.md'}\n"
+                f"Применяй effective local agents/rules из: {paths.installations / 'clients' / 'shared' / 'effective-policy.json'}\n"
+                "В начале новой session выполни `agent-kit resync`; не копируй global rules в project.\n"
+                f"Если {client} создаёт commit, выполняй только `agent-kit git commit --client {client} -m \"<message>\"`; "
+                "не вызывай прямой `git commit`.\n"
+                f"{end}"
+            )
+        return (
             f"{start}\n"
             "Agent Engineering Kit глобально отключён на этой машине.\n"
             "Не применяй профили, роли, rules и skills Agent Engineering Kit к агентам.\n"
@@ -781,14 +785,14 @@ def expose_native_instructions(
     generated.append(_sync_cline_rule(
         repository, paths, home=user_home, agent_kit_enabled=agent_kit_enabled,
     ))
-    for target in targets:
+    for target, client in targets:
         existing = target.read_text(encoding="utf-8") if target.is_file() else ""
         if start in existing and end in existing:
             prefix, remainder = existing.split(start, 1)
             _, suffix = remainder.split(end, 1)
-            content = prefix.rstrip() + "\n\n" + block + suffix
+            content = prefix.rstrip() + "\n\n" + block(client) + suffix
         else:
-            content = existing.rstrip() + ("\n\n" if existing.strip() else "") + block + "\n"
+            content = existing.rstrip() + ("\n\n" if existing.strip() else "") + block(client) + "\n"
         atomic_write(target, content)
         generated.append(target)
     return generated

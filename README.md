@@ -436,6 +436,10 @@ agent-kit project init ./orders \
 
 Project manifest необязателен для общих настроек Kit. `project init` создаёт версионируемый `.ai-team/project.yaml`; `project attach` создаёт descriptor только в локальных данных машины и не меняет исходный repository. Компоненты Maven, Gradle, Node.js, Go, Cargo, .NET, Python и Bazel обнаруживаются автоматически. Поле `components` нужно только для ownership, criticality и дополнительных логических границ. Настройку Jira можно объявить в `integrations.jira` через `project_key`, `cloud_id` и `site_url`.
 
+При создании manifest Kit рекурсивно ищет Git working trees в target-каталоге и записывает в `repositories` относительный путь, все безопасные `fetch_url`/`push_url` remotes и совместимое поле основного `remote`. URL с query-параметрами или credentials не сохраняются. Это даёт переносимый inventory для workspace с несколькими repository без копирования секретов.
+
+Повторный `agent-kit project init` в том же каталоге идемпотентен: существующий `.ai-team/project.yaml` не переписывается, обновляются только локальные индексы и интеграции. Неявные пересечения logical projects запрещены: инициализация дочернего каталога существующего проекта или родительского каталога с уже инициализированными потомками завершится ошибкой. Если дочерний проект действительно должен быть независимым, примените `--nested`; его manifest получит `parent_project` с относительным путём. Обратный порядок — сначала отдельный child, затем root — всегда требует явной реорганизации manifests: Kit намеренно не создаёт root поверх независимых детей, чтобы не скрыть перекрытие памяти, policy и repository inventory.
+
 При `project init` Kit сразу строит полный граф Codebase Memory и индекс символов Serena для каждого доступного репозитория logical project. Перед управляемыми запусками агентов (`run prepare`, высокоуровневый `task create`, создание lane) индексы обновляются в быстром режиме. После изменений, выполненных внешним harness в обход этих точек, запусти обновление явно:
 
 ```bash
@@ -461,6 +465,27 @@ agent-kit doctor
 ```
 
 После этого открой `docs/INDEX.md`, выбери нужную роль агента и используй только MCP и skills, относящиеся к задаче. Ревизию набора не следует менять до окончания текущей задачи.
+
+### 2.1. Коммиты, созданные AI-агентом
+
+Для Codex, Claude Code, Claude Desktop, OpenCode и Cline действует один и тот же маршрут — он не зависит от нативного формата конфигурации клиента. После `project init` Kit устанавливает консервативный `prepare-commit-msg` hook, не заменяя чужой hook. Если такой hook уже существует, инициализация остановится и попросит явно объединить их: автоматическое перезаписывание пользовательских hooks небезопасно.
+
+Агент обязан выполнять коммит через wrapper; Git author остаётся разработчиком, а Kit добавляет только проверяемые trailers:
+
+```bash
+agent-kit git commit --client opencode -m "feat(api): add order endpoint"
+# --client: codex | claude-code | claude-desktop | opencode | cline
+```
+
+Прямой `git commit` остаётся обычным ручным коммитом и не получает AI-метки. Это принципиально: универсальный hook не способен достоверно угадать, был ли terminal вызван человеком или агентом. Поэтому строгим контрактом для всех поддерживаемых harness является запрет прямого коммита в их managed instructions и единая команда выше; hook дополнительно нормализует trailers при вызове wrapper. При необходимости hook можно установить отдельно: `agent-kit git install-hook /path/to/repository`.
+
+Для выделенного agent worktree включите hard guard перед запуском любого harness. Он одинаково работает с Codex, Claude Code, Claude Desktop, OpenCode и Cline: raw `git commit` будет отклонён hook'ом, а wrapper пройдёт. После завершения задачи guard следует снять, чтобы вернуть checkout разработчику:
+
+```bash
+agent-kit git strict-enable --client opencode /path/to/agent-worktree
+# агент выполняет только agent-kit git commit --client opencode -m "..."
+agent-kit git strict-disable /path/to/agent-worktree
+```
 
 ### 3. Создать задачу и рабочее дерево
 

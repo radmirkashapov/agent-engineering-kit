@@ -84,6 +84,41 @@ def test_multi_repo_workspace(tmp_path: Path, kit_repository: Path) -> None:
     assert find_project(nested).identifier == "platform-v2"
 
 
+def test_project_init_discovers_nested_git_remotes(tmp_path: Path, kit_repository: Path) -> None:
+    root = tmp_path / "workspace"
+    first = root / "api"
+    second = root / "web"
+    for directory, remote in (
+        (first, "git@gitlab.company.example:platform/api.git"),
+        (second, "https://github.company.example/platform/web.git"),
+    ):
+        directory.mkdir(parents=True)
+        assert projects_module.run_command(["git", "-C", str(directory), "init"]).ok
+        assert projects_module.run_command(["git", "-C", str(directory), "remote", "add", "origin", remote]).ok
+    project = init_project(root, kit_repository, paths(tmp_path, kit_repository))
+    by_path = {entry["path"]: entry for entry in project.manifest["repositories"]}
+    assert by_path["api"]["remote"] == "git@gitlab.company.example:platform/api.git"
+    assert by_path["web"]["remotes"][0]["fetch_url"] == "https://github.company.example/platform/web.git"
+
+
+def test_project_init_rejects_implicit_nested_logical_project(tmp_path: Path, kit_repository: Path) -> None:
+    root = tmp_path / "workspace"
+    parent = init_project(root, kit_repository, paths(tmp_path, kit_repository))
+    with pytest.raises(AgentKitError, match="внутри logical project"):
+        init_project(root / "service", kit_repository, paths(tmp_path, kit_repository))
+
+    child = init_project(root / "service", kit_repository, paths(tmp_path, kit_repository), nested=True)
+    assert child.manifest["parent_project"] == {"id": parent.identifier, "path": ".."}
+
+
+def test_project_init_rejects_root_over_existing_child_even_with_nested_flag(tmp_path: Path, kit_repository: Path) -> None:
+    root = tmp_path / "workspace"
+    init_project(root / "service", kit_repository, paths(tmp_path, kit_repository))
+
+    with pytest.raises(AgentKitError, match="вложенные logical projects"):
+        init_project(root, kit_repository, paths(tmp_path, kit_repository), nested=True)
+
+
 def test_stable_project_id_and_idempotent_init(tmp_path: Path, kit_repository: Path) -> None:
     root = tmp_path / "stable-project"
     first = init_project(root, kit_repository, paths(tmp_path, kit_repository), identifier="stable-id")
