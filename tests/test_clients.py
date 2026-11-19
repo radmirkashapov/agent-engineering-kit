@@ -8,7 +8,17 @@ import shutil
 import sys
 import yaml
 
-from agent_engineering_kit.clients import CLIENTS, _sync_opencode_mcp, expose_native_instructions, expose_native_skills, register_native_mcp, sync_clients, validate_clients
+from agent_engineering_kit.clients import (
+    CLIENTS,
+    _sync_cline_mcp,
+    _sync_codex_mcp,
+    _sync_opencode_mcp,
+    expose_native_instructions,
+    expose_native_skills,
+    register_native_mcp,
+    sync_clients,
+    validate_clients,
+)
 from agent_engineering_kit.paths import KitPaths
 from agent_engineering_kit.component_state import Lifecycle, write_state
 from agent_engineering_kit.mcp_credentials import McpCredentialStore
@@ -54,6 +64,91 @@ def test_opencode_mcp_merge_preserves_user_servers_and_replaces_only_agent_kit_n
     assert servers["user-db"] == {"type": "local", "command": ["db-mcp"]}
     assert "agent-kit-old" not in servers
     assert servers["agent-kit-jira-datacenter"]["type"] == "local"
+
+
+def test_cline_mcp_merge_preserves_user_servers_and_replaces_only_agent_kit_namespace(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    paths = KitPaths(tmp_path, data, data / "runtime", data / "projects", data / "overrides")
+    home = tmp_path / "home"
+    config = home / ".cline/data/settings/cline_mcp_settings.json"
+    config.parent.mkdir(parents=True)
+    config.write_text(json.dumps({"mcpServers": {
+        "user-db": {"command": "db-mcp", "args": ["--readonly"]},
+        "agent-kit-old": {"command": "old-mcp"},
+    }}), encoding="utf-8")
+
+    class Manager:
+        @staticmethod
+        def executable(_item):
+            return Path("/usr/bin/npx")
+
+    status, changed, path = _sync_cline_mcp(
+        paths,
+        {"jira-datacenter": {"id": "jira-datacenter", "installation": {"type": "external-command"}, "command": "npx", "args": ["-y", "@example/jira"]}},
+        Manager(), {}, home=home,
+    )
+
+    servers = json.loads(config.read_text(encoding="utf-8"))["mcpServers"]
+    assert (status, changed, path) == ("SYNCED", True, str(config))
+    assert servers["user-db"] == {"command": "db-mcp", "args": ["--readonly"]}
+    assert "agent-kit-old" not in servers
+    assert servers["agent-kit-jira-datacenter"] == {
+        "command": "/usr/bin/npx", "args": ["-y", "@example/jira"], "disabled": False, "autoApprove": [],
+    }
+
+
+def test_cline_mcp_merge_honors_documented_data_dir_override(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    paths = KitPaths(tmp_path, data, data / "runtime", data / "projects", data / "overrides")
+    custom_data = tmp_path / "custom-cline-data"
+
+    class Manager:
+        @staticmethod
+        def executable(_item):
+            return Path("/usr/bin/npx")
+
+    status, _, path = _sync_cline_mcp(
+        paths,
+        {"memory": {"id": "memory", "installation": {"type": "external-command"}, "command": "npx", "args": ["-y", "@example/memory"]}},
+        Manager(), {}, home=tmp_path / "home", environment={"CLINE_DATA_DIR": str(custom_data)},
+    )
+
+    assert status == "SYNCED"
+    assert Path(path) == custom_data / "settings/cline_mcp_settings.json"
+    assert "agent-kit-memory" in json.loads(Path(path).read_text(encoding="utf-8"))["mcpServers"]
+
+
+def test_codex_mcp_merge_preserves_user_config_and_replaces_only_managed_block(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    paths = KitPaths(tmp_path, data, data / "runtime", data / "projects", data / "overrides")
+    home = tmp_path / "home"
+    config = home / ".codex/config.toml"
+    config.parent.mkdir(parents=True)
+    config.write_text(
+        'model = "user-model"\n\n[mcp_servers.user-db]\ncommand = "db-mcp"\nargs = ["--readonly"]\n'
+        '\n# agent-engineering-kit:mcp:start\n[mcp_servers.agent-kit-old]\ncommand = "old-mcp"\n# agent-engineering-kit:mcp:end\n',
+        encoding="utf-8",
+    )
+
+    class Manager:
+        @staticmethod
+        def executable(_item):
+            return Path("/usr/bin/npx")
+
+    status, changed, path = _sync_codex_mcp(
+        paths,
+        {"jira-datacenter": {"id": "jira-datacenter", "installation": {"type": "external-command"}, "command": "npx", "args": ["-y", "@example/jira"], "client_timeout": {"startup": 120000}}},
+        Manager(), {}, home=home,
+    )
+
+    document = config.read_text(encoding="utf-8")
+    assert (status, changed, path) == ("SYNCED", True, str(config))
+    assert 'model = "user-model"' in document
+    assert '[mcp_servers.user-db]' in document
+    assert "agent-kit-old" not in document
+    assert '[mcp_servers.agent-kit-jira-datacenter]' in document
+    assert 'command = "/usr/bin/npx"' in document
+    assert "startup_timeout_ms = 120000" in document
 
 
 @pytest.mark.parametrize("layer", ["built-in", "external-catalog", "local-override", "local-package-override"])
@@ -210,12 +305,15 @@ def test_core_mcp_registration_is_namespaced_and_context7_key_safe(tmp_path: Pat
 
     state_path = register_native_mcp(repository, paths, runner=runner)
     additions = [args for args in calls if "add" in args]
-    assert len(additions) == 2
+    assert len(additions) == 1
     assert all(any(value.startswith("agent-kit-") for value in args) for args in additions)
-    assert sum("agent-kit-context7" in args for args in additions) == 2
+    assert sum("agent-kit-context7" in args for args in additions) == 1
     assert all("CONTEXT7_API_KEY" not in " ".join(args) for args in additions)
+    codex_config = (data / "test-home/.codex/config.toml").read_text(encoding="utf-8")
+    assert "agent-kit-context7" in codex_config
+    assert "CONTEXT7_API_KEY" not in codex_config
     registrations = json.loads(state_path.read_text(encoding="utf-8"))["registrations"]
-    assert sum(item.get("mcp") == "context7" and item["status"] == "ACTIVE" for item in registrations) == 2
+    assert sum(item.get("mcp") == "context7" and item["status"] == "ACTIVE" for item in registrations) == 3
 
 
 @pytest.mark.parametrize("credential_source", ["missing", "vault", "shell"])
@@ -273,8 +371,8 @@ def test_stdio_mcp_with_environment_is_registered_through_launcher(
 
     additions = [call for call in calls if "add" in call and f"agent-kit-{server}" in call]
     contract_path = paths.installations / "clients/shared/mcp-launchers" / f"{server}.json"
-    assert len(additions) == 2
-    assert sum("remove" in call and f"agent-kit-{server}" in call for call in calls) == 2
+    assert len(additions) == 1
+    assert sum("remove" in call and f"agent-kit-{server}" in call for call in calls) == 1
     assert all(call[call.index("--") + 1:] == [sys.executable, "-m", "agent_engineering_kit.mcp_launcher", str(contract_path.resolve())] for call in additions)
     assert all(variable not in json.dumps(additions) for variable in variables)
     contract = json.loads(contract_path.read_text(encoding="utf-8"))
@@ -284,7 +382,7 @@ def test_stdio_mcp_with_environment_is_registered_through_launcher(
     assert "fixture-value" not in json.dumps(calls) + state_text + contract_path.read_text(encoding="utf-8")
     server_rows = [row for row in json.loads(state_text)["registrations"] if row.get("mcp") == server and row["client"] in {"codex", "claude-code"}]
     assert len(server_rows) == 2
-    assert all(row["desired_verified"] for row in server_rows)
+    assert next(row for row in server_rows if row["client"] == "claude-code")["desired_verified"]
     assert all(row["status"] == ("CONFIG_REQUIRED" if credential_source == "missing" else "ACTIVE") for row in server_rows)
     if credential_source == "missing":
         assert all(row["missing_environment"] == list(variables) for row in server_rows)
@@ -293,7 +391,8 @@ def test_stdio_mcp_with_environment_is_registered_through_launcher(
     register_native_mcp(repository, paths, project=project, access_profile="administrator", runner=runner)
     assert not any(("add" in call or "remove" in call) and f"agent-kit-{server}" in call for call in calls)
     server_rows = [row for row in json.loads(state_path.read_text(encoding="utf-8"))["registrations"] if row.get("mcp") == server and row["client"] in {"codex", "claude-code"}]
-    assert all(row["changed"] is False and row["desired_verified"] for row in server_rows)
+    assert next(row for row in server_rows if row["client"] == "claude-code")["changed"] is False
+    assert next(row for row in server_rows if row["client"] == "claude-code")["desired_verified"]
     assert all(row["status"] == ("CONFIG_REQUIRED" if credential_source == "missing" else "ACTIVE") for row in server_rows)
     if credential_source == "missing":
         assert all(row["missing_environment"] == list(variables) for row in server_rows)
@@ -410,16 +509,16 @@ def test_launcher_contract_is_removed_when_server_no_longer_needs_it(tmp_path: P
     additions = [call for call in calls if "add" in call]
     if route == "direct":
         sentry = [call for call in additions if "agent-kit-sentry" in call]
-        assert len(sentry) == 2
+        assert len(sentry) == 1
         assert all(call[call.index("--") + 1:] == ["/usr/bin/npx", "-y", "@sentry/mcp-server@0.42.0", "--skills=inspect", "--sentry-dsn="] for call in sentry)
     else:
         assert not any("agent-kit-sentry" in call for call in additions)
     if route == "docker":
         gateway = [call for call in additions if "agent-kit-docker" in call]
-        assert len(gateway) == 2
+        assert len(gateway) == 1
         assert all(call[call.index("--") + 1:] == ["/usr/bin/docker", "mcp", "gateway", "run", "--profile", "agent-engineering-kit"] for call in gateway)
         rows = json.loads(state_path.read_text(encoding="utf-8"))["registrations"]
-        assert sum(row.get("mcp") == "sentry" and row["status"] == "DOCKER_ROUTED" for row in rows) == 2
+        assert sum(row.get("mcp") == "sentry" and row["status"] == "DOCKER_ROUTED" for row in rows) == 1
 
 
 def test_registration_failure_does_not_persist_client_output_with_credentials(tmp_path: Path, monkeypatch) -> None:
@@ -438,7 +537,10 @@ def test_registration_failure_does_not_persist_client_output_with_credentials(tm
     assert "fixture-private-value" not in text
     rows = [row for row in json.loads(text)["registrations"] if row.get("mcp") == "sentry" and row["client"] in {"codex", "claude-code"}]
     assert len(rows) == 2
-    assert all(row["status"] == "ERROR" and row["desired_verified"] is False for row in rows)
+    claude = next(row for row in rows if row["client"] == "claude-code")
+    codex = next(row for row in rows if row["client"] == "codex")
+    assert claude["status"] == "ERROR" and claude["desired_verified"] is False
+    assert codex["status"] == "ACTIVE"
 
 
 def test_confirmed_docker_route_replaces_native_server_with_one_gateway(
@@ -488,7 +590,7 @@ def test_confirmed_docker_route_replaces_native_server_with_one_gateway(
     additions = [args for args in calls if "add" in args]
     assert not any("agent-kit-context7" in args for args in additions)
     gateway = [args for args in additions if "agent-kit-docker" in args]
-    assert len(gateway) == 2
+    assert len(gateway) == 1
     assert all(Path(args[-6]).name == "docker" for args in gateway)
     assert all(args[-5:] == ["mcp", "gateway", "run", "--profile", "agent-engineering-kit"] for args in gateway)
 
@@ -533,25 +635,17 @@ def test_blocked_mcp_is_removed_from_previously_registered_native_clients(tmp_pa
     data = tmp_path / "data"
     paths = KitPaths(repository, data, data / "runtime", data / "projects", data / "overrides")
     monkeypatch.setattr("agent_engineering_kit.clients.shutil.which", lambda name: f"/usr/bin/{name}" if name in {"codex", "claude", "npx"} else None)
-    client_state = {
-        "codex": {"user-owned"},
-        "claude-code": {"user-owned"},
-    }
+    client_state = {"claude-code": {"user-owned"}}
 
     def runner(args, **kwargs):
-        client = "codex" if Path(args[0]).name == "codex" else "claude-code"
+        client = "claude-code"
         if args[2] == "get":
             name = args[3]
             if name not in client_state[client]:
                 return CommandResult(tuple(args), 1, "", "не найден")
-            output = (
-                json.dumps({"transport": {"url": "https://mcp.context7.com/mcp/oauth"}})
-                if client == "codex"
-                else "https://mcp.context7.com/mcp/oauth"
-            )
-            return CommandResult(tuple(args), 0, output, "")
+            return CommandResult(tuple(args), 0, "https://mcp.context7.com/mcp/oauth", "")
         if args[2] == "add":
-            name = args[3] if client == "codex" else args[args.index("--scope") + 2]
+            name = args[args.index("--scope") + 2]
             client_state[client].add(name)
             return CommandResult(tuple(args), 0, "", "")
         if args[2] == "remove":
@@ -560,7 +654,8 @@ def test_blocked_mcp_is_removed_from_previously_registered_native_clients(tmp_pa
         return CommandResult(tuple(args), 1, "", "неподдерживаемая команда")
 
     register_native_mcp(repository, paths, runner=runner)
-    assert all("agent-kit-context7" in registrations for registrations in client_state.values())
+    assert "agent-kit-context7" in client_state["claude-code"]
+    assert "agent-kit-context7" in (data / "test-home/.codex/config.toml").read_text(encoding="utf-8")
 
     (paths.state / "docker-mcp-toolkit.json").write_text(
         json.dumps({
@@ -576,15 +671,18 @@ def test_blocked_mcp_is_removed_from_previously_registered_native_clients(tmp_pa
     write_yaml(paths.overrides / "global/access.yaml", {"version": 1, "mcp": {"allow": [], "block": ["context7"]}})
     state_path = register_native_mcp(repository, paths, runner=runner)
 
-    assert all("agent-kit-context7" not in registrations for registrations in client_state.values())
-    assert all("agent-kit-docker" not in registrations for registrations in client_state.values())
-    assert all("user-owned" in registrations for registrations in client_state.values())
+    assert "agent-kit-context7" not in client_state["claude-code"]
+    assert "agent-kit-docker" not in client_state["claude-code"]
+    assert "user-owned" in client_state["claude-code"]
+    codex_config = (data / "test-home/.codex/config.toml").read_text(encoding="utf-8")
+    assert "agent-kit-context7" not in codex_config
+    assert "agent-kit-docker" not in codex_config
     rows = json.loads(state_path.read_text(encoding="utf-8"))["registrations"]
     disabled = [row for row in rows if row.get("mcp") == "context7" and row["status"] == "DISABLED"]
-    assert {row["client"] for row in disabled} == {"codex", "claude-code"}
+    assert {row["client"] for row in disabled} == {"claude-code"}
 
 
-def test_missing_cli_preserves_managed_registration_for_later_cleanup(tmp_path: Path, monkeypatch) -> None:
+def test_missing_cli_does_not_block_codex_config_sync(tmp_path: Path, monkeypatch) -> None:
     repository = Path(__file__).resolve().parents[1]
     data = tmp_path / "data"
     paths = KitPaths(repository, data, data / "runtime", data / "projects", data / "overrides")
@@ -600,7 +698,7 @@ def test_missing_cli_preserves_managed_registration_for_later_cleanup(tmp_path: 
 
     rows = json.loads(state_path.read_text(encoding="utf-8"))["registrations"]
     preserved = next(row for row in rows if row.get("client") == "codex" and row.get("mcp") == "context7")
-    assert preserved["status"] == "NOT_SUPPORTED"
+    assert preserved["status"] == "ACTIVE"
 
 
 def test_instruction_bridge_preserves_user_text_and_is_idempotent(tmp_path: Path) -> None:
@@ -618,6 +716,18 @@ def test_instruction_bridge_preserves_user_text_and_is_idempotent(tmp_path: Path
     config = tmp_path / ".config/opencode/opencode.json"
     document = json.loads(config.read_text(encoding="utf-8"))
     assert document["instructions"] == [str((repository / "AI.md").resolve())]
+    cline_rule = tmp_path / ".cline/rules/agent-engineering-kit.md"
+    assert str(repository / "AI.md") in cline_rule.read_text(encoding="utf-8")
+
+
+def test_cline_native_rule_is_removed_when_kit_is_disabled(tmp_path: Path) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    paths = KitPaths(repository, tmp_path / "data", tmp_path / "runtime", tmp_path / "projects", tmp_path / "overrides")
+
+    expose_native_instructions(repository, paths, home=tmp_path)
+    expose_native_instructions(repository, paths, home=tmp_path, agent_kit_enabled=False)
+
+    assert not (tmp_path / ".cline/rules/agent-engineering-kit.md").exists()
 
 
 def test_opencode_instruction_bridge_preserves_user_entries_and_removes_only_owned_path(tmp_path: Path) -> None:

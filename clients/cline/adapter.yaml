@@ -1,4 +1,4 @@
-# Thin adapter не копирует global rules, а указывает Cline на canonical contracts.
+# Thin adapter связывает Cline с canonical contracts; native rule публикуется отдельным managed-файлом.
 version: 1
 id: cline
 entrypoint: AI.md

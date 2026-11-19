@@ -1,6 +1,8 @@
 # Codex CLI и Codex Desktop
 
-CLI и Desktop используют общее MCP-пространство Codex в `~/.codex/config.toml`. Включайте сервер командой `agent-kit mcp enable <id> --scope global --resync`; Kit автоматически регистрирует поддерживаемые серверы через launcher. Инструкции и skills подключаются отдельно через `~/.codex/AGENTS.md` и `~/.agents/skills`.
+CLI и Desktop используют общее MCP-пространство Codex в `~/.codex/config.toml` (Windows: `%USERPROFILE%\\.codex\\config.toml`). Включайте сервер командой `agent-kit mcp enable <id> --scope global --resync`; Kit автоматически добавит или обновит только marker-блок `agent-engineering-kit:mcp` и таблицы `mcp_servers.agent-kit-*`. Существующие модели, provider, approvals, пользовательские MCP и комментарии за пределами блока не изменяются. Эта синхронизация не требует установленного бинарника `codex`.
+
+Для stdio MCP Kit регистрирует private launcher без literal credentials в TOML. Для remote OAuth Codex хранит авторизацию нативно и может запросить вход при первом вызове. Инструкции и skills подключаются отдельно через `~/.codex/AGENTS.md` и `~/.agents/skills`.
 
 Для stdio credentials импортируйте нужные значения из `mcp-creds.env` командой `agent-kit mcp creds import --from ./mcp-creds.env`, затем проверьте `agent-kit mcp creds status`. Если Codex показывает `AUTH_REQUIRED`, проверьте состояние stdio credentials; для remote MCP завершите OAuth в активном Codex-профиле и повторите запрос.
 

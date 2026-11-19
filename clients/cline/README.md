@@ -1,17 +1,16 @@
 # Cline
 
-Cline подключает `AGENTS.md`, Cline Rules и MCP через настройки расширения. Включите сервер командой `agent-kit mcp enable <id> --scope global`, затем вручную добавьте его в раздел MCP Servers в настройках Cline. При статусе `CONFIG_REQUIRED` следуйте подсказке Kit, сохраните сервер в настройках расширения и перезапустите Cline.
+Cline получает rules, skills и MCP автоматически после `agent-kit resync`. Kit создаёт только `~/.cline/rules/agent-engineering-kit.md` и безопасно объединяет глобальный `~/.cline/data/settings/cline_mcp_settings.json` (Windows: `%USERPROFILE%\\.cline\\data\\settings\\cline_mcp_settings.json`). Учитываются официальные переменные `CLINE_DIR`, `CLINE_DATA_DIR` и `CLINE_MCP_SETTINGS_PATH`.
 
-Пример для stdio Sentry (нужны Node.js/npm и локальный env-файл с `SENTRY_ACCESS_TOKEN`):
+В JSON Kit владеет исключительно ключами `mcpServers.agent-kit-*`: устаревшие записи этого namespace удаляются, активные обновляются. Все остальные MCP, `providers.json`, `global-settings.json`, sessions и пользовательские rules остаются без изменений. Для stdio серверов Cline запускает private launcher, поэтому token не записывается в settings JSON. `autoApprove` всегда остаётся пустым.
 
 ```bash
 agent-kit mcp creds import --from ./mcp-creds.env
-agent-kit mcp enable sentry --scope global
-agent-kit resync --no-update
-agent-kit mcp launch-command sentry | python3 -c 'import json,sys; r=json.load(sys.stdin); r.update(disabled=False, autoApprove=[]); print(json.dumps({"mcpServers": {"agent-kit-sentry": r}}, indent=2))'
+agent-kit mcp enable sentry --scope global --resync
+agent-kit doctor
 ```
 
-В панели Cline откройте MCP Servers → Configure → Configure MCP Servers. Объедините выведенную запись `mcpServers.agent-kit-sentry` с открытым `cline_mcp_settings.json`, сохраните и перезапустите сервер. Команда выводит реальные абсолютные `command`/`args`; поле `env` не требуется. Codex и Claude Code для генерации не нужны. Launcher использует data home, выбранный при генерации, даже если Cline не наследует переменные shell. После переноса vault или смены команды заново сгенерируйте и замените запись. Для другого MCP проверьте разрешение текущего профиля через `agent-kit mcp available`.
+После синхронизации перезапустите Cline либо перезапустите сервер в панели MCP Servers. Remote OAuth для GitLab и Context7 по-прежнему завершается в Cline. Модели и provider Cline не синхронизируются: Cline хранит их во внутреннем state с секретами, для которого Kit не использует нестабильный формат; настройте provider через UI или `cline auth`.
 
 Формат регистрации: [MCP в Cline](https://docs.cline.bot/mcp/mcp-overview).
 

@@ -25,6 +25,11 @@ from .projects import LogicalProject
 from .project_skills import ProjectSkillRepositoryManager, redact_url
 from .result import ValidationResult
 
+try:  # Python 3.11+ provides TOML parsing in the standard library.
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - exercised on Python 3.10 only.
+    import tomli as tomllib
+
 
 CLIENTS = ("codex", "claude-code", "claude-desktop", "opencode", "cline")
 
@@ -34,6 +39,40 @@ def _opencode_config_path(home: Path) -> Path:
     json_path = home / ".config" / "opencode" / "opencode.json"
     jsonc_path = home / ".config" / "opencode" / "opencode.jsonc"
     return jsonc_path if jsonc_path.is_file() else json_path
+
+
+def _cline_root(home: Path, environment: dict[str, str] | None = None) -> Path:
+    """Resolve Cline's global root with its documented CLINE_DIR override."""
+    configured = (environment or os.environ).get("CLINE_DIR")
+    return Path(configured).expanduser() if configured else home / ".cline"
+
+
+def _cline_mcp_config_path(home: Path, environment: dict[str, str] | None = None) -> Path:
+    """Resolve Cline's documented global MCP config, including path overrides."""
+    variables = environment or os.environ
+    configured = variables.get("CLINE_MCP_SETTINGS_PATH")
+    if configured:
+        return Path(configured).expanduser()
+    data_root = Path(variables["CLINE_DATA_DIR"]).expanduser() if variables.get("CLINE_DATA_DIR") else _cline_root(home, variables) / "data"
+    return data_root / "settings" / "cline_mcp_settings.json"
+
+
+def _codex_config_path(home: Path, environment: dict[str, str] | None = None) -> Path:
+    """Resolve Codex home without embedding Unix or Windows-specific user paths."""
+    configured = (environment or os.environ).get("CODEX_HOME")
+    return (Path(configured).expanduser() if configured else home / ".codex") / "config.toml"
+
+
+def _load_json_object(path: Path, *, label: str, default: dict) -> dict:
+    if not path.is_file():
+        return dict(default)
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise AgentKitError(f"Некорректный JSON {label}: {path}") from error
+    if not isinstance(document, dict):
+        raise AgentKitError(f"{label} должен быть object: {path}")
+    return document
 
 
 def _load_opencode_config(path: Path) -> dict:
@@ -108,6 +147,149 @@ def _sync_opencode_mcp(
     return "SYNCED", changed, str(config_path)
 
 
+def _managed_mcp_command(paths: KitPaths, item: dict, manager) -> tuple[str, list[str]] | None:
+    """Build a secret-free stdio registration; credentials stay in the Kit launcher."""
+    from .mcp_launcher import registration_command
+
+    binary = manager.executable(item)
+    if binary is None:
+        return None
+    if item.get("environment") or item.get("required_environment"):
+        return registration_command(paths, item, binary)
+    return str(binary), list(item.get("args", []))
+
+
+def _sync_cline_mcp(
+    paths: KitPaths,
+    desired: dict[str, dict],
+    manager,
+    endpoint_values: dict[str, str],
+    *,
+    home: Path | None = None,
+    environment: dict[str, str] | None = None,
+) -> tuple[str, bool, str]:
+    """Merge only the `agent-kit-*` namespace into Cline's global MCP document."""
+    from .mcp_endpoint import resolved_endpoint
+
+    config_path = _cline_mcp_config_path(home or Path.home(), environment)
+    document = _load_json_object(config_path, label="Cline MCP config", default={"mcpServers": {}})
+    servers = document.setdefault("mcpServers", {})
+    if not isinstance(servers, dict):
+        raise AgentKitError(f"Cline mcpServers должен быть object: {config_path}")
+    previous = json.dumps(servers, ensure_ascii=False, sort_keys=True)
+    expected_names = {str(item.get("registration_name", f"agent-kit-{identifier}")) for identifier, item in desired.items()}
+    for name in list(servers):
+        if isinstance(name, str) and name.startswith("agent-kit-") and name not in expected_names:
+            del servers[name]
+    for identifier, item in desired.items():
+        name = str(item.get("registration_name", f"agent-kit-{identifier}"))
+        if item["installation"]["type"] == "remote":
+            entry = {"type": "streamableHttp", "url": resolved_endpoint(item, endpoint_values)}
+        else:
+            command = _managed_mcp_command(paths, item, manager)
+            if command is None:
+                continue
+            binary, args = command
+            entry = {"command": binary, "args": args}
+        # Cline's own UI owns approvals; Kit never auto-approves MCP tool calls.
+        entry.update({"disabled": False, "autoApprove": []})
+        servers[name] = entry
+    changed = previous != json.dumps(servers, ensure_ascii=False, sort_keys=True) or not config_path.is_file()
+    if changed:
+        try:
+            atomic_write(config_path, json.dumps(document, ensure_ascii=False, indent=2) + "\n")
+        except OSError:
+            return "CONFIG_REQUIRED", False, str(config_path)
+    return "SYNCED", changed, str(config_path)
+
+
+_CODEX_MCP_START = "# agent-engineering-kit:mcp:start"
+_CODEX_MCP_END = "# agent-engineering-kit:mcp:end"
+_CODEX_MANAGED_TABLE = re.compile(r"^\s*\[mcp_servers\.agent-kit-[^\]]+\]\s*(?:#.*)?$")
+
+
+def _strip_codex_managed_mcp(text: str) -> str:
+    """Remove only Kit-owned tables, including registrations created by older CLI sync."""
+    start_count = text.count(_CODEX_MCP_START)
+    end_count = text.count(_CODEX_MCP_END)
+    if start_count != end_count or start_count > 1:
+        raise AgentKitError("Некорректный managed MCP block Codex; исправьте marker-блок вручную")
+    if start_count:
+        before, remainder = text.split(_CODEX_MCP_START, 1)
+        _, after = remainder.split(_CODEX_MCP_END, 1)
+        text = before.rstrip() + "\n" + after.lstrip()
+
+    lines = text.splitlines(keepends=True)
+    kept: list[str] = []
+    index = 0
+    while index < len(lines):
+        if not _CODEX_MANAGED_TABLE.match(lines[index]):
+            kept.append(lines[index])
+            index += 1
+            continue
+        # A TOML table continues until the next table header. `agent-kit-*` is
+        # a reserved namespace, so old CLI registrations can be migrated safely.
+        index += 1
+        while index < len(lines) and not lines[index].lstrip().startswith("["):
+            index += 1
+    return "".join(kept).rstrip()
+
+
+def _sync_codex_mcp(
+    paths: KitPaths,
+    desired: dict[str, dict],
+    manager,
+    endpoint_values: dict[str, str],
+    *,
+    home: Path | None = None,
+    environment: dict[str, str] | None = None,
+) -> tuple[str, bool, str]:
+    """Append a reversible managed MCP block while preserving the user's TOML."""
+    from .mcp_endpoint import resolved_endpoint
+
+    config_path = _codex_config_path(home or Path.home(), environment)
+    original = config_path.read_text(encoding="utf-8") if config_path.is_file() else ""
+    try:
+        if original.strip():
+            tomllib.loads(original)
+    except (OSError, UnicodeError, tomllib.TOMLDecodeError) as error:
+        raise AgentKitError(f"Некорректный TOML Codex: {config_path}") from error
+
+    sections: list[str] = []
+    for identifier, item in sorted(desired.items()):
+        name = str(item.get("registration_name", f"agent-kit-{identifier}"))
+        lines = [f"[mcp_servers.{name}]"]
+        if item["installation"]["type"] == "remote":
+            lines.append(f"url = {json.dumps(resolved_endpoint(item, endpoint_values), ensure_ascii=False)}")
+        else:
+            command = _managed_mcp_command(paths, item, manager)
+            if command is None:
+                continue
+            binary, args = command
+            lines.append(f"command = {json.dumps(binary, ensure_ascii=False)}")
+            lines.append(f"args = {json.dumps(args, ensure_ascii=False)}")
+        timeout = item.get("client_timeout", {}).get("startup")
+        if isinstance(timeout, int) and timeout > 0:
+            lines.append(f"startup_timeout_ms = {timeout}")
+        lines.append("enabled = true")
+        sections.append("\n".join(lines))
+
+    base = _strip_codex_managed_mcp(original)
+    block = "\n".join([_CODEX_MCP_START, *sections, _CODEX_MCP_END])
+    candidate = (base + "\n\n" if base else "") + block + "\n"
+    try:
+        tomllib.loads(candidate)
+    except tomllib.TOMLDecodeError as error:
+        raise AgentKitError(f"Не удалось безопасно объединить MCP с Codex config: {config_path}") from error
+    changed = candidate != original
+    if changed:
+        try:
+            atomic_write(config_path, candidate)
+        except OSError:
+            return "CONFIG_REQUIRED", False, str(config_path)
+    return "SYNCED", changed, str(config_path)
+
+
 def _sync_opencode_instructions(
     repository: Path,
     paths: KitPaths,
@@ -145,6 +327,38 @@ def _sync_opencode_instructions(
         atomic_write(config_path, json.dumps({**document, "instructions": updated}, ensure_ascii=False, indent=2) + "\n")
     atomic_write(state_path, json.dumps({"version": 1, "paths": sorted(owned)}, ensure_ascii=False, indent=2) + "\n")
     return config_path
+
+
+_CLINE_RULE_START = "<!-- agent-engineering-kit:start -->"
+_CLINE_RULE_END = "<!-- agent-engineering-kit:end -->"
+
+
+def _sync_cline_rule(
+    repository: Path,
+    paths: KitPaths,
+    *,
+    home: Path,
+    agent_kit_enabled: bool,
+) -> Path:
+    """Publish one namespaced native Cline rule without touching user rules."""
+    target = _cline_root(home) / "rules" / "agent-engineering-kit.md"
+    existing = target.read_text(encoding="utf-8") if target.is_file() else ""
+    managed = _CLINE_RULE_START in existing and _CLINE_RULE_END in existing
+    if existing.strip() and not managed:
+        raise AgentKitError(f"Cline rule collision с пользовательским файлом: {target}")
+    if agent_kit_enabled:
+        content = (
+            f"{_CLINE_RULE_START}\n"
+            "# Agent Engineering Kit\n\n"
+            f"Используй canonical instructions: {repository / 'AI.md'}\n"
+            f"Применяй effective local agents/rules из: {paths.installations / 'clients' / 'shared' / 'effective-policy.json'}\n"
+            "В начале новой session выполни `agent-kit resync`; не копируй global rules в project.\n"
+            f"{_CLINE_RULE_END}\n"
+        )
+        atomic_write(target, content)
+    elif managed:
+        target.unlink()
+    return target
 
 
 @dataclass(frozen=True)
@@ -563,6 +777,10 @@ def expose_native_instructions(
     generated.append(_sync_opencode_instructions(
         repository, paths, home=user_home, agent_kit_enabled=agent_kit_enabled,
     ))
+    # Cline discovers Markdown rules from its own global rules directory.
+    generated.append(_sync_cline_rule(
+        repository, paths, home=user_home, agent_kit_enabled=agent_kit_enabled,
+    ))
     for target in targets:
         existing = target.read_text(encoding="utf-8") if target.is_file() else ""
         if start in existing and end in existing:
@@ -640,15 +858,28 @@ def register_native_mcp(
     credential_store = McpCredentialStore(paths)
     credential_status = {row["name"]: row["status"] for row in credential_store.status(desired.values())}
     endpoint_values = {**os.environ, **credential_store.load()}
+    config_home = None if runner is run_command else paths.data / "test-home"
     try:
         opencode_status, opencode_changed, opencode_path = _sync_opencode_mcp(
             paths, desired, manager, endpoint_values,
             # Инъецированный runner используется только в тестах и dry интеграциях:
             # не позволяем им менять настоящий user-level config.
-            home=None if runner is run_command else paths.data / "test-home",
+            home=config_home,
         )
     except AgentKitError:
         opencode_status, opencode_changed, opencode_path = "CONFIG_REQUIRED", False, ""
+    try:
+        codex_status, codex_changed, codex_path = _sync_codex_mcp(
+            paths, desired, manager, endpoint_values, home=config_home,
+        )
+    except AgentKitError:
+        codex_status, codex_changed, codex_path = "CONFIG_REQUIRED", False, ""
+    try:
+        cline_status, cline_changed, cline_path = _sync_cline_mcp(
+            paths, desired, manager, endpoint_values, home=config_home,
+        )
+    except AgentKitError:
+        cline_status, cline_changed, cline_path = "CONFIG_REQUIRED", False, ""
     target = paths.state / "client-mcp-registrations.json"
     previous_rows: list[dict] = []
     if target.is_file():
@@ -662,7 +893,9 @@ def register_native_mcp(
             previous_by_client.setdefault(row["client"], set()).add(row["mcp"])
 
     rows: list[dict] = []
-    clients = (("codex", shutil.which("codex")), ("claude-code", shutil.which("claude")))
+    # Codex and Cline have stable user-level config files. They are merged below
+    # without relying on an installed CLI; Claude Code remains CLI-managed.
+    clients = (("claude-code", shutil.which("claude")),)
     for client, executable in clients:
         previous_ids = previous_by_client.get(client, set())
         if not executable:
@@ -762,7 +995,7 @@ def register_native_mcp(
             added = runner(command, cwd=paths.state)
             status = ready_status if added.ok else "ERROR"
             rows.append({"client": client, "mcp": identifier, "status": status, "changed": added.ok, "desired_verified": added.ok, **readiness, "reason": "OAuth может потребовать интерактивного подтверждения при первом использовании" if status == "AUTH_REQUIRED" else ("" if added.ok else "не удалось зарегистрировать managed MCP")})
-    for client in ("claude-desktop", "cline"):
+    for client in ("claude-desktop",):
         for identifier, item in desired.items():
             rows.append({
                 "client": client,
@@ -770,6 +1003,28 @@ def register_native_mcp(
                 "required": bool(item.get("required")),
                 "status": "CONFIG_REQUIRED",
                 "contract": f"clients/{client}/README.md",
+            })
+    for client, status, changed, path in (
+        ("codex", codex_status, codex_changed, codex_path),
+        ("cline", cline_status, cline_changed, cline_path),
+    ):
+        for identifier, item in desired.items():
+            missing_environment = sorted(
+                name for name in item.get("required_environment", [])
+                if credential_status.get(name) != "SET" and not os.environ.get(name)
+            ) if item["installation"]["type"] != "remote" else []
+            readiness = (
+                "AUTH_REQUIRED" if item["installation"].get("authentication") == "oauth"
+                else "CONFIG_REQUIRED" if missing_environment else "ACTIVE"
+            )
+            rows.append({
+                "client": client,
+                "mcp": identifier,
+                "required": bool(item.get("required")),
+                "status": status if status != "SYNCED" else readiness,
+                "changed": changed,
+                "path": path,
+                **({"missing_environment": missing_environment} if missing_environment else {}),
             })
     for identifier, item in desired.items():
         rows.append({

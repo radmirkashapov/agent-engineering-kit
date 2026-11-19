@@ -12,6 +12,8 @@
 
 ## Быстрый старт
 
+### Linux и macOS
+
 ```bash
 # Выполнять из полного Git checkout, а не из скачанного ZIP-архива.
 # Создать private env-файлы до bootstrap. Они уже исключены из Git.
@@ -34,6 +36,27 @@ agent-kit validate --ci
 agent-kit doctor
 
 # Открыть встроенную справку.
+agent-kit help
+```
+
+### Windows PowerShell
+
+`bootstrap/install.sh` не запускается нативно в Windows. Для обычного Windows PowerShell используйте PowerShell-скрипт из корня полного Git checkout; Bash-вариант допустим только в WSL или Git Bash.
+
+```powershell
+# Создать private env-файлы до bootstrap и заполнить только нужные значения.
+Copy-Item mcp-creds.example.env mcp-creds.env
+Copy-Item model-creds.example.env model-creds.env
+notepad mcp-creds.env
+notepad model-creds.env
+
+# Docker Desktop должен быть запущен, если включаются Docker MCP.
+.\bootstrap\install.ps1
+
+# Проверить установку.
+agent-kit resync --no-update
+agent-kit validate --ci
+agent-kit doctor
 agent-kit help
 ```
 
@@ -109,7 +132,7 @@ Kit уже формирует контракты запусков, task workspac
 
 `AI.md` служит короткой точкой входа для агента. Каталоги задают желаемое состояние, lock-файлы закрепляют проверенные ревизии, а Python CLI создаёт только локальные артефакты машины.
 
-При `agent-kit resync` OpenCode получает абсолютный путь к canonical `AI.md` в собственном массиве `instructions` файла `~/.config/opencode/opencode.json(c)`. Пользовательские instruction paths сохраняются; при `agent-kit disable` удаляется только путь, добавленный Kit. Для Codex и Claude Code Kit сохраняет эквивалентные managed blocks в их нативных discovery-файлах.
+При `agent-kit resync` OpenCode получает абсолютный путь к canonical `AI.md` в собственном массиве `instructions` файла `~/.config/opencode/opencode.json(c)`. Пользовательские instruction paths сохраняются; при `agent-kit disable` удаляется только путь, добавленный Kit. Codex и Claude Code получают managed blocks в discovery-файлах, а Cline — отдельное глобальное правило в `~/.cline/rules/agent-engineering-kit.md`.
 
 | Назначение | Unix по умолчанию | Windows по умолчанию |
 |---|---|---|
@@ -216,7 +239,7 @@ agent-kit enable
 agent-kit enable --reset
 ```
 
-`disable` сразу обновляет managed-блоки в `~/.codex/AGENTS.md`, `~/.claude/CLAUDE.md` и `~/.config/opencode/AGENTS.md`. В блоке появляется явное указание не применять правила Kit; пользовательский текст вокруг блока сохраняется. `enable` немедленно возвращает обычную инструкцию. Состояние хранится вне репозитория в `<data>/state/agent-kit-status.json`, поэтому его можно менять независимо для каждой рабочей станции.
+`disable` сразу обновляет managed-блоки в `~/.codex/AGENTS.md`, `~/.claude/CLAUDE.md` и `~/.config/opencode/AGENTS.md`, а также удаляет отдельное managed-правило `~/.cline/rules/agent-engineering-kit.md`. В блоке появляется явное указание не применять правила Kit; пользовательский текст вокруг блока сохраняется. `enable` немедленно возвращает обычную инструкцию. Состояние хранится вне репозитория в `<data>/state/agent-kit-status.json`, поэтому его можно менять независимо для каждой рабочей станции.
 
 В отключённом режиме `agent-kit run prepare` завершается без создания request manifest. Команды `validate` и `validate --ci` продолжают проверять репозиторий, а `resync` сохраняет выбранное состояние и публикует соответствующий managed-блок.
 
@@ -559,7 +582,7 @@ agent-kit task gc my-project TASK-123
 
 ### Codex и Codex Desktop
 
-Используются `~/.codex/AGENTS.md`, `~/.agents/skills` и `~/.codex/config.toml`. Набор изменяет только собственные записи MCP с префиксом пространства имён и управляемый блок инструкций.
+Используются `~/.codex/AGENTS.md`, `~/.agents/skills` и `~/.codex/config.toml` (на Windows — `%USERPROFILE%\\.codex\\…`). Kit добавляет в TOML отдельный marker-блок с таблицами `mcp_servers.agent-kit-*`; пользовательские таблицы, model provider, approvals и другие поля не меняются. Старые одноимённые записи Kit мигрируются в этот блок, а чужие записи не удаляются.
 
 ### Claude Code
 
@@ -571,13 +594,13 @@ agent-kit task gc my-project TASK-123
 
 ### OpenCode
 
-Используются `AGENTS.md`, нативный поиск Agent Skills и собственная MCP-конфигурация OpenCode.
+Используются `AGENTS.md`, нативный поиск Agent Skills и собственная MCP-конфигурация OpenCode. Kit семантически объединяет `~/.config/opencode/opencode.json` или существующий `opencode.jsonc` и изменяет только `mcp.servers.agent-kit-*`.
 
 ### Cline
 
-Используются `AGENTS.md`, Cline Rules и нативные настройки MCP. Набор не перезаписывает недокументированные пользовательские пути.
+Используются Cline Rules, `AGENTS.md` и нативные настройки MCP. Kit создаёт только собственное глобальное правило `~/.cline/rules/agent-engineering-kit.md` и объединяет `~/.cline/data/settings/cline_mcp_settings.json` по ключам `mcpServers.agent-kit-*`; на Windows это `%USERPROFILE%\\.cline\\…`. Учитываются штатные `CLINE_DIR`, `CLINE_DATA_DIR` и `CLINE_MCP_SETTINGS_PATH`. Чужие servers и поля в JSON сохраняются.
 
-Подробные шаги подключения, ручной регистрации и восстановления `AUTH_REQUIRED` приведены в [инструкциях клиентов](clients/).
+Подробные шаги подключения и восстановления `AUTH_REQUIRED` приведены в [инструкциях клиентов](clients/).
 
 ## Credentials и OAuth для MCP
 
@@ -597,17 +620,17 @@ agent-kit security scan
 
 | Клиент | Регистрация MCP | Подключение |
 |---|---|---|
-| Codex CLI и Codex Desktop | Автоматическая через Kit и launcher; используется общее пространство Codex. | `agent-kit mcp enable <id> --scope global --resync` |
+| Codex CLI и Codex Desktop | Автоматическая: marker-блок `agent-kit-*` в глобальном `config.toml`; launcher получает secrets из private vault. | `agent-kit mcp enable <id> --scope global --resync` |
 | Claude Code | Автоматическая через Kit и launcher в конфигурации клиента. | `agent-kit mcp enable <id> --scope global --resync` |
 | Claude Desktop | Ручная в разделе MCP / Developer Settings клиента. | Следуйте [инструкции Claude Desktop](clients/claude-desktop/README.md). |
-| OpenCode | Требуется ручная регистрация в конфигурации OpenCode. | Следуйте [инструкции OpenCode](clients/opencode/README.md). |
-| Cline | Требуется ручная регистрация в MCP Servers настройках расширения. | Следуйте [инструкции Cline](clients/cline/README.md). |
+| OpenCode | Автоматическая: merge только `mcp.servers.agent-kit-*` в глобальном JSON/JSONC. | `agent-kit mcp enable <id> --scope global --resync` |
+| Cline | Автоматическая: merge только `mcpServers.agent-kit-*` в штатном глобальном JSON. | `agent-kit mcp enable <id> --scope global --resync` |
 
 Если диагностика показывает `AUTH_REQUIRED`, сначала проверьте `agent-kit mcp creds status`. Для stdio MCP импортируйте недостающие credentials и перезапустите соответствующий клиент. Для remote OAuth завершите авторизацию в конкретном клиенте и профиле, затем повторите запрос. GitLab и Context7 хранят OAuth-состояние отдельно в каждом клиенте или профиле; авторизация в одном не переносится в другой. Исключение — выбранная схема, где все клиенты подключены к одному Docker MCP Gateway: в этом случае OAuth-состоянием владеет Docker Desktop.
 
 После ротации токена повторите `agent-kit mcp creds import --from ./mcp-creds.env`; новое значение применяется при следующем запуске MCP без `resync`. Изменение определения MCP или команды запуска требует `agent-kit mcp enable <id> --scope global --resync`. `agent-kit mcp creds clear --yes` удаляет только machine-local хранилище credentials Kit; он не удаляет OAuth-состояние клиентов или Docker Desktop. После настройки запускайте `agent-kit security scan`.
 
-Для ручных клиентов команда `agent-kit mcp launch-command <id>` печатает JSON с абсолютным `command` и списком `args`: для MCP с credential-переменными создаёт контракт launcher, для остальных возвращает прямую команду. Она работает без установленных Codex и Claude Code; нужны включённый stdio MCP и его установленный executable. Если executable отсутствует, выполните `agent-kit resync --no-update`. Учитывается текущий профиль доступа: сервер, запрещённый профилем, зарегистрировать этой командой нельзя. Готовые команды преобразования JSON для Claude Desktop, OpenCode и Cline приведены в их инструкциях выше.
+Для диагностики и ручных клиентов команда `agent-kit mcp launch-command <id>` печатает JSON с абсолютным `command` и списком `args`: для MCP с credential-переменными создаёт контракт launcher, для остальных возвращает прямую команду. Она работает без установленных Codex и Claude Code; нужны включённый stdio MCP и его установленный executable. Если executable отсутствует, выполните `agent-kit resync --no-update`. Учитывается текущий профиль доступа: сервер, запрещённый профилем, зарегистрировать этой командой нельзя. Для Claude Desktop запись по-прежнему добавляется вручную.
 
 Новые контракты v2 содержат canonical data home, выбранный при регистрации, и только имена credential-переменных. Поэтому GUI-клиент найдёт vault даже без `AGENT_KIT_DATA_HOME` и `XDG_DATA_HOME` в своём окружении. При переносе data home заново получите команду регистрации и обновите конфигурацию клиента. Старые контракты v1 продолжают использовать окружение клиента; для обновления выполните `resync --no-update` либо `mcp launch-command <id>`. Vault, metadata и каталог `secrets` не могут быть symlink или Windows reparse point; Kit прекращает операцию, сохраняя внешние файлы.
 
@@ -738,7 +761,7 @@ Agent-Generated: true
 Agent-Client: codex
 ```
 
-Значение `Agent-Client` — ID harness (`codex`, `claude-code`, `opencode`, `cline` или `claude-desktop`). Автор и committer в Git не изменяются: ими остаётся пользовательская Git identity разработчика. Для ручных коммитов trailers не добавляются. Это не общеотраслевой стандарт имён полей, но Git trailers являются распространённым стандартным форматом; единые имена полей фиксируются Kit как переносимая внутренняя конвенция.
+Значение `Agent-Client` — ID harness (`codex`, `claude-code`, `opencode`, `cline` или `claude-desktop`). Автор и committer в Git не изменяются: ими остаётся пользовательская Git identity разработчика. Для ручных коммитов trailers не добавляются. Агент обязан передать trailers прямо в `git commit`, например `git commit --trailer "Agent-Generated: true" --trailer "Agent-Client: codex"`; перед `git push` он проверяет `git log -1 --format=%B`. Это не общеотраслевой стандарт имён полей, но Git trailers являются распространённым стандартным форматом; единые имена полей фиксируются Kit как переносимая внутренняя конвенция.
 
 ## Безопасность
 
