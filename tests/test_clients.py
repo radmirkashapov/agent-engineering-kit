@@ -717,7 +717,13 @@ def test_instruction_bridge_preserves_user_text_and_is_idempotent(tmp_path: Path
     document = json.loads(config.read_text(encoding="utf-8"))
     assert document["instructions"] == [str((repository / "AI.md").resolve())]
     cline_rule = tmp_path / ".cline/rules/agent-engineering-kit.md"
-    assert str(repository / "AI.md") in cline_rule.read_text(encoding="utf-8")
+    cline_content = cline_rule.read_text(encoding="utf-8")
+    assert str(repository / "AI.md") in cline_content
+    assert "сначала вызови подходящий инструмент MCP" in cline_content
+    assert "Не открывай browser" in cline_content
+    assert "agent-kit resync` без `--no-update`" in cline_content
+    assert "сначала вызови подходящий инструмент MCP" in first
+    assert "agent-kit resync` без `--no-update`" in first
 
 
 def test_cline_native_rule_is_removed_when_kit_is_disabled(tmp_path: Path) -> None:

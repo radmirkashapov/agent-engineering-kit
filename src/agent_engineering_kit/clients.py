@@ -333,6 +333,18 @@ _CLINE_RULE_START = "<!-- agent-engineering-kit:start -->"
 _CLINE_RULE_END = "<!-- agent-engineering-kit:end -->"
 
 
+def _mcp_execution_contract(repository: Path) -> str:
+    """Materialize critical tool-routing rules for clients without imports."""
+    source = repository / "rules" / "mcp-execution.md"
+    try:
+        content = source.read_text(encoding="utf-8").strip()
+    except OSError as error:
+        raise AgentKitError(f"Не удалось прочитать обязательный MCP protocol: {source}") from error
+    if not content:
+        raise AgentKitError(f"Обязательный MCP protocol пуст: {source}")
+    return content
+
+
 def _sync_cline_rule(
     repository: Path,
     paths: KitPaths,
@@ -352,9 +364,14 @@ def _sync_cline_rule(
             "# Agent Engineering Kit\n\n"
             f"Используй canonical instructions: {repository / 'AI.md'}\n"
             f"Применяй effective local agents/rules из: {paths.installations / 'clients' / 'shared' / 'effective-policy.json'}\n"
-            "В начале новой session выполни `agent-kit resync`; не копируй global rules в project.\n"
+            "До анализа задачи, ответа, tool call или изменения файла обязательно выполни `agent-kit resync` без `--no-update` "
+            "и продолжай только после успешного завершения. При ошибке preflight не обходи её и не используй `--no-update`, "
+            "если пользователь не попросил этого явно; не копируй global rules в project.\n"
             "Если Cline создаёт commit, выполняй только `agent-kit git commit --client cline -m \"<message>\"`; "
-            "не вызывай прямой `git commit`.\n"
+            "не вызывай прямой `git commit`.\n\n"
+            "Ниже приведён обязательный MCP protocol. Это исполняемая инструкция, а не ссылка: "
+            "если запрос относится к доступному MCP, первый содержательный шаг — настоящий tool call, а не текст, код или browser.\n\n"
+            f"{_mcp_execution_contract(repository)}\n"
             f"{_CLINE_RULE_END}\n"
         )
         atomic_write(target, content)
@@ -763,9 +780,15 @@ def expose_native_instructions(
                 f"{start}\n"
                 f"Используй canonical instructions: {repository / 'AI.md'}\n"
                 f"Применяй effective local agents/rules из: {paths.installations / 'clients' / 'shared' / 'effective-policy.json'}\n"
-                "В начале новой session выполни `agent-kit resync`; не копируй global rules в project.\n"
+                "До анализа задачи, ответа, tool call или изменения файла обязательно выполни `agent-kit resync` без `--no-update` "
+                "и продолжай только после успешного завершения. При ошибке preflight не обходи её и не используй `--no-update`, "
+                "если пользователь не попросил этого явно; не копируй global rules в project.\n"
                 f"Если {client} создаёт commit, выполняй только `agent-kit git commit --client {client} -m \"<message>\"`; "
-                "не вызывай прямой `git commit`.\n"
+                "не вызывай прямой `git commit`.\n\n"
+                "Обязательный MCP protocol ниже materialized непосредственно в этой инструкции. "
+                "Если запрос относится к доступному MCP, первым содержательным действием должен быть настоящий tool call; "
+                "не заменяй его текстом, кодом или browser.\n\n"
+                f"{_mcp_execution_contract(repository)}\n"
                 f"{end}"
             )
         return (
