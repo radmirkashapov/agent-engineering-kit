@@ -625,6 +625,8 @@ agent-kit task gc my-project TASK-123
 
 Используются Cline Rules, `AGENTS.md` и нативные настройки MCP. Kit создаёт только собственное глобальное правило `~/.cline/rules/agent-engineering-kit.md` и объединяет `~/.cline/data/settings/cline_mcp_settings.json` по ключам `mcpServers.agent-kit-*`; на Windows это `%USERPROFILE%\\.cline\\…`. Учитываются штатные `CLINE_DIR`, `CLINE_DATA_DIR` и `CLINE_MCP_SETTINGS_PATH`. Чужие servers и поля в JSON сохраняются.
 
+Для provider из корпоративного каталога Kit также безопасно обновляет штатные `~/.cline/data/settings/providers.json` и `models.json`: base URL, метаданные provider и список моделей. После `resync` provider появляется в selector Cline, а модели — в его selector моделей; вручную вводить model ID не нужно.
+
 Подробные шаги подключения и восстановления `AUTH_REQUIRED` приведены в [инструкциях клиентов](clients/).
 
 ## Credentials и OAuth для MCP
@@ -809,7 +811,7 @@ agent-kit security validate
 
 ### Регистрация моделей в клиентах
 
-`agent-kit models` публикует provider endpoint и перечень моделей из effective каталога. Значения ключей не попадают в Git, вывод команд и конфигурационные файлы клиентов. Для этого Kit хранит их только в локальном private vault.
+`agent-kit models` публикует provider endpoint и перечень моделей из effective каталога. Значения ключей не попадают в Git и вывод команд; основное хранилище Kit — локальный private vault. Для Codex и OpenCode конфигурация содержит только ссылку на vault. Cline — исключение: его штатный `providers.json` является локальным owner-only credential storage, поэтому Kit добавляет ключ из vault только в пустое поле Cline и никогда не заменяет существующее значение.
 
 ```bash
 # Проверить единый каталог и контракт конкретного клиента.
@@ -840,7 +842,30 @@ Codex получает ключ через локальную `auth.command` в 
 
 Self-hosted SonarQube требует оба значения: `SONARQUBE_URL` (полный HTTPS URL сервера) и `SONARQUBE_TOKEN` (персональный user token). Kit передаёт их в изолированный Docker-контейнер только при запуске `sonarqube` MCP.
 
-Cline хранит profile и secrets во внутреннем хранилище приложения, поэтому Kit выводит только инструкцию: настройте provider через UI либо `cline auth`. Claude Code использует Anthropic-compatible API, а не произвольный OpenAI-compatible transport; Claude Desktop не имеет поддерживаемого контракта регистрации пользовательских provider. Для этих трёх клиентов `models sync` ничего не меняет. `agent-kit resync` запускает ту же безопасную синхронизацию автоматически.
+#### Cline: корпоративный provider и selector моделей
+
+**После `bootstrap/install.sh` или `agent-kit resync` Cline получает каждый provider из effective `models/corporate.yaml`, у которого заданы `base_url` и хотя бы одна разрешённая модель.** Откройте настройки Cline, выберите ID provider из корпоративного каталога, затем выберите модель из выпадающего списка. Вводить вручную `base URL` и model ID не требуется.
+
+Например, при таком каталоге:
+
+```yaml
+providers:
+  - id: company-ai
+    name: Company AI
+    base_url: https://ai.example.company/v1
+    api_key_env: COMPANY_AI_API_KEY
+models:
+  - id: company-coder
+    provider: company-ai
+    model_id: company-coder-v1
+    name: Company Coder
+```
+
+в Cline появится provider `company-ai` и модель `Company Coder`. При изменении списка в corporate fork следующий `resync` заменит именно managed catalog этого provider. Пользовательские provider и их модели не затрагиваются.
+
+Если в существующем profile Cline уже указан API key, Kit сохраняет его. Если ключ отсутствует, а `api_key_env` импортирован через `model-creds.env`, Kit однократно записывает его в собственное owner-only хранилище Cline (`providers.json`); значение не попадает в Git, YAML или вывод команд. Для Cline с другой папкой данных учитываются `CLINE_DIR`, `CLINE_DATA_DIR` и `CLINE_PROVIDER_SETTINGS_PATH`.
+
+Claude Code использует Anthropic-compatible API, а не произвольный OpenAI-compatible transport; Claude Desktop не имеет поддерживаемого контракта регистрации пользовательских provider. Для этих клиентов `models sync` ничего не меняет. `agent-kit resync` запускает ту же безопасную синхронизацию автоматически.
 
 ## Локальные переопределения
 

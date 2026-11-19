@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from agent_engineering_kit.client_models import sync_client_models
+from agent_engineering_kit.io import load_yaml
 from agent_engineering_kit.model_credentials import ModelCredentialStore
 from agent_engineering_kit.paths import KitPaths
 from conftest import make_model_repository, model, write_yaml
@@ -227,15 +228,101 @@ def test_sync_rejects_invalid_local_model_catalog_before_client_write(tmp_path: 
         sync_client_models(repository, paths, home=tmp_path / "home", clients=("codex",))
 
 
-def test_sync_reports_manual_clients_without_creating_configs(tmp_path: Path, real_repository: Path) -> None:
+def test_sync_registers_corporate_catalog_in_cline_and_preserves_user_key(tmp_path: Path, real_repository: Path) -> None:
+    repository = make_model_repository(tmp_path, real_repository, [])
+    declare_compatible_provider(repository)
+    paths = make_paths(tmp_path, repository)
+    home = tmp_path / "home"
+    providers_path = home / ".cline/data/settings/providers.json"
+    providers_path.parent.mkdir(parents=True)
+    providers_path.write_text(json.dumps({
+        "version": 1,
+        "modes": {},
+        "providers": {
+            "company-ai": {
+                "settings": {"provider": "company-ai", "apiKey": "USER_SELECTED_KEY", "model": "company-coder-v1"},
+                "updatedAt": "2026-01-01T00:00:00Z",
+                "tokenSource": "manual",
+            },
+            "personal": {
+                "settings": {"provider": "personal", "apiKey": "keep-me"},
+                "updatedAt": "2026-01-01T00:00:00Z",
+                "tokenSource": "manual",
+            },
+        },
+    }), encoding="utf-8")
+
+    report = sync_client_models(repository, paths, home=home, clients=("cline",))
+
+    providers = json.loads(providers_path.read_text(encoding="utf-8"))
+    catalog = json.loads((home / ".cline/data/settings/models.json").read_text(encoding="utf-8"))
+    assert report["cline"]["status"] == "SYNCED"
+    assert providers["providers"]["company-ai"]["settings"] == {
+        "provider": "company-ai",
+        "apiKey": "USER_SELECTED_KEY",
+        "baseUrl": "https://ai.example.test/v1",
+        "protocol": "openai-responses",
+        "client": "openai-compatible",
+        "model": "company-coder-v1",
+    }
+    assert providers["providers"]["personal"]["settings"]["apiKey"] == "keep-me"
+    assert catalog["providers"]["company-ai"]["provider"]["name"] == "Company AI"
+    assert catalog["providers"]["company-ai"]["models"]["company-coder-v1"]["name"] == "Company Coder"
+
+
+def test_sync_imports_model_credential_into_empty_cline_provider_and_honors_path_overrides(
+    tmp_path: Path, real_repository: Path,
+) -> None:
+    repository = make_model_repository(tmp_path, real_repository, [])
+    declare_compatible_provider(repository)
+    paths = make_paths(tmp_path, repository)
+    source = tmp_path / "model-creds.env"
+    source.write_text("COMPANY_AI_API_KEY=super-secret\n", encoding="utf-8")
+    ModelCredentialStore(paths).import_file(source, [{"id": "company-ai", "api_key_env": "COMPANY_AI_API_KEY"}])
+    providers_path = tmp_path / "custom" / "providers.json"
+
+    sync_client_models(
+        repository, paths, home=tmp_path / "home", clients=("cline",),
+        environment={"CLINE_PROVIDER_SETTINGS_PATH": str(providers_path)},
+    )
+
+    providers = json.loads(providers_path.read_text(encoding="utf-8"))
+    assert providers["providers"]["company-ai"]["settings"]["apiKey"] == "super-secret"
+    catalog = json.loads((providers_path.parent / "models.json").read_text(encoding="utf-8"))
+    assert set(catalog["providers"]["company-ai"]["models"]) == {"company-coder-v1"}
+
+
+def test_cline_catalog_replaces_models_when_corporate_catalog_changes(tmp_path: Path, real_repository: Path) -> None:
+    repository = make_model_repository(tmp_path, real_repository, [])
+    declare_compatible_provider(repository)
+    paths = make_paths(tmp_path, repository)
+    home = tmp_path / "home"
+    sync_client_models(repository, paths, home=home, clients=("cline",))
+
+    document = load_yaml(repository / "models/corporate.yaml")
+    document["models"] = [{
+        **model("company-reviewer", "company-ai"),
+        "name": "Company Reviewer",
+        "model_id": "company-reviewer-v2",
+    }]
+    write_yaml(repository / "models/corporate.yaml", document)
+    sync_client_models(repository, paths, home=home, clients=("cline",))
+
+    catalog = json.loads((home / ".cline/data/settings/models.json").read_text(encoding="utf-8"))
+    provider = catalog["providers"]["company-ai"]
+    assert set(provider["models"]) == {"company-reviewer-v2"}
+    settings = json.loads((home / ".cline/data/settings/providers.json").read_text(encoding="utf-8"))
+    assert settings["providers"]["company-ai"]["settings"]["model"] == "company-reviewer-v2"
+
+
+def test_sync_reports_non_managed_clients_without_creating_configs(tmp_path: Path, real_repository: Path) -> None:
     repository = make_model_repository(tmp_path, real_repository, [])
     declare_compatible_provider(repository)
     paths = make_paths(tmp_path, repository)
     home = tmp_path / "home"
 
-    report = sync_client_models(repository, paths, home=home, clients=("cline", "claude-code", "claude-desktop"))
+    report = sync_client_models(repository, paths, home=home, clients=("claude-code", "claude-desktop"))
 
-    assert report["cline"]["status"] == "MANUAL"
     assert report["claude-code"]["status"] == "MANUAL"
     assert report["claude-desktop"]["status"] == "UNSUPPORTED"
     assert not home.exists()
