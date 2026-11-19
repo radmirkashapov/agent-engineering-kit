@@ -627,6 +627,10 @@ agent-kit task gc my-project TASK-123
 
 Для provider из корпоративного каталога Kit также безопасно обновляет штатные `~/.cline/data/settings/providers.json` и `models.json`: base URL, метаданные provider и список моделей. После `resync` provider появляется в selector Cline, а модели — в его selector моделей; вручную вводить model ID не нужно.
 
+Kit не ограничивается ссылкой на `AI.md`: при `resync` он materializes обязательный protocol `rules/mcp-execution.md` непосредственно в глобальном Cline Rule и managed instruction blocks Codex, Claude Code и OpenCode. Поэтому запросы к Jira, GitLab/GitHub, Confluence/Twiki, SonarQube и Context7 должны начинаться с фактического вызова подходящего MCP-инструмента. Browser, текстовый план или просьба к пользователю допускаются только после подтверждённой ошибки MCP; ошибка аргументов исправляется повторным вызовом по опубликованной сигнатуре.
+
+Перед каждой новой agent session native instructions требуют выполнить `agent-kit resync` без `--no-update`. Команда обновляет чистый установленный checkout Kit только через `git fetch origin` и `git pull --ff-only`, затем публикует актуальные rules, skills, models и MCP. При грязной копии, сетевой ошибке или ошибке validation агент обязан остановиться и сообщить причину; он не имеет права молча использовать старую ревизию или делать reset/merge. Исключение — только явное указание пользователя запустить `resync --no-update` для диагностики или контролируемой работы с закреплённой ревизией.
+
 Подробные шаги подключения и восстановления `AUTH_REQUIRED` приведены в [инструкциях клиентов](clients/).
 
 ## Credentials и OAuth для MCP

@@ -40,6 +40,8 @@ def test_instruction_bridge_publishes_disabled_state_immediately(tmp_path: Path)
     paths = make_paths(tmp_path)
     repository = paths.repository
     (repository / "AI.md").write_text("# Kit\n", encoding="utf-8")
+    (repository / "rules").mkdir()
+    (repository / "rules/mcp-execution.md").write_text("# MCP protocol\n\nUse MCP first.\n", encoding="utf-8")
     home = tmp_path / "home"
     user_file = home / ".codex/AGENTS.md"
     user_file.parent.mkdir(parents=True)
