@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from collections import defaultdict
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -27,9 +29,9 @@ CLIENT_MODEL_CAPABILITIES: dict[str, dict[str, str]] = {
         "credentials": "OpenCode reads env or settings.apiKey; Kit preserves both fields.",
     },
     "cline": {
-        "mode": "manual",
-        "path": "Cline provider storage",
-        "credentials": "Cline owns provider profiles and secret storage; configure it in Cline or cline auth.",
+        "mode": "managed",
+        "path": "~/.cline/data/settings/providers.json and models.json",
+        "credentials": "Kit registers the catalog and base URL; it preserves an existing API key and imports a local credential only when the field is empty.",
     },
     "claude-code": {
         "mode": "manual",
@@ -97,11 +99,12 @@ def _state_path(paths: KitPaths) -> Path:
 def _load_state(paths: KitPaths) -> dict[str, Any]:
     path = _state_path(paths)
     if not path.is_file():
-        return {"codex": [], "opencode": [], "opencode_config": None}
+        return {"codex": [], "opencode": [], "cline": [], "opencode_config": None}
     document = load_json(path)
     return {
         "codex": [item for item in document.get("codex", []) if isinstance(item, str)],
         "opencode": [item for item in document.get("opencode", []) if isinstance(item, str)],
+        "cline": [item for item in document.get("cline", []) if isinstance(item, str)],
         "opencode_config": document.get("opencode_config") if isinstance(document.get("opencode_config"), str) else None,
     }
 
@@ -275,8 +278,145 @@ def _sync_opencode(providers: Iterable[dict[str, Any]], models: dict[str, list[d
     return {"status": "SYNCED", "path": str(config_path), "providers": state["opencode"], "changed": True}
 
 
+def _cline_paths(home: Path, environment: dict[str, str] | None = None) -> tuple[Path, Path]:
+    """Разрешить documented Cline locations на Linux, macOS и Windows."""
+    env = environment or os.environ
+    configured = env.get("CLINE_PROVIDER_SETTINGS_PATH")
+    if configured:
+        providers_path = Path(configured).expanduser()
+        return providers_path, providers_path.parent / "models.json"
+    cline_root = Path(env["CLINE_DIR"]).expanduser() if env.get("CLINE_DIR") else home / ".cline"
+    data_root = Path(env["CLINE_DATA_DIR"]).expanduser() if env.get("CLINE_DATA_DIR") else cline_root / "data"
+    settings = data_root / "settings"
+    return settings / "providers.json", settings / "models.json"
+
+
+def _cline_document(path: Path, *, label: str, default: dict[str, Any]) -> dict[str, Any]:
+    if not path.is_file():
+        return dict(default)
+    try:
+        document = load_json(path)
+    except AgentKitError as error:
+        raise AgentKitError(f"Некорректный {label}; конфигурация Cline не изменена: {path}") from error
+    return document
+
+
+def _cline_model_entry(model: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    identifier = str(model.get("model_id") or model["id"])
+    capabilities = model.get("capabilities") if isinstance(model.get("capabilities"), dict) else {}
+    supported = []
+    if capabilities.get("tool_use"):
+        supported.append("tools")
+    if capabilities.get("reasoning"):
+        supported.append("reasoning")
+    if capabilities.get("long_context"):
+        supported.append("streaming")
+    entry: dict[str, Any] = {
+        "id": identifier,
+        "name": str(model.get("name") or identifier),
+        "_agent_kit_managed": True,
+    }
+    if isinstance(model.get("context_window"), int) and model["context_window"] > 0:
+        entry["contextWindow"] = model["context_window"]
+    if isinstance(model.get("max_output_tokens"), int) and model["max_output_tokens"] > 0:
+        entry["maxTokens"] = model["max_output_tokens"]
+    if supported:
+        entry["capabilities"] = supported
+    if capabilities.get("reasoning"):
+        entry["supportsReasoning"] = True
+    return identifier, entry
+
+
+def _cline_protocol(provider: dict[str, Any]) -> str:
+    return "openai-responses" if provider.get("wire_api") == "responses" else "openai-chat"
+
+
+def _sync_cline(
+    providers: Iterable[dict[str, Any]],
+    models: dict[str, list[dict[str, Any]]],
+    paths: KitPaths,
+    home: Path,
+    *,
+    environment: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Safely publish a custom OpenAI-compatible provider and its model picker."""
+    providers_path, models_path = _cline_paths(home, environment)
+    provider_list = list(providers)
+    # Не создаём пустой internal state Cline на машине, где корпоративный
+    # каталог не определяет ни одного подключаемого provider.
+    if not provider_list:
+        return {"status": "SYNCED", "paths": [str(providers_path), str(models_path)], "providers": [], "changed": False}
+    provider_document = _cline_document(
+        providers_path, label="Cline providers.json", default={"version": 1, "modes": {}, "providers": {}},
+    )
+    stored_providers = provider_document.setdefault("providers", {})
+    if not isinstance(stored_providers, dict):
+        raise AgentKitError(f"Cline providers должен быть object: {providers_path}")
+    provider_document.setdefault("version", 1)
+    provider_document.setdefault("modes", {})
+    models_document = _cline_document(models_path, label="Cline models.json", default={"version": 1, "providers": {}})
+    stored_catalog = models_document.setdefault("providers", {})
+    if not isinstance(stored_catalog, dict):
+        raise AgentKitError(f"Cline models providers должен быть object: {models_path}")
+    models_document.setdefault("version", 1)
+
+    credential_values = ModelCredentialStore(paths).load()
+    timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    synchronized: list[str] = []
+    for provider in provider_list:
+        identifier = str(provider["id"])
+        existing_record = stored_providers.get(identifier)
+        existing_record = existing_record if isinstance(existing_record, dict) else {}
+        existing_settings = existing_record.get("settings")
+        settings = dict(existing_settings) if isinstance(existing_settings, dict) else {}
+        settings.update({
+            "provider": identifier,
+            "baseUrl": str(provider["base_url"]),
+            "protocol": _cline_protocol(provider),
+            "client": "openai-compatible",
+        })
+        provider_models = models.get(identifier, [])
+        model_ids = {str(item.get("model_id") or item["id"]) for item in provider_models}
+        if provider_models and settings.get("model") not in model_ids:
+            settings["model"] = str(provider_models[0].get("model_id") or provider_models[0]["id"])
+        credential_name = provider.get("api_key_env")
+        if not settings.get("apiKey") and isinstance(credential_name, str) and credential_values.get(credential_name):
+            # providers.json is Cline's owner-only credential storage. Never
+            # overwrite a value configured by the developer or OAuth state.
+            settings["apiKey"] = credential_values[credential_name]
+        stored_providers[identifier] = {
+            **existing_record,
+            "settings": settings,
+            "updatedAt": timestamp,
+            "tokenSource": existing_record.get("tokenSource", "manual"),
+        }
+        model_map = dict(stored_catalog.get(identifier, {})) if isinstance(stored_catalog.get(identifier), dict) else {}
+        model_map["_agent_kit_managed"] = True
+        model_map["provider"] = {
+            "name": str(provider.get("name") or identifier),
+            "baseUrl": str(provider["base_url"]),
+            "defaultModelId": settings.get("model"),
+            "protocol": _cline_protocol(provider),
+            "client": "openai-compatible",
+        }
+        model_map["models"] = dict(_cline_model_entry(model) for model in provider_models)
+        stored_catalog[identifier] = model_map
+        synchronized.append(identifier)
+    try:
+        atomic_write(providers_path, json.dumps(provider_document, ensure_ascii=False, indent=2) + "\n")
+        atomic_write(models_path, json.dumps(models_document, ensure_ascii=False, indent=2) + "\n")
+    except OSError:
+        return {"status": "CONFIG_REQUIRED", "paths": [str(providers_path), str(models_path)], "changed": False,
+                "reason": "Agent Kit needs permission to write Cline provider settings"}
+    state = _load_state(paths)
+    state["cline"] = sorted(synchronized)
+    _write_state(paths, state)
+    return {"status": "SYNCED", "paths": [str(providers_path), str(models_path)], "providers": synchronized, "changed": True}
+
+
 def sync_client_models(
     repository: Path, paths: KitPaths, *, home: Path | None = None, clients: Iterable[str] | None = None,
+    environment: dict[str, str] | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Синхронизировать только безопасно управляемые client model contracts."""
     ensure_runtime(paths)
@@ -295,11 +435,12 @@ def sync_client_models(
     for client in selected:
         mode = CLIENT_MODEL_CAPABILITIES[client]["mode"]
         if mode == "managed":
-            result[client] = (
-                _sync_codex(compatible, paths, user_home)
-                if client == "codex"
-                else _sync_opencode(compatible, models, paths, user_home)
-            )
+            if client == "codex":
+                result[client] = _sync_codex(compatible, paths, user_home)
+            elif client == "opencode":
+                result[client] = _sync_opencode(compatible, models, paths, user_home)
+            else:
+                result[client] = _sync_cline(compatible, models, paths, user_home, environment=environment)
         else:
             result[client] = {"status": mode.upper(), **CLIENT_MODEL_CAPABILITIES[client], "changed": False}
     return result

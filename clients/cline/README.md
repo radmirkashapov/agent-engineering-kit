@@ -1,8 +1,8 @@
 # Cline
 
-Cline получает rules, skills и MCP автоматически после `agent-kit resync`. Kit создаёт только `~/.cline/rules/agent-engineering-kit.md` и безопасно объединяет глобальный `~/.cline/data/settings/cline_mcp_settings.json` (Windows: `%USERPROFILE%\\.cline\\data\\settings\\cline_mcp_settings.json`). Учитываются официальные переменные `CLINE_DIR`, `CLINE_DATA_DIR` и `CLINE_MCP_SETTINGS_PATH`.
+Cline получает rules, skills, MCP и корпоративный каталог моделей автоматически после `agent-kit resync`. Kit создаёт только `~/.cline/rules/agent-engineering-kit.md`, безопасно объединяет глобальный `~/.cline/data/settings/cline_mcp_settings.json` (Windows: `%USERPROFILE%\\.cline\\data\\settings\\cline_mcp_settings.json`) и публикует managed providers в `providers.json` вместе с `models.json`. Учитываются официальные переменные `CLINE_DIR`, `CLINE_DATA_DIR`, `CLINE_MCP_SETTINGS_PATH` и `CLINE_PROVIDER_SETTINGS_PATH`.
 
-В JSON Kit владеет исключительно ключами `mcpServers.agent-kit-*`: устаревшие записи этого namespace удаляются, активные обновляются. Все остальные MCP, `providers.json`, `global-settings.json`, sessions и пользовательские rules остаются без изменений. Для stdio серверов Cline запускает private launcher, поэтому token не записывается в settings JSON. `autoApprove` всегда остаётся пустым.
+В JSON Kit владеет исключительно ключами `mcpServers.agent-kit-*`: устаревшие записи этого namespace удаляются, активные обновляются. Для provider из `models/corporate.yaml` Kit обновляет только provider с тем же ID и его managed model catalog: `baseUrl`, protocol и разрешённые модели. Другие providers, MCP, `global-settings.json`, sessions и пользовательские rules остаются без изменений. Для stdio серверов Cline запускает private launcher, поэтому token не записывается в settings JSON. `autoApprove` всегда остаётся пустым.
 
 ```bash
 agent-kit mcp creds import --from ./mcp-creds.env
@@ -10,7 +10,7 @@ agent-kit mcp enable sentry --scope global --resync
 agent-kit doctor
 ```
 
-После синхронизации перезапустите Cline либо перезапустите сервер в панели MCP Servers. Remote OAuth для GitLab и Context7 по-прежнему завершается в Cline. Модели и provider Cline не синхронизируются: Cline хранит их во внутреннем state с секретами, для которого Kit не использует нестабильный формат; настройте provider через UI или `cline auth`.
+После синхронизации перезапустите Cline. Provider с `base_url` и моделями из effective corporate catalog появится в selector provider, а его модели — в selector моделей; вручную вводить model ID не требуется. Если ключ уже хранится в profile Cline, Kit сохраняет его. Если ключ отсутствует, но соответствующая `api_key_env` была импортирована командой `agent-kit models creds import`, Kit записывает его только в owner-only `providers.json` Cline. Remote OAuth для GitLab и Context7 по-прежнему завершается в Cline.
 
 Формат регистрации: [MCP в Cline](https://docs.cline.bot/mcp/mcp-overview).
 
