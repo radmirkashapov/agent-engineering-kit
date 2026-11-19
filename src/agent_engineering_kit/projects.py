@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,6 +14,7 @@ import yaml
 
 from .errors import AgentKitError
 from .harness import resolve_harness
+from .git_provenance import install_hook as install_provenance_hook
 from .io import atomic_write, load_yaml
 from .paths import KitPaths, ensure_runtime
 from .process import run_command
@@ -101,12 +103,52 @@ def validate_project(project: LogicalProject, repository: Path) -> ValidationRes
     return result
 
 
-def _find_repositories(root: Path) -> list[dict[str, str]]:
+def _safe_remote(value: str) -> str | None:
+    """Keep only portable remote URLs; credentials/query fragments never enter Git."""
+    candidate = value.strip()
+    if not candidate or re.search(r"(?:[?#]|://[^/]*@)", candidate):
+        return None
+    return candidate
+
+
+def _repository_remotes(path: Path) -> list[dict[str, str | bool]]:
+    names = run_command(["git", "-C", str(path), "remote"])
+    if not names.ok:
+        return []
+    rows: list[dict[str, str | bool]] = []
+    for name in sorted(item.strip() for item in names.stdout.splitlines() if item.strip()):
+        fetch = run_command(["git", "-C", str(path), "remote", "get-url", name])
+        push = run_command(["git", "-C", str(path), "remote", "get-url", "--push", name])
+        fetch_url = _safe_remote(fetch.stdout) if fetch.ok else None
+        push_url = _safe_remote(push.stdout) if push.ok else None
+        if not fetch_url and not push_url:
+            continue
+        row: dict[str, str | bool] = {"name": name}
+        if fetch_url:
+            row["fetch_url"] = fetch_url
+        if push_url and push_url != fetch_url:
+            row["push_url"] = push_url
+        if name == "origin":
+            row["primary"] = True
+        rows.append(row)
+    return rows
+
+
+def _find_repositories(root: Path) -> list[dict[str, Any]]:
     found: list[Path] = []
-    if (root / ".git").exists():
-        found.append(root)
-    for marker in root.glob("*/.git"):
-        found.append(marker.parent)
+    for directory, children, files in os.walk(root):
+        current = Path(directory)
+        if (current / ".git").exists() or ".git" in files:
+            found.append(current)
+            # A nested .git belongs to another repository; never attribute its
+            # descendants to the parent logical project discovery.
+            children[:] = []
+            continue
+        children[:] = [
+            child for child in children
+            if child not in {".git", "node_modules", "vendor", "build", "dist", ".agent-kit", ".ai-team"}
+            and not child.startswith(".")
+        ]
     if not found:
         found.append(root)
     entries: list[dict[str, str]] = []
@@ -120,7 +162,14 @@ def _find_repositories(root: Path) -> list[dict[str, str]]:
             identifier = f"{base}-{counter}"
             counter += 1
         used.add(identifier)
-        entries.append({"id": identifier, "path": "." if relative == Path(".") else relative.as_posix()})
+        entry: dict[str, Any] = {"id": identifier, "path": "." if relative == Path(".") else relative.as_posix()}
+        remotes = _repository_remotes(path)
+        if remotes:
+            entry["remotes"] = remotes
+            primary = next((item.get("fetch_url") for item in remotes if item.get("primary") and item.get("fetch_url")), None)
+            if primary:
+                entry["remote"] = primary
+        entries.append(entry)
     return entries
 
 
@@ -225,6 +274,16 @@ def register_integrations(project: LogicalProject, repository: Path, paths: KitP
     return target
 
 
+def _install_project_provenance_hooks(project: LogicalProject) -> None:
+    """Подключить общий Git guard там, где repository уже инициализирован."""
+    for entry in project.manifest.get("repositories", []):
+        path = (project.root / str(entry["path"])).resolve()
+        # Discovery допускает ещё не клонированные repositories. Это не ошибка
+        # и не причина ломать project init.
+        if path.is_dir():
+            install_provenance_hook(path)
+
+
 def init_project(
     root: Path,
     repository: Path,
@@ -236,17 +295,31 @@ def init_project(
     stack: str | None = None,
     initialize_git: bool = False,
     default_branch: str = "main",
+    nested: bool = False,
 ) -> LogicalProject:
     root = root.expanduser().resolve()
     root.mkdir(parents=True, exist_ok=True)
     manifest_path = root / ".ai-team" / "project.yaml"
     if manifest_path.exists():
         project = LogicalProject(root, manifest_path, load_yaml(manifest_path))
+        _install_project_provenance_hooks(project)
         register_integrations(project, repository, paths)
         memory_report = ProjectMemoryManager(repository, paths).index(project, mode="full")
         if memory_report["status"] == "FAIL":
             raise AgentKitError("Индексация памяти проекта завершилась ошибкой")
         return project
+
+    parent = find_project(root.parent)
+    if parent is not None and parent.root != root and not nested:
+        raise AgentKitError(
+            f"Target уже находится внутри logical project {parent.identifier!r} ({parent.root}); "
+            "используйте --nested только для независимого вложенного проекта"
+        )
+    children = [path for path in root.rglob(".ai-team/project.yaml") if path != manifest_path]
+    if children:
+        raise AgentKitError(
+            "В target уже есть вложенные logical projects; сначала выберите общую границу и перенесите manifests явно"
+        )
 
     project_id = slugify(identifier or root.name)
     if template_id is not None or language is not None or stack is not None:
@@ -277,6 +350,8 @@ def init_project(
             "required_capabilities": ["instructions", "skills", "mcp"],
         },
     }
+    if parent is not None and parent.root != root:
+        manifest["parent_project"] = {"id": parent.identifier, "path": os.path.relpath(parent.root, root).replace(os.sep, "/")}
     schema_result = validate_instance(manifest, repository / "schemas" / "project.schema.json", str(manifest_path))
     if not schema_result.ok:
         raise AgentKitError("Не удалось создать валидный project manifest")
@@ -290,6 +365,7 @@ def init_project(
             "## Разделы\n\n- Архитектура: `architecture/`\n- ADR: `adr/`\n- Runbooks: `runbooks/`\n",
         )
     project = LogicalProject(root, manifest_path, manifest)
+    _install_project_provenance_hooks(project)
     register_integrations(project, repository, paths)
     memory_report = ProjectMemoryManager(repository, paths).index(project, mode="full")
     if memory_report["status"] == "FAIL":

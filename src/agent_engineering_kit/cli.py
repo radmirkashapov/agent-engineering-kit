@@ -72,6 +72,14 @@ from .validation import VALIDATORS, validate
 from .worktrees import create_managed_worktrees, plan_managed_worktrees
 from .process import run_command
 from .clients import effective_skill_inventory, effective_skill_sources, expose_native_instructions, project_skill_status_report, register_native_mcp
+from .git_provenance import (
+    CLIENT_IDS,
+    commit as provenance_commit,
+    install_hook as install_provenance_hook,
+    mark_agent_worktree,
+    prepare_commit_msg,
+    unmark_agent_worktree,
+)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -84,6 +92,22 @@ def _parser() -> argparse.ArgumentParser:
     enable = subs.add_parser("enable", help="Глобально включить применение профилей и правил Agent Kit")
     enable.add_argument("--reset", action="store_true", help="Удалить machine-local state и вернуть значение по умолчанию")
     subs.add_parser("status", help="Показать глобальное состояние Agent Kit")
+    git = subs.add_parser("git", help="Выполнить Git-операцию с provenance AI-агента").add_subparsers(
+        dest="git_command", required=True,
+    )
+    git_commit = git.add_parser("commit", help="Создать коммит с Agent-Generated и Agent-Client trailers")
+    git_commit.add_argument("--client", choices=CLIENT_IDS, required=True, help="Harness, выполнивший работу")
+    git_commit.add_argument("-m", "--message", required=True, help="Сообщение коммита без provenance trailers")
+    git_commit.add_argument("--amend", action="store_true", help="Изменить последний коммит")
+    git_hook = git.add_parser("install-hook", help="Установить безопасный provenance hook в текущем Git repository")
+    git_hook.add_argument("path", nargs="?", default=".")
+    git_strict_enable = git.add_parser("strict-enable", help="Запретить прямые коммиты в agent worktree")
+    git_strict_enable.add_argument("--client", choices=CLIENT_IDS, required=True)
+    git_strict_enable.add_argument("path", nargs="?", default=".")
+    git_strict_disable = git.add_parser("strict-disable", help="Снять строгий provenance guard с agent worktree")
+    git_strict_disable.add_argument("path", nargs="?", default=".")
+    git_prepare = git.add_parser("prepare-commit-msg", help=argparse.SUPPRESS)
+    git_prepare.add_argument("message_path", type=Path, help=argparse.SUPPRESS)
     check = subs.add_parser("validate", help="Проверить repository и effective policy")
     check.add_argument("target", nargs="?", default="all", choices=["all", *VALIDATORS])
     check.add_argument("--ci", action="store_true", help="Исключить user-local inputs; project-skills проверяются без fetch")
@@ -239,6 +263,10 @@ def _parser() -> argparse.ArgumentParser:
     project_init.add_argument("--stack", help="Стек шаблона")
     project_init.add_argument("--git", action="store_true", dest="initialize_git", help="Инициализировать Git repository")
     project_init.add_argument("--default-branch", default="main", help="Начальная ветка нового Git repository")
+    project_init.add_argument(
+        "--nested", action="store_true",
+        help="Явно разрешить независимый вложенный logical project; по умолчанию пересечение границ отклоняется",
+    )
     for name, help_text in (
         ("detect", "Обнаружить структуру и компоненты проекта"),
         ("status", "Показать готовность проекта и его репозиториев"),
@@ -645,6 +673,24 @@ def run(argv: list[str] | None = None) -> int:
             return _render_result(validate(repository, paths, args.target, include_local=not args.ci))
         if args.command == "doctor":
             return _render_result(doctor(repository, paths))
+        if args.command == "git":
+            if args.git_command == "commit":
+                provenance_commit(Path.cwd(), client=args.client, message=args.message, amend=args.amend)
+                return 0
+            if args.git_command == "install-hook":
+                hook = install_provenance_hook(Path(args.path).expanduser().resolve())
+                if hook is None:
+                    raise AgentKitError("Target не является Git working tree")
+                print(hook)
+                return 0
+            if args.git_command == "strict-enable":
+                mark_agent_worktree(Path(args.path).expanduser().resolve(), client=args.client)
+                return 0
+            if args.git_command == "strict-disable":
+                unmark_agent_worktree(Path(args.path).expanduser().resolve())
+                return 0
+            prepare_commit_msg(Path.cwd(), args.message_path.expanduser().resolve())
+            return 0
         if args.command == "models":
             if args.models_command == "list":
                 print(json.dumps(list_client_models(repository, paths), ensure_ascii=False, indent=2))
@@ -815,6 +861,7 @@ def run(argv: list[str] | None = None) -> int:
                 "stack": args.stack,
                 "initialize_git": args.initialize_git,
                 "default_branch": args.default_branch,
+                "nested": args.nested,
             }
             if not any((args.template_id, args.language, args.stack, args.initialize_git)) and sys.stdin.isatty():
                 setup.update(_interactive_project_setup(repository))
@@ -828,6 +875,7 @@ def run(argv: list[str] | None = None) -> int:
                 stack=setup["stack"] if isinstance(setup["stack"], str) else None,
                 initialize_git=bool(setup["initialize_git"]),
                 default_branch=str(setup["default_branch"]),
+                nested=bool(setup["nested"]),
             )
             print(f"Logical project создан/найден: {project.identifier}\nManifest: {project.manifest_path}\nMemory: {paths.projects / project.identifier}")
             return 0

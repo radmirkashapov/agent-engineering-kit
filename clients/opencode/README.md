@@ -1,17 +1,16 @@
 # OpenCode
 
-OpenCode читает `AGENTS.md`, подключает skills через нативный поиск и загружает MCP из собственной конфигурации пользователя или проекта. Включите MCP в Kit командой `agent-kit mcp enable <id> --scope global`, затем вручную зарегистрируйте его в конфигурации OpenCode. Если проверка показывает `CONFIG_REQUIRED`, примените инструкцию регистрации и перезапустите OpenCode.
+OpenCode читает `AGENTS.md`, подключает skills через нативный поиск и загружает MCP из собственной конфигурации пользователя или проекта. Включите MCP в Kit командой `agent-kit mcp enable <id> --scope global --resync`: Kit автоматически объединит только `mcp.servers.agent-kit-*` в глобальном `~/.config/opencode/opencode.json`, либо в существующем `opencode.jsonc`. Пользовательские servers, providers, models и остальные поля сохраняются. Если проверка показывает `CONFIG_REQUIRED`, исправьте JSON/JSONC по указанному пути и повторите `resync`.
 
 Пример для stdio Sentry (нужны Node.js/npm и заполненный `SENTRY_ACCESS_TOKEN` в локальном env-файле):
 
 ```bash
 agent-kit mcp creds import --from ./mcp-creds.env
-agent-kit mcp enable sentry --scope global
-agent-kit resync --no-update
-agent-kit mcp launch-command sentry | python3 -c 'import json,sys; r=json.load(sys.stdin); print(json.dumps({"mcp": {"agent-kit-sentry": {"type": "local", "command": [r["command"], *r["args"]], "enabled": True}}}, indent=2))'
+agent-kit mcp enable sentry --scope global --resync
+agent-kit doctor
 ```
 
-Объедините полученный объект `mcp.agent-kit-sentry` с конфигурацией `opencode.json`/`opencode.jsonc` проекта либо пользовательской конфигурацией OpenCode и перезапустите клиент. Список `command` уже содержит настоящий абсолютный executable и аргументы; поле `environment` с токенами не требуется. Генерация контракта не требует Codex или Claude Code. Data home фиксируется при импорте/генерации и доступен launcher даже без соответствующих переменных в окружении OpenCode. При переносе хранилища или смене команды повторите генерацию. Для другого MCP проверьте `agent-kit mcp available`: команда отказывает для выключенного сервера или запрещённого профилем доступа.
+Запись `agent-kit-sentry` создаётся автоматически при `resync`; `agent-kit mcp launch-command sentry` нужен только для диагностики или ручного переноса. Список `command` уже содержит настоящий абсолютный executable и аргументы; поле `environment` с токенами не требуется. Генерация контракта не требует Codex или Claude Code. Data home фиксируется при импорте/генерации и доступен launcher даже без соответствующих переменных в окружении OpenCode. При переносе хранилища или смене команды повторите `resync`. Для другого MCP проверьте `agent-kit mcp available`: команда отказывает для выключенного сервера или запрещённого профилем доступа.
 
 Формат локального сервера: [MCP servers в OpenCode](https://opencode.ai/docs/mcp-servers/).
 
