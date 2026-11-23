@@ -17,6 +17,7 @@ from agent_engineering_kit.projects import LogicalProject
 from agent_engineering_kit.result import ValidationResult
 from agent_engineering_kit.resync import resync
 from agent_engineering_kit.resync import build_session_manifest
+import agent_engineering_kit.clients as clients_module
 import agent_engineering_kit.resync as resync_module
 from conftest import write_yaml
 
@@ -69,6 +70,7 @@ def test_resync_keeps_native_mcp_when_docker_is_unavailable(
     config_content = config.read_text(encoding="utf-8")
     assert "[mcp_servers.agent-kit-context7]" in config_content
     assert "[mcp_servers.agent-kit-docker]" not in config_content
+    assert "claude-desktop/context7: CONFIG_REQUIRED (required)" in report.incomplete
     _print_resync_report(report)
     assert "SKIPPED: Docker MCP Toolkit" in capsys.readouterr().out
 
@@ -147,6 +149,54 @@ def test_resync_fails_if_required_native_mcp_installation_fails_without_docker(
 
     with pytest.raises(AgentKitError, match="MCP installation: context7"):
         resync(repository, paths, update_kit=False, install_security=False)
+
+
+@pytest.mark.parametrize(("client", "failure"), [
+    ("codex", "parse"),
+    ("codex", "write"),
+    ("cline", "write"),
+    ("opencode", "write"),
+])
+def test_resync_fails_if_required_native_mcp_registration_fails_without_docker(
+    confirmed_docker_mcp, monkeypatch, client, failure,
+):
+    repository, paths, codex_config = confirmed_docker_mcp
+    home = codex_config.parent.parent
+    cline_config = home / "cline/settings.json"
+    monkeypatch.setenv("CLINE_MCP_SETTINGS_PATH", str(cline_config))
+    find_executable = shutil.which
+    monkeypatch.setattr(shutil, "which", lambda name: None if name in {"docker", "claude"} else find_executable(name))
+    monkeypatch.setattr(resync_module, "sync_client_models", lambda *_args, **_kwargs: None)
+    if failure == "parse":
+        codex_config.write_text(codex_config.read_text(encoding="utf-8") + "[invalid\n", encoding="utf-8")
+    else:
+        target = {
+            "codex": codex_config,
+            "cline": cline_config,
+            "opencode": home / ".config/opencode/opencode.json",
+        }[client]
+        atomic_write = clients_module.atomic_write
+
+        def fail_mcp_config_write(path, content):
+            if path == target and (client != "opencode" or '"mcp":' in content):
+                raise PermissionError("test MCP config is not writable")
+            return atomic_write(path, content)
+
+        monkeypatch.setattr(clients_module, "atomic_write", fail_mcp_config_write)
+
+    original_config = codex_config.read_text(encoding="utf-8")
+
+    with pytest.raises(AgentKitError, match=rf"client MCP registration: .*{client}/context7"):
+        resync(repository, paths, update_kit=False, install_security=False)
+
+    registrations = json.loads((paths.state / "client-mcp-registrations.json").read_text(encoding="utf-8"))
+    row = next(item for item in registrations["registrations"] if item.get("mcp") == "context7" and item["client"] == client)
+    assert row["status"] == "ERROR"
+    assert row["desired_verified"] is False
+    assert row["reason"]
+    assert not (paths.state / "effective-environment.json").exists()
+    if client == "codex":
+        assert codex_config.read_text(encoding="utf-8") == original_config
 
 
 def test_resync_initializes_overrides_before_local_validation(monkeypatch, tmp_path: Path) -> None:
