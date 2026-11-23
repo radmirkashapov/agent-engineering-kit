@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
-from .definitions import validate_skill_directory
+from .definitions import is_english_text, validate_skill_directory
 from .errors import AgentKitError
 from .io import atomic_write, markdown_frontmatter
 from .paths import resolve_paths
@@ -94,6 +94,11 @@ def _validated_source(repository: Path, source: Path, identifier: str | None) ->
     return source, skill
 
 
+def _validate_bundled_description(skill: _Skill) -> None:
+    if not is_english_text(skill.description):
+        raise AgentKitError(f"{skill.identifier}: default description должен быть на английском")
+
+
 def _git(directory: Path, *args: str) -> str:
     if any(name in _GIT_STATE_ENVIRONMENT or name.startswith("GIT_CONFIG_") for name in os.environ):
         raise AgentKitError("Небезопасное окружение Git: очистите repository-local переменные")
@@ -159,14 +164,17 @@ def _inside_directory(path: Path, root: Path) -> bool:
     return False
 
 
-def _check_destination(checkout: Path, project: LogicalProject) -> None:
-    if _inside_directory(checkout, resolve_paths().data):
-        raise AgentKitError(f"Authoring checkout находится в managed-хранилище: {checkout}")
+def _check_destination(path: Path, project: LogicalProject, *, include_descendants: bool = False) -> None:
+    def conflicts_with(root: Path) -> bool:
+        return _inside_directory(path, root) or (include_descendants and _inside_directory(root, path))
+
+    if conflicts_with(resolve_paths().data):
+        raise AgentKitError(f"Путь authoring пересекается с managed-хранилищем: {path}")
     for repository in project.manifest.get("repositories", []):
         root = (project.root / repository["path"]).resolve()
         git_root = next((path for path in (root, *root.parents) if os.path.lexists(path / ".git")), root)
-        if _inside_directory(checkout, git_root):
-            raise AgentKitError(f"Authoring checkout находится внутри product repository: {checkout}")
+        if conflicts_with(git_root):
+            raise AgentKitError(f"Путь authoring пересекается с product repository: {path}")
 
 
 def _authoring_checkout(checkout: Path, project: LogicalProject) -> Path:
@@ -174,7 +182,7 @@ def _authoring_checkout(checkout: Path, project: LogicalProject) -> Path:
     _check_destination(checkout, project)
     url, _ = _project_source(project)
     _normal_checkout(checkout)
-    origin = _git(checkout, "remote", "get-url", "origin")
+    origin = _git(checkout, "config", "--null", "--get-all", "remote.origin.url").split("\0", 1)[0]
     if _normalized_origin(origin, checkout) != _normalized_origin(url, project.root):
         raise AgentKitError("Git origin checkout должен совпадать с skills.repository.url")
     return checkout
@@ -215,7 +223,12 @@ def _check_replacement(checkout: Path, target: Path, replace: bool) -> bool:
 
 @contextmanager
 def _copy_skill(
-    repository: Path, source: Path, target: Path, *, replace_existing: bool,
+    repository: Path,
+    source: Path,
+    target: Path,
+    *,
+    replace_existing: bool,
+    require_english_description: bool = False,
 ) -> Iterator[_Skill]:
     if target.is_relative_to(source) or source.is_relative_to(target):
         raise AgentKitError("Исходный каталог и destination skill пересекаются")
@@ -229,6 +242,8 @@ def _copy_skill(
     try:
         shutil.copytree(source, staged, symlinks=True)
         copied = _validated_skill(repository, staged, target.name)
+        if require_english_description:
+            _validate_bundled_description(copied)
         if replace_existing:
             os.replace(target, previous)
             backed_up = True
@@ -256,18 +271,21 @@ def add_bundled_skill(
 ) -> Path:
     repository = _directory_path(repository)
     source, skill = _validated_source(repository, source, identifier)
+    _validate_bundled_description(skill)
     target = _directory_path(repository / "skills" / "first-party" / skill.identifier, optional=True)
     exists = _check_replacement(repository, target, replace)
     try:
-        with _copy_skill(repository, source, target, replace_existing=exists):
+        with _copy_skill(repository, source, target, replace_existing=exists, require_english_description=True):
             return target
     except OSError as error:
         raise AgentKitError(f"Не удалось скопировать skill: {error}") from error
 
 
-def _index_target(checkout: Path) -> Path:
+def _index_target(checkout: Path, project: LogicalProject) -> Path:
     skills_root = checkout / "skills"
     _directory(skills_root, optional=True)
+    # Every package target and temporary directory is a descendant of this write root.
+    _check_destination(skills_root, project, include_descendants=True)
     target = skills_root / "INDEX.md"
     mode = _entry_mode(target)
     if mode is not None and not stat.S_ISREG(mode):
@@ -322,7 +340,7 @@ def add_project_skill(
     checkout = _authoring_checkout(checkout, project)
     source, skill = _validated_source(repository, source, identifier)
     with _project_authoring_lock(checkout):
-        index = _index_target(checkout)
+        index = _index_target(checkout, project)
         target = index.parent / skill.identifier
         exists = _check_replacement(checkout, target, replace)
         skills = _indexed_skills(repository, index.parent, skip=target)
@@ -336,5 +354,5 @@ def write_project_skill_index(
 ) -> Path:
     checkout = _authoring_checkout(checkout, project)
     with _project_authoring_lock(checkout):
-        index = _index_target(checkout)
+        index = _index_target(checkout, project)
         return _write_index(index, _indexed_skills(repository, index.parent))

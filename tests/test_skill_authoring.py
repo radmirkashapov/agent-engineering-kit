@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from agent_engineering_kit import skill_authoring
+from agent_engineering_kit.definitions import validate_skills
 from agent_engineering_kit.errors import AgentKitError
 from agent_engineering_kit.projects import LogicalProject
 from agent_engineering_kit.skill_authoring import (
@@ -30,7 +31,7 @@ def git(root: Path, *args: str) -> str:
     ).stdout.strip()
 
 
-def write_skill(directory: Path, name: str, description: str = "Review API changes.") -> Path:
+def write_skill(directory: Path, name: str, description: str = "Review API changes before release.") -> Path:
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "SKILL.md").write_text(
         f"---\nversion: 1\nname: {name}\ndescription: {description}\n"
@@ -100,6 +101,7 @@ def test_add_bundled_skill_copies_validated_directory(tmp_path: Path, kit_reposi
     assert (target / "references" / "guide.md").read_text(encoding="utf-8") == "# Guide\n"
     assert git(kit_repository, "rev-parse", "HEAD") == original_head
     assert git(kit_repository, "diff", "--cached", "--name-only") == ""
+    assert validate_skills(kit_repository).ok
 
 
 @pytest.mark.parametrize("layer", ["bundled", "project"])
@@ -208,6 +210,18 @@ def test_add_bundled_skill_rejects_invalid_frontmatter(tmp_path: Path, kit_repos
     assert not (kit_repository / "skills").exists()
 
 
+@pytest.mark.parametrize("description", ["Review API changes.", "Ревью изменений API перед выпуском."])
+def test_add_bundled_skill_rejects_description_invalid_for_kit(
+    tmp_path: Path, kit_repository: Path, description: str,
+):
+    source = write_skill(tmp_path / "source" / "review-api", "review-api", description)
+
+    with pytest.raises(AgentKitError, match="description"):
+        add_bundled_skill(kit_repository, source)
+
+    assert not (kit_repository / "skills").exists()
+
+
 def test_add_bundled_skill_rejects_nested_git_repository(tmp_path: Path, kit_repository: Path):
     source = write_skill(tmp_path / "source" / "review-api", "review-api")
     nested = source / "references"
@@ -224,7 +238,7 @@ def test_add_bundled_skill_requires_explicit_replace(tmp_path: Path, kit_reposit
     source = write_skill(tmp_path / "source" / "review-api", "review-api")
     target = add_bundled_skill(kit_repository, source)
     original = (target / "SKILL.md").read_bytes()
-    write_skill(source, "review-api", "Use a different description.")
+    write_skill(source, "review-api", "Use this skill for a different review.")
 
     with pytest.raises(AgentKitError, match="replace"):
         add_bundled_skill(kit_repository, source)
@@ -249,7 +263,7 @@ def test_replace_bundled_skill_preserves_dirty_worktree(
         write_skill(target, "review-api", "Keep staged edits.")
         git(kit_repository, "add", ".")
     original = (target / "SKILL.md").read_bytes()
-    write_skill(source, "review-api", "Use a different description.")
+    write_skill(source, "review-api", "Use this skill for a different review.")
 
     with pytest.raises(AgentKitError, match="clean|tracked"):
         add_bundled_skill(kit_repository, source, replace=True)
@@ -263,7 +277,7 @@ def test_replace_bundled_skill_replaces_entire_clean_tracked_tree(tmp_path: Path
     (target / "old.md").touch()
     git(kit_repository, "add", ".")
     git(kit_repository, "commit", "-qm", "track bundled skill")
-    write_skill(source, "review-api", "Use a different description.")
+    write_skill(source, "review-api", "Use this skill for a different review.")
 
     assert add_bundled_skill(kit_repository, source, replace=True) == target
     assert not (target / "old.md").exists()
@@ -566,3 +580,62 @@ def test_add_project_skill_reports_success_after_backup_cleanup_failure(
     assert add_project_skill(fixture.repository, fixture.project, source, checkout, replace=True) == target
     assert (target / "SKILL.md").read_bytes() == (source / "SKILL.md").read_bytes()
     assert "Use a new description." in index.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("operation", ["index", "add"])
+@pytest.mark.parametrize("location", ["product", "nested-product", "nested-managed"])
+def test_project_authoring_rejects_overlapping_write_roots(
+    fixture: ProjectFixture, monkeypatch: pytest.MonkeyPatch, operation: str, location: str,
+):
+    checkout = fixture.clone_sibling()
+    skills_root = checkout / "skills"
+    project = fixture.project
+    if location == "nested-managed":
+        managed = skills_root / "review-api" / "managed"
+        managed.mkdir(parents=True)
+        sentinel = managed / "keep.md"
+        sentinel.write_text("Managed state.\n", encoding="utf-8")
+        monkeypatch.setenv("AGENT_KIT_DATA_HOME", str(managed))
+        reason = "managed"
+    else:
+        product = skills_root if location == "product" else skills_root / "review-api"
+        product.mkdir(exist_ok=True)
+        git(product, "init", "-qb", "main")
+        sentinel = product / "product.md"
+        sentinel.write_text("Product content.\n", encoding="utf-8")
+        git(product, "add", ".")
+        git(product, "commit", "-qm", "track product")
+        project = replace(
+            project,
+            root=checkout.parent,
+            manifest={
+                **project.manifest,
+                "repositories": [{"id": "product", "path": product.relative_to(checkout.parent).as_posix()}],
+            },
+        )
+        reason = "product repository"
+    original = sentinel.read_bytes()
+
+    with pytest.raises(AgentKitError, match=reason):
+        if operation == "index":
+            write_project_skill_index(fixture.repository, checkout, project=project)
+        else:
+            add_project_skill(fixture.repository, project, fixture.source, checkout)
+
+    assert not (skills_root / "INDEX.md").exists()
+    assert not (skills_root / "review-api/SKILL.md").exists()
+    assert sentinel.read_bytes() == original
+    if location != "nested-managed":
+        assert git(product, "status", "--porcelain") == ""
+
+
+def test_project_authoring_compares_configured_origin_before_git_transport_rewrite(fixture: ProjectFixture):
+    checkout = fixture.clone_sibling()
+    git(checkout, "config", f"url.{fixture.project.root}.insteadOf", str(fixture.remote))
+    assert git(checkout, "remote", "get-url", "origin") == str(fixture.project.root)
+
+    index = write_project_skill_index(fixture.repository, checkout, project=fixture.project)
+    target = add_project_skill(fixture.repository, fixture.project, fixture.source, checkout)
+
+    assert index == checkout / "skills/INDEX.md"
+    assert (target / "SKILL.md").is_file()

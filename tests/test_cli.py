@@ -26,13 +26,13 @@ def isolated_data(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     return tmp_path
 
 
-def _write_skill_source(path: Path) -> Path:
+def _write_skill_source(path: Path, *, description: str = "Локальная проверка результата.") -> Path:
     path.mkdir(parents=True)
     (path / "SKILL.md").write_text(
-        """---
+        f"""---
 version: 1
 name: verification
-description: Локальная проверка результата.
+description: {description}
 requires:
   model_capabilities: [reasoning]
 ---
@@ -79,7 +79,7 @@ def test_skill_add_copies_bundle_into_current_kit(isolated_data, monkeypatch, ca
     shutil.copyfile(REPOSITORY / "schemas/skill.schema.json", repository / "schemas/skill.schema.json")
     _git(repository, "init", "-qb", "main")
     monkeypatch.setenv("AGENT_KIT_REPOSITORY", str(repository))
-    source = _write_skill_source(isolated_data / "verification")
+    source = _write_skill_source(isolated_data / "verification", description="Verify repository changes before release.")
     (source / "steps").mkdir()
     (source / "steps/check.md").write_text("# Check contracts\n", encoding="utf-8")
     with (source / "SKILL.md").open("a", encoding="utf-8") as skill:
