@@ -108,7 +108,8 @@ class DockerMcpToolkit:
                 )
         return target
 
-    def _toolkit_status(self) -> tuple[str, str]:
+    def availability(self) -> tuple[str, str]:
+        """Проверить CLI Toolkit без изменения Docker profile."""
         if not self.docker_executable:
             return "NOT_INSTALLED", "Команда docker не найдена"
         probe = self.runner([self.docker_executable, "mcp", "--help"])
@@ -158,7 +159,7 @@ class DockerMcpToolkit:
         desired = set(desired_ids) if desired_ids is not None else self._desired_ids(project, access_profile)
         mappings = {key: str(value) for key, value in config.get("mappings", {}).items()}
         selected = {identifier: mappings[identifier] for identifier in sorted(desired & mappings.keys())} if config["enabled"] else {}
-        toolkit_status, message = self._toolkit_status()
+        toolkit_status, message = self.availability()
         routes = {
             identifier: (
                 "unavailable" if config["enabled"] and identifier in mappings and toolkit_status != "READY"

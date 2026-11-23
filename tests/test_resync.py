@@ -1,18 +1,92 @@
 from __future__ import annotations
 
 import json
+import shutil
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from agent_engineering_kit.errors import AgentKitError
+from agent_engineering_kit.cli import _print_resync_report
+from agent_engineering_kit.component_state import Lifecycle, write_state
 from agent_engineering_kit.paths import KitPaths
 from agent_engineering_kit.project_skills import ProjectSkillsStatus
 from agent_engineering_kit.projects import LogicalProject
+from agent_engineering_kit.result import ValidationResult
 from agent_engineering_kit.resync import resync
 from agent_engineering_kit.resync import build_session_manifest
 import agent_engineering_kit.resync as resync_module
+from conftest import write_yaml
+
+
+@pytest.fixture
+def native_mcp_environment(monkeypatch, tmp_path: Path):
+    repository = Path(__file__).resolve().parents[1]
+    data = tmp_path / "data"
+    paths = KitPaths(repository, data, data / "runtime", data / "projects", data / "overrides")
+    home = tmp_path / "home"
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(Path, "home", lambda: home)
+    monkeypatch.setenv("CODEX_HOME", str(home / ".codex"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
+    monkeypatch.setattr(resync_module, "validate", lambda *_args, **_kwargs: ValidationResult())
+    monkeypatch.setattr(resync_module.ExternalSkillManager, "resync", lambda *_args, **_kwargs: [])
+    for item, lock in resync_module.McpManager(repository, paths).desired():
+        if item["required"]:
+            binary = paths.installations / "mcp" / item["id"] / "bin" / item["command"]
+            binary.parent.mkdir(parents=True)
+            binary.touch()
+            write_state(paths, "mcp", item["id"], Lifecycle.ACTIVE, revision=lock.revision)
+    write_yaml(paths.overrides / "global/docker-toolkit.yaml", {"version": 1, "enabled": True})
+    return repository, paths, home
+
+
+@pytest.mark.parametrize("docker_executable", [None, sys.executable])
+def test_resync_keeps_native_mcp_when_docker_is_unavailable(
+    native_mcp_environment, monkeypatch, capsys, docker_executable,
+):
+    repository, paths, home = native_mcp_environment
+    find_executable = shutil.which
+
+    def which(name):
+        if name == "docker":
+            return docker_executable
+        if name == "claude":
+            return None
+        return find_executable(name)
+
+    monkeypatch.setattr(shutil, "which", which)
+    (paths.state / "docker-mcp-toolkit.json").write_text(json.dumps({
+        "version": 1, "status": "SYNCED", "project_id": None,
+        "profile": "agent-engineering-kit", "gateway_registration": "agent-kit-docker",
+        "routes": {"context7": "docker"},
+    }), encoding="utf-8")
+    config = home / ".codex/config.toml"
+    config.parent.mkdir(parents=True)
+    config.write_text('[mcp_servers.agent-kit-docker]\ncommand = "docker"\n', encoding="utf-8")
+
+    report = resync(repository, paths, update_kit=False, install_security=False)
+
+    assert any(item["id"] == "context7" and item["status"] == "ACTIVE" for item in report.mcp)
+    config_content = config.read_text(encoding="utf-8")
+    assert "[mcp_servers.agent-kit-context7]" in config_content
+    assert "[mcp_servers.agent-kit-docker]" not in config_content
+    _print_resync_report(report)
+    assert "SKIPPED: Docker MCP Toolkit" in capsys.readouterr().out
+
+
+def test_resync_fails_if_required_native_mcp_installation_fails_without_docker(
+    native_mcp_environment, monkeypatch,
+):
+    repository, paths, _ = native_mcp_environment
+    (paths.installations / "mcp/context7/bin/npx").unlink()
+    find_executable = shutil.which
+    monkeypatch.setattr(shutil, "which", lambda name: None if name in {"npx", "docker"} else find_executable(name))
+
+    with pytest.raises(AgentKitError, match="MCP installation: context7"):
+        resync(repository, paths, update_kit=False, install_security=False)
 
 
 def test_resync_initializes_overrides_before_local_validation(monkeypatch, tmp_path: Path) -> None:

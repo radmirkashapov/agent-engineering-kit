@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -10,6 +11,8 @@ import pytest
 import agent_engineering_kit.cli as cli_module
 from agent_engineering_kit.cli import _parser, run
 from agent_engineering_kit.io import load_yaml
+from agent_engineering_kit.resync import ResyncReport
+from conftest import write_yaml
 
 
 REPOSITORY = Path(__file__).resolve().parents[1]
@@ -46,6 +49,17 @@ def _write_mcp_source(path: Path) -> Path:
     return path
 
 
+def _git(root: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+         "-c", "commit.gpgsign=false", *args],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
 @pytest.mark.parametrize("resource", ["skills", "mcp"])
 @pytest.mark.parametrize("action", ["enable", "disable", "reset"])
 def test_mutating_commands_require_explicit_scope(resource: str, action: str) -> None:
@@ -57,6 +71,77 @@ def test_available_does_not_require_scope() -> None:
     args = _parser().parse_args(["skills", "available"])
 
     assert args.skills_command == "available"
+
+
+def test_skill_add_copies_bundle_into_current_kit(isolated_data, monkeypatch, capsys):
+    repository = isolated_data / "kit"
+    (repository / "schemas").mkdir(parents=True)
+    shutil.copyfile(REPOSITORY / "schemas/skill.schema.json", repository / "schemas/skill.schema.json")
+    _git(repository, "init", "-qb", "main")
+    monkeypatch.setenv("AGENT_KIT_REPOSITORY", str(repository))
+    source = _write_skill_source(isolated_data / "verification")
+    (source / "steps").mkdir()
+    (source / "steps/check.md").write_text("# Check contracts\n", encoding="utf-8")
+    with (source / "SKILL.md").open("a", encoding="utf-8") as skill:
+        skill.write("\n[Check contracts](steps/check.md)\n")
+
+    assert run(["skills", "add", "--from", "verification", "--id", "verification"]) == 0
+
+    target = repository / "skills/first-party/verification"
+    assert (target / "SKILL.md").read_bytes() == (source / "SKILL.md").read_bytes()
+    assert (target / "steps/check.md").read_text(encoding="utf-8") == "# Check contracts\n"
+    assert str(target) in capsys.readouterr().out
+    assert _git(repository, "diff", "--cached", "--name-only") == ""
+
+
+def test_project_skills_checkout_add_and_index_use_current_project(skills_project, monkeypatch, capsys):
+    parent = skills_project.parent
+    monkeypatch.setenv("AGENT_KIT_DATA_HOME", str(parent / "managed"))
+    upstream = parent / "skills-upstream"
+    upstream.mkdir()
+    _git(upstream, "init", "-qb", "project-skills")
+    _git(upstream, "commit", "--allow-empty", "-qm", "Initialize project skills")
+    manifest_path = skills_project / ".ai-team/project.yaml"
+    manifest = load_yaml(manifest_path)
+    manifest["skills"]["repository"] = {"url": str(upstream), "default_branch": "project-skills"}
+    write_yaml(manifest_path, manifest)
+    _git(skills_project, "init", "-qb", "main")
+    source = _write_skill_source(parent / "verification")
+    (source / "contracts").mkdir()
+    (source / "contracts/api.md").write_text("# API contract\n", encoding="utf-8")
+    with (source / "SKILL.md").open("a", encoding="utf-8") as skill:
+        skill.write("\n[API contract](contracts/api.md)\n")
+    checkout = parent / "skills-checkout"
+    monkeypatch.chdir(skills_project)
+
+    assert run(["project", "skills", "checkout", "--into", "../skills-checkout"]) == 0
+    assert str(checkout) in capsys.readouterr().out
+    assert _git(checkout, "branch", "--show-current") == "project-skills"
+
+    assert run(["project", "skills", "add", "--from", "../verification", "--checkout", "../skills-checkout"]) == 0
+    target = checkout / "skills/verification"
+    index = checkout / "skills/INDEX.md"
+    output = capsys.readouterr().out
+    assert str(target) in output
+    assert str(index) in output
+    assert (target / "SKILL.md").read_bytes() == (source / "SKILL.md").read_bytes()
+    assert (target / "contracts/api.md").read_text(encoding="utf-8") == "# API contract\n"
+    original_index = index.read_bytes()
+    index.write_text("# Old index\n", encoding="utf-8")
+
+    assert run(["project", "skills", "index", "--checkout", "../skills-checkout"]) == 0
+    assert str(index) in capsys.readouterr().out
+    assert index.read_bytes() == original_index
+    assert _git(checkout, "diff", "--cached", "--name-only") == ""
+
+
+def test_project_skills_checkout_requires_logical_project(isolated_data, capsys):
+    target = isolated_data / "checkout"
+
+    assert run(["project", "skills", "checkout", "--into", str(target)]) == 1
+
+    assert "Logical project не найден" in capsys.readouterr().err
+    assert not target.exists()
 
 
 def test_models_commands_parse_targeted_client() -> None:
@@ -310,8 +395,6 @@ def test_project_skills_requires_logical_project(isolated_data, capsys, command)
 
 @pytest.fixture
 def skills_project(isolated_data):
-    from conftest import write_yaml
-
     root = isolated_data / "product"
     manifest = root / ".ai-team/project.yaml"
     write_yaml(manifest, {
@@ -615,9 +698,9 @@ def test_resync_runs_only_after_successful_atomic_mutation(
     calls: list[bool] = []
     access_path = isolated_data / "overrides" / "global" / "access.yaml"
 
-    def fake_resync(*args: object, **kwargs: object) -> SimpleNamespace:
+    def fake_resync(*args: object, **kwargs: object) -> ResyncReport:
         calls.append(access_path.is_file())
-        return SimpleNamespace(incomplete=[], revision="test", changed=True, skills=[], mcp=[], clients=[])
+        return ResyncReport(revision="test", security=[], skills=[], mcp=[], clients=[], changed=True, incomplete=[])
 
     monkeypatch.setattr(cli_module, "resync", fake_resync)
 
@@ -643,9 +726,9 @@ def test_reset_without_changes_does_not_run_resync(
 ) -> None:
     calls: list[object] = []
 
-    def fake_resync(*args: object, **kwargs: object) -> SimpleNamespace:
+    def fake_resync(*args: object, **kwargs: object) -> ResyncReport:
         calls.append((args, kwargs))
-        return SimpleNamespace(incomplete=[], revision="test", changed=True, skills=[], mcp=[], clients=[])
+        return ResyncReport(revision="test", security=[], skills=[], mcp=[], clients=[], changed=True, incomplete=[])
 
     monkeypatch.setattr(cli_module, "resync", fake_resync)
 
@@ -1087,7 +1170,7 @@ def test_mcp_docker_enable_writes_local_override_and_resyncs(
 
     def fake_resync(*args, **kwargs):
         calls.append(True)
-        return SimpleNamespace(incomplete=[], revision="test", changed=True, skills=[], mcp=[], clients=[])
+        return ResyncReport(revision="test", security=[], skills=[], mcp=[], clients=[], changed=True, incomplete=[])
 
     monkeypatch.setattr(cli_module, "resync", fake_resync)
 

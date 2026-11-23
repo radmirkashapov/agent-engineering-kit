@@ -51,6 +51,12 @@ from .runs import build_run_request, canonical_digest, record_run_result, run_ev
 from .resync import ResyncReport, resync
 from .security_tools import SecurityToolManager
 from .schema import validate_instance
+from .skill_authoring import (
+    add_bundled_skill,
+    add_project_skill,
+    checkout_project_skills,
+    write_project_skill_index,
+)
 from .sync import record_sync, revision, update_repository
 from .tasks import (
     acquire_lease,
@@ -80,6 +86,12 @@ from .git_provenance import (
     prepare_commit_msg,
     unmark_agent_worktree,
 )
+
+
+def _add_skill_source_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--from", dest="source", type=Path, required=True, help="Каталог с SKILL.md")
+    parser.add_argument("--id", help="ID skill, совпадающий с name в SKILL.md")
+    parser.add_argument("--replace", action="store_true", help="Заменить существующий skill")
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -137,6 +149,7 @@ def _parser() -> argparse.ArgumentParser:
     skills.add_parser("list", help="Показать состояние skills")
     skills.add_parser("status", help="Показать состояние skills")
     skills.add_parser("available", help="Показать полный доступный каталог skills")
+    _add_skill_source_arguments(skills.add_parser("add", help="Добавить bundled skill в текущий Kit"))
     for name, help_text in (
         ("enable", "Разрешить skill"),
         ("disable", "Отключить skill"),
@@ -255,6 +268,13 @@ def _parser() -> argparse.ArgumentParser:
     project_skills.add_parser(
         "status", help="Показать ветку, активную ревизию, происхождение и коллизии",
     )
+    checkout_skills = project_skills.add_parser("checkout", help="Клонировать project-skills для авторинга")
+    checkout_skills.add_argument("--into", type=Path, required=True, help="Пустой каталог для checkout")
+    project_skill_add = project_skills.add_parser("add", help="Добавить skill в checkout project-skills")
+    _add_skill_source_arguments(project_skill_add)
+    project_skill_add.add_argument("--checkout", type=Path, required=True, help="Каталог checkout project-skills")
+    project_skill_index = project_skills.add_parser("index", help="Обновить skills/INDEX.md")
+    project_skill_index.add_argument("--checkout", type=Path, required=True, help="Каталог checkout project-skills")
     project_init = project.add_parser("init", help="Инициализировать проект по выбранному шаблону")
     project_init.add_argument("path", nargs="?", default=".")
     project_init.add_argument("--id", dest="identifier")
@@ -471,6 +491,8 @@ def _print_resync_report(report: ResyncReport) -> None:
     print(f"Skills: {len(report.skills)}; MCP: {len(report.mcp)}; clients: {len(report.clients)}")
     for limitation in report.incomplete:
         print(f"CONFIG_REQUIRED: {limitation}")
+    if report.docker_mcp_skipped:
+        print(f"SKIPPED: Docker MCP Toolkit: {report.docker_mcp_skipped}")
 
 
 def _json_argument(value: str, *, expected: type, label: str):
@@ -738,6 +760,10 @@ def run(argv: list[str] | None = None) -> int:
             print(f"Compatibility sync завершён. Session revision: {current_revision}; adapters: {len(generated)}")
             return 0
         if args.command == "skills":
+            if args.skills_command == "add":
+                print(add_bundled_skill(repository, args.source, identifier=args.id, replace=args.replace))
+                print("Проверка каталога: agent-kit validate skills")
+                return 0
             project = find_project(Path.cwd())
             manager = ExternalSkillManager(repository, paths, project_id=project.identifier if project else None)
             if args.skills_command in {"list", "status"}:
@@ -852,6 +878,19 @@ def run(argv: list[str] | None = None) -> int:
             schema = validate_instance(project.manifest, repository / "schemas/project.schema.json", "logical project")
             if not schema.ok or not validate_project_definition(project, repository).ok:
                 raise AgentKitError("Некорректная конфигурация logical project")
+            if args.project_skills_command == "checkout":
+                print(checkout_project_skills(project, args.into))
+                return 0
+            if args.project_skills_command == "add":
+                target = add_project_skill(
+                    repository, project, args.source, args.checkout, identifier=args.id, replace=args.replace,
+                )
+                print(target)
+                print(target.parent / "INDEX.md")
+                return 0
+            if args.project_skills_command == "index":
+                print(write_project_skill_index(repository, args.checkout, project=project))
+                return 0
             manager = ProjectSkillRepositoryManager(repository, paths, project)
             if args.project_skills_command == "use-branch":
                 output = manager.set_branch(args.branch)

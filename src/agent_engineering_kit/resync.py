@@ -18,6 +18,7 @@ from .clients import (
 from .client_models import sync_client_models
 from .agent_kit_state import read_status
 from .component_state import Lifecycle
+from .docker_mcp import DockerMcpToolkit
 from .errors import AgentKitError
 from .harness import resolve_harness
 from .external_skills import ExternalSkillManager
@@ -44,6 +45,7 @@ class ResyncReport:
     changed: bool
     incomplete: list[str]
     project_skills: dict[str, object] | None = None
+    docker_mcp_skipped: str | None = None
 
 
 def build_session_manifest(
@@ -143,6 +145,8 @@ def resync(
         messages = "; ".join(item.message for item in mcp_result.diagnostics if item.severity == "ERROR")
         raise AgentKitError(f"Resync остановлен MCP installation: {messages}")
     mcp_state = mcp_manager.list(project, access_profile=mcp_access_profile)
+    docker_status, docker_message = DockerMcpToolkit(repository, paths).availability()
+    docker_mcp_skipped = docker_message if docker_status != "READY" else None
 
     project_id = project.identifier if project else None
     generated = sync_clients(
@@ -172,6 +176,7 @@ def resync(
             paths,
             project=project,
             access_profile=mcp_access_profile,
+            use_docker_routes=docker_mcp_skipped is None,
         )
         generated.append(registration_path)
         registrations = json.loads(registration_path.read_text(encoding="utf-8")).get("registrations", [])
@@ -235,4 +240,5 @@ def resync(
     return ResyncReport(
         current_revision, security_state, skill_state, mcp_state,
         [str(path) for path in generated], changed, incomplete, project_skills,
+        docker_mcp_skipped=docker_mcp_skipped,
     )

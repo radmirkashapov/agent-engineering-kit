@@ -9,6 +9,7 @@ import re
 from collections import Counter
 from dataclasses import dataclass, replace
 from pathlib import Path
+from urllib.parse import quote
 
 from .access import resolve_access
 from .catalog import resolve_desired
@@ -598,6 +599,30 @@ def validate_clients(repository: Path) -> ValidationResult:
     return result
 
 
+def _render_effective_skill_index(sources: dict[str, EffectiveSkillSource]) -> str:
+    rows = [
+        "# Effective skills",
+        "",
+        "| ID | Description | Source | Status | Revision | Shadowed sources | Definition |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    for identifier, source in sorted(sources.items()):
+        try:
+            description = markdown_frontmatter(source.path / "SKILL.md").get("description")
+        except (AgentKitError, OSError, UnicodeError):
+            # Some published external skills lack readable frontmatter.
+            description = None
+        summary = " ".join(description.split()) if isinstance(description, str) else ""
+        summary = summary.replace("\\", "\\\\").replace("|", "\\|")
+        shadowed = ", ".join(item.source for item in sorted(source.shadowed, key=lambda item: item.priority))
+        definition = f"skills/{quote(identifier, safe='')}/SKILL.md"
+        rows.append(
+            f"| `{identifier}` | {summary or '—'} | {source.source} | {Lifecycle.ACTIVE.value} "
+            f"| {source.revision or '—'} | {shadowed or '—'} | [SKILL.md]({definition}) |"
+        )
+    return "\n".join(rows) + "\n"
+
+
 def sync_clients(
     repository: Path,
     paths: KitPaths,
@@ -627,6 +652,8 @@ def sync_clients(
         json.dumps({"version": 1, "skills": {identifier: source.as_dict()
                    for identifier, source in sorted(skill_sources.items())}}, ensure_ascii=False, indent=2) + "\n",
     )
+    effective_index = shared.parent / "effective-skills.md"
+    atomic_write(effective_index, _render_effective_skill_index(skill_sources))
 
     agents = []
     for path in sorted((repository / "agents").glob("*.md")):
@@ -678,6 +705,7 @@ def sync_clients(
             f"entrypoint: {repository / adapter['entrypoint']}\n"
             f"effective_policy: {effective_policy}\n"
             f"skills: {shared}\n"
+            f"effective_skills: {json.dumps(str(effective_index), ensure_ascii=False)}\n"
             f"mcp_registry: {repository / 'mcp' / 'registry.yaml'}\n"
         )
         atomic_write(target, content)
@@ -827,6 +855,7 @@ def register_native_mcp(
     *,
     project=None,
     access_profile: str = "readonly",
+    use_docker_routes: bool = True,
     runner=run_command,
 ) -> Path:
     """Добавить namespaced core MCP, не изменяя чужие client entries."""
@@ -848,6 +877,8 @@ def register_native_mcp(
     }
     project_id = project.identifier if project else None
     docker_routes, docker_state = confirmed_docker_routes(paths, project_id)
+    if not use_docker_routes:
+        docker_routes.clear()
     # Подтверждённый snapshot не может расширять более свежую effective policy.
     docker_routes &= set(desired)
     for identifier in docker_routes:

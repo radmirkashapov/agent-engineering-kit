@@ -26,6 +26,7 @@ from agent_engineering_kit.clients import (
 )
 from agent_engineering_kit.cli import _effective_skill_roots
 from agent_engineering_kit.component_state import Lifecycle, write_state
+from agent_engineering_kit.io import load_yaml
 from agent_engineering_kit.validation import validate_effective_overrides
 from conftest import write_yaml
 
@@ -124,6 +125,31 @@ def publication_fixture(fixture):
     for directory in ("clients", "catalog", "locks", "schemas"):
         shutil.copytree(real / directory, fixture.paths.repository / directory, dirs_exist_ok=True)
     return fixture
+
+
+def test_effective_skill_index_lists_project_winner_and_shadowed_sources(publication_fixture):
+    fixture = publication_fixture
+    status = fixture.manager(validator=lambda _: (True, [])).resync()
+    repository, paths = fixture.paths.repository, fixture.paths
+    builtin = repository / "skills/first-party/example/SKILL.md"
+    builtin.parent.mkdir(parents=True)
+    builtin.write_text("---\nname: example\n---\n", encoding="utf-8")
+
+    sync_clients(repository, paths, project=fixture.project)
+
+    index = paths.installations / "clients/shared/effective-skills.md"
+    content = index.read_text(encoding="utf-8")
+    assert [line for line in content.splitlines() if "| `example` |" in line] == [
+        f"| `example` | fixture | project-skills | ACTIVE | {status.active_revision} | built-in "
+        "| [SKILL.md](skills/example/SKILL.md) |",
+    ]
+    assert (index.parent / "skills/example/SKILL.md").is_file()
+    for client in ("codex", "claude-code", "claude-desktop", "opencode", "cline"):
+        for root in (paths.installations, paths.runtime):
+            adapter = load_yaml(root / "clients" / client / "adapter.yaml")
+            assert adapter["effective_skills"] == str(index)
+    sync_clients(repository, paths, project=fixture.project)
+    assert index.read_text(encoding="utf-8") == content
 
 
 @pytest.mark.parametrize("local_override", [False, True])
