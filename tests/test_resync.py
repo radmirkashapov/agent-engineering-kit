@@ -44,10 +44,15 @@ def native_mcp_environment(monkeypatch, tmp_path: Path):
 
 
 @pytest.mark.parametrize("docker_executable", [None, sys.executable])
+@pytest.mark.parametrize("malformed_routes", [False, True])
 def test_resync_keeps_native_mcp_when_docker_is_unavailable(
-    native_mcp_environment, monkeypatch, capsys, docker_executable,
+    confirmed_docker_mcp, monkeypatch, capsys, docker_executable, malformed_routes,
 ):
-    repository, paths, home = native_mcp_environment
+    repository, paths, config = confirmed_docker_mcp
+    if malformed_routes:
+        state_path = paths.state / "docker-mcp-toolkit.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state_path.write_text(json.dumps({**state, "routes": None}), encoding="utf-8")
     find_executable = shutil.which
 
     def which(name):
@@ -58,15 +63,6 @@ def test_resync_keeps_native_mcp_when_docker_is_unavailable(
         return find_executable(name)
 
     monkeypatch.setattr(shutil, "which", which)
-    (paths.state / "docker-mcp-toolkit.json").write_text(json.dumps({
-        "version": 1, "status": "SYNCED", "project_id": None,
-        "profile": "agent-engineering-kit", "gateway_registration": "agent-kit-docker",
-        "routes": {"context7": "docker"},
-    }), encoding="utf-8")
-    config = home / ".codex/config.toml"
-    config.parent.mkdir(parents=True)
-    config.write_text('[mcp_servers.agent-kit-docker]\ncommand = "docker"\n', encoding="utf-8")
-
     report = resync(repository, paths, update_kit=False, install_security=False)
 
     assert any(item["id"] == "context7" and item["status"] == "ACTIVE" for item in report.mcp)
@@ -75,6 +71,68 @@ def test_resync_keeps_native_mcp_when_docker_is_unavailable(
     assert "[mcp_servers.agent-kit-docker]" not in config_content
     _print_resync_report(report)
     assert "SKIPPED: Docker MCP Toolkit" in capsys.readouterr().out
+
+
+@pytest.fixture
+def confirmed_docker_mcp(native_mcp_environment):
+    repository, paths, home = native_mcp_environment
+    (paths.state / "docker-mcp-toolkit.json").write_text(json.dumps({
+        "version": 1, "status": "SYNCED", "project_id": None,
+        "profile": "agent-engineering-kit", "gateway_registration": "agent-kit-docker",
+        "routes": {"context7": "docker"},
+        "managed_servers": {"context7": "catalog://context7"},
+    }), encoding="utf-8")
+    config = home / ".codex/config.toml"
+    config.parent.mkdir(parents=True)
+    config.write_text('[mcp_servers.agent-kit-docker]\ncommand = "docker"\n', encoding="utf-8")
+    return repository, paths, config
+
+
+@pytest.mark.parametrize(("exit_code", "profile_output", "snapshot_override", "uses_docker"), [
+    (1, "", {}, False),
+    (0, '{"servers": []}', {}, False),
+    (0, '{"servers": null}', {}, False),
+    (0, '{"servers": ["catalog://["]}', {}, False),
+    (0, '{"servers": ["catalog://context7"]}', {"managed_servers": None}, False),
+    (0, '{"servers": ["catalog://context7"]}', {"routes": {"context7": "docker", "playwright": None}}, False),
+    (0, '{"servers": ["catalog://context7", "catalog://other"]}', {}, True),
+])
+def test_resync_uses_confirmed_docker_routes_only_when_profile_is_usable(
+    confirmed_docker_mcp, monkeypatch, exit_code, profile_output, snapshot_override, uses_docker,
+):
+    repository, paths, config = confirmed_docker_mcp
+    if snapshot_override:
+        state_path = paths.state / "docker-mcp-toolkit.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state_path.write_text(json.dumps({**state, **snapshot_override}), encoding="utf-8")
+    # Use the Python executable as a fake Docker CLI. Its script is the
+    # first argument, which DockerMcpToolkit supplies as "mcp".
+    (Path.cwd() / "mcp").write_text(
+        "import sys\n"
+        "if sys.argv[1:] == ['--help']:\n"
+        "    raise SystemExit(0)\n"
+        "assert sys.argv[1:] == ['profile', 'show', 'agent-engineering-kit', '--format', 'json']\n"
+        f"print({profile_output!r})\n"
+        f"raise SystemExit({exit_code})\n",
+        encoding="utf-8",
+    )
+    find_executable = shutil.which
+
+    def which(name):
+        if name == "docker":
+            return sys.executable
+        if name == "claude":
+            return None
+        return find_executable(name)
+
+    monkeypatch.setattr(shutil, "which", which)
+
+    report = resync(repository, paths, update_kit=False, install_security=False)
+
+    config_content = config.read_text(encoding="utf-8")
+    assert ("[mcp_servers.agent-kit-context7]" in config_content) is not uses_docker
+    assert ("[mcp_servers.agent-kit-docker]" in config_content) is uses_docker
+    assert (report.docker_mcp_skipped is None) is uses_docker
 
 
 def test_resync_fails_if_required_native_mcp_installation_fails_without_docker(

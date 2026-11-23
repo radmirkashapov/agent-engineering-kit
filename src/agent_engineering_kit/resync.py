@@ -145,10 +145,8 @@ def resync(
         messages = "; ".join(item.message for item in mcp_result.diagnostics if item.severity == "ERROR")
         raise AgentKitError(f"Resync остановлен MCP installation: {messages}")
     mcp_state = mcp_manager.list(project, access_profile=mcp_access_profile)
-    docker_status, docker_message = DockerMcpToolkit(repository, paths).availability()
-    docker_mcp_skipped = docker_message if docker_status != "READY" else None
-
     project_id = project.identifier if project else None
+    docker_routes, docker_state, docker_mcp_skipped = DockerMcpToolkit(repository, paths).routing_for_resync(project_id)
     generated = sync_clients(
         repository,
         paths,
@@ -176,7 +174,7 @@ def resync(
             paths,
             project=project,
             access_profile=mcp_access_profile,
-            use_docker_routes=docker_mcp_skipped is None,
+            docker_routing=(docker_routes, docker_state),
         )
         generated.append(registration_path)
         registrations = json.loads(registration_path.read_text(encoding="utf-8")).get("registrations", [])

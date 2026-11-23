@@ -239,14 +239,20 @@ def test_effective_skill_index_keeps_description_in_one_markdown_cell(tmp_path: 
     assert r"| `example` | Review API \| database changes. Verify the contracts. | built-in | ACTIVE |" in content
 
 
-def test_effective_skill_index_accepts_published_skills_without_valid_description(tmp_path: Path) -> None:
+@pytest.mark.parametrize("frontmatter", [
+    "---\nname: legacy\n",
+    "---\nname: legacy\ndescription: 2024-02-31\n---\n",
+])
+def test_effective_skill_index_accepts_published_skills_without_valid_description(
+    tmp_path: Path, frontmatter: str,
+) -> None:
     repository = Path(__file__).resolve().parents[1]
     data = tmp_path / "data"
     paths = KitPaths(repository, data, data / "runtime", data / "projects", data / "overrides")
     revision = "a" * 40
     external = paths.installations / "skills/superpowers/revisions" / revision
     write_publication_skill(external / "skills/legacy", "legacy", "external-only")
-    (external / "skills/legacy/SKILL.md").write_text("---\nname: legacy\n", encoding="utf-8")
+    (external / "skills/legacy/SKILL.md").write_text(frontmatter, encoding="utf-8")
     write_state(paths, "skills", "superpowers", Lifecycle.ACTIVE,
                 installation_path=str(external), revision=revision)
 
@@ -256,6 +262,34 @@ def test_effective_skill_index_accepts_published_skills_without_valid_descriptio
     assert (shared / "skills/legacy").resolve() == external / "skills/legacy"
     content = (shared / "effective-skills.md").read_text(encoding="utf-8")
     assert f"| `legacy` | — | external-catalog | ACTIVE | {revision} | — |" in content
+
+
+def test_effective_skill_index_escapes_legacy_identifiers_and_description_markup(tmp_path: Path) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    data = tmp_path / "data"
+    paths = KitPaths(repository, data, data / "runtime", data / "projects", data / "overrides")
+    revision = "a" * 40
+    external = paths.installations / "skills/superpowers/revisions" / revision
+    identifier = "legacy|`\nname"
+    skill = external / "skills" / identifier / "SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text(
+        "---\ndescription: |\n  <tag> [Audit](other.md)\n  More | details.\n---\n",
+        encoding="utf-8",
+    )
+    write_state(paths, "skills", "superpowers", Lifecycle.ACTIVE,
+                installation_path=str(external), revision=revision)
+
+    sync_clients(repository, paths)
+
+    shared = paths.installations / "clients/shared"
+    content = (shared / "effective-skills.md").read_text(encoding="utf-8")
+    rows = [line for line in content.splitlines() if f" | external-catalog | ACTIVE | {revision} | " in line]
+    assert rows == [
+        r"| legacy\|\` name | &lt;tag&gt; \[Audit\](other.md) More \| details. | external-catalog | "
+        f"ACTIVE | {revision} | — | [SKILL.md](skills/legacy%7C%60%0Aname/SKILL.md) |"
+    ]
+    assert (shared / "skills" / identifier / "SKILL.md").resolve() == skill
 
 
 def test_external_package_allowlist_keeps_publishing_its_capabilities(tmp_path: Path) -> None:

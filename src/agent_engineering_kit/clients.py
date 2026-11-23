@@ -8,7 +8,9 @@ import os
 import re
 from collections import Counter
 from dataclasses import dataclass, replace
+from html import escape
 from pathlib import Path
+from typing import Any
 from urllib.parse import quote
 
 from .access import resolve_access
@@ -599,6 +601,11 @@ def validate_clients(repository: Path) -> ValidationResult:
     return result
 
 
+def _markdown_table_cell(value: str) -> str:
+    text = escape(" ".join(value.split()), quote=False)
+    return re.sub(r"([\\|`*_\[\]~])", r"\\\1", text)
+
+
 def _render_effective_skill_index(sources: dict[str, EffectiveSkillSource]) -> str:
     rows = [
         "# Effective skills",
@@ -609,16 +616,17 @@ def _render_effective_skill_index(sources: dict[str, EffectiveSkillSource]) -> s
     for identifier, source in sorted(sources.items()):
         try:
             description = markdown_frontmatter(source.path / "SKILL.md").get("description")
-        except (AgentKitError, OSError, UnicodeError):
+        except (AgentKitError, OSError, ValueError):
             # Some published external skills lack readable frontmatter.
             description = None
-        summary = " ".join(description.split()) if isinstance(description, str) else ""
-        summary = summary.replace("\\", "\\\\").replace("|", "\\|")
+        summary = _markdown_table_cell(description) if isinstance(description, str) else ""
+        skill_id = f"`{identifier}`" if re.fullmatch(r"[a-z0-9-]+", identifier) else _markdown_table_cell(identifier)
         shadowed = ", ".join(item.source for item in sorted(source.shadowed, key=lambda item: item.priority))
         definition = f"skills/{quote(identifier, safe='')}/SKILL.md"
         rows.append(
-            f"| `{identifier}` | {summary or '—'} | {source.source} | {Lifecycle.ACTIVE.value} "
-            f"| {source.revision or '—'} | {shadowed or '—'} | [SKILL.md]({definition}) |"
+            f"| {skill_id} | {summary or '—'} | {_markdown_table_cell(source.source)} | {Lifecycle.ACTIVE.value} "
+            f"| {_markdown_table_cell(source.revision or '') or '—'} | {_markdown_table_cell(shadowed) or '—'} "
+            f"| [SKILL.md]({definition}) |"
         )
     return "\n".join(rows) + "\n"
 
@@ -855,7 +863,7 @@ def register_native_mcp(
     *,
     project=None,
     access_profile: str = "readonly",
-    use_docker_routes: bool = True,
+    docker_routing: tuple[set[str], dict[str, Any] | None] | None = None,
     runner=run_command,
 ) -> Path:
     """Добавить namespaced core MCP, не изменяя чужие client entries."""
@@ -876,11 +884,11 @@ def register_native_mcp(
         if manager.is_enabled(item, project)
     }
     project_id = project.identifier if project else None
-    docker_routes, docker_state = confirmed_docker_routes(paths, project_id)
-    if not use_docker_routes:
-        docker_routes.clear()
+    if docker_routing is None:
+        docker_routing = confirmed_docker_routes(paths, project_id)
+    docker_routes, docker_state = docker_routing
     # Подтверждённый snapshot не может расширять более свежую effective policy.
-    docker_routes &= set(desired)
+    docker_routes = docker_routes.intersection(desired)
     for identifier in docker_routes:
         desired.pop(identifier, None)
     gateway = {
