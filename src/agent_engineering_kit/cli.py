@@ -263,6 +263,8 @@ def _parser() -> argparse.ArgumentParser:
     project_init.add_argument("--stack", help="Стек шаблона")
     project_init.add_argument("--git", action="store_true", dest="initialize_git", help="Инициализировать Git repository")
     project_init.add_argument("--default-branch", default="main", help="Начальная ветка нового Git repository")
+    project_init.add_argument("--skills-repository-url", help="URL Git-репозитория project-skills")
+    project_init.add_argument("--skills-default-branch", help="Основная ветка project-skills (по умолчанию main)")
     project_init.add_argument(
         "--nested", action="store_true",
         help="Явно разрешить независимый вложенный logical project; по умолчанию пересечение границ отклоняется",
@@ -368,7 +370,7 @@ def _print_rows(rows: list[dict]) -> None:
 
 
 def _interactive_project_setup(repository: Path) -> dict[str, object]:
-    """Запросить шаблон и Git-настройки из версионируемого каталога Kit."""
+    """Запросить шаблон, настройки Git и необязательный URL project-skills."""
     templates = load_project_templates(repository)
     print("Выберите шаблон проекта:")
     for index, template in enumerate(templates, start=1):
@@ -385,10 +387,12 @@ def _interactive_project_setup(repository: Path) -> dict[str, object]:
     default_branch = "main"
     if initialize_git:
         default_branch = input("Основная ветка [main]: ").strip() or "main"
+    skills_repository_url = input("URL репозитория project-skills [Enter — пропустить]: ").strip() or None
     return {
         "template_id": str(selected["id"]),
         "initialize_git": initialize_git,
         "default_branch": default_branch,
+        "skills_repository_url": skills_repository_url,
     }
 
 
@@ -855,6 +859,9 @@ def run(argv: list[str] | None = None) -> int:
             print(json.dumps(output, ensure_ascii=False, indent=2))
             return 1 if output.get("state") == "NOT_CONFIGURED" else 0
         if args.command == "project" and args.project_command == "init":
+            if args.skills_default_branch is not None and args.skills_repository_url is None:
+                raise AgentKitError("--skills-default-branch требует --skills-repository-url")
+            root = Path(args.path).expanduser().resolve()
             setup: dict[str, object] = {
                 "template_id": args.template_id,
                 "language": args.language,
@@ -862,11 +869,18 @@ def run(argv: list[str] | None = None) -> int:
                 "initialize_git": args.initialize_git,
                 "default_branch": args.default_branch,
                 "nested": args.nested,
+                "skills_repository_url": args.skills_repository_url,
             }
-            if not any((args.template_id, args.language, args.stack, args.initialize_git)) and sys.stdin.isatty():
+            if (
+                args.skills_repository_url is None
+                and not any((args.template_id, args.language, args.stack, args.initialize_git))
+                and not (root / ".ai-team/project.yaml").exists()
+                and sys.stdin.isatty()
+            ):
                 setup.update(_interactive_project_setup(repository))
+            skills_repository_url = setup["skills_repository_url"]
             project = init_project(
-                Path(args.path),
+                root,
                 repository,
                 paths,
                 identifier=args.identifier,
@@ -876,6 +890,8 @@ def run(argv: list[str] | None = None) -> int:
                 initialize_git=bool(setup["initialize_git"]),
                 default_branch=str(setup["default_branch"]),
                 nested=bool(setup["nested"]),
+                skills_repository_url=skills_repository_url if isinstance(skills_repository_url, str) else None,
+                skills_default_branch=args.skills_default_branch if args.skills_default_branch is not None else "main",
             )
             print(f"Logical project создан/найден: {project.identifier}\nManifest: {project.manifest_path}\nMemory: {paths.projects / project.identifier}")
             return 0

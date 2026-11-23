@@ -296,7 +296,12 @@ def init_project(
     initialize_git: bool = False,
     default_branch: str = "main",
     nested: bool = False,
+    skills_repository_url: str | None = None,
+    skills_default_branch: str = "main",
 ) -> LogicalProject:
+    if skills_repository_url is None and skills_default_branch != "main":
+        raise AgentKitError("skills_default_branch требует skills_repository_url")
+
     root = root.expanduser().resolve()
     root.mkdir(parents=True, exist_ok=True)
     manifest_path = root / ".ai-team" / "project.yaml"
@@ -352,6 +357,10 @@ def init_project(
     }
     if parent is not None and parent.root != root:
         manifest["parent_project"] = {"id": parent.identifier, "path": os.path.relpath(parent.root, root).replace(os.sep, "/")}
+    if skills_repository_url is not None:
+        manifest["skills"] = {
+            "repository": {"url": skills_repository_url.strip(), "default_branch": skills_default_branch},
+        }
     schema_result = validate_instance(manifest, repository / "schemas" / "project.schema.json", str(manifest_path))
     if not schema_result.ok:
         raise AgentKitError("Не удалось создать валидный project manifest")

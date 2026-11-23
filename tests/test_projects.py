@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from agent_engineering_kit.errors import AgentKitError
+from agent_engineering_kit.io import load_yaml
 from agent_engineering_kit.paths import KitPaths
 from agent_engineering_kit.projects import LogicalProject, find_project, init_project, register_memory, validate_project
 import agent_engineering_kit.projects as projects_module
@@ -56,6 +57,62 @@ def test_project_init_indexes_memory_immediately(
     init_project(tmp_path / "indexed-project", kit_repository, paths(tmp_path, kit_repository))
 
     assert indexed == [("indexed-project", "full")]
+
+
+def test_project_init_indexes_full_after_recording_skills_repository(
+    tmp_path: Path, kit_repository: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    url = "git@gitlab.example:team/demo-skills.git"
+    expected = {"url": url, "default_branch": "main"}
+    indexed = []
+
+    def index(_self, project: LogicalProject, *, mode: str) -> dict[str, str]:
+        indexed.append((mode, load_yaml(project.manifest_path)["skills"]["repository"]))
+        return {"status": "PASS"}
+
+    monkeypatch.setattr(projects_module.ProjectMemoryManager, "index", index)
+
+    project = init_project(
+        tmp_path / "demo", kit_repository, paths(tmp_path, kit_repository),
+        skills_repository_url=url,
+    )
+
+    assert project.skills_repository == expected
+    assert indexed == [("full", expected)]
+
+
+@pytest.mark.parametrize(
+    ("url", "branch"),
+    [
+        ("https://user:secret@gitlab.example/team/demo-skills.git", "main"),
+        ("git@gitlab.example:team/demo-skills.git", "bad branch"),
+    ],
+)
+def test_project_init_rejects_invalid_skills_repository(
+    tmp_path: Path, kit_repository: Path, url: str, branch: str,
+) -> None:
+    root = tmp_path / "demo"
+
+    with pytest.raises(AgentKitError, match="валидный project manifest"):
+        init_project(
+            root, kit_repository, paths(tmp_path, kit_repository),
+            skills_repository_url=url, skills_default_branch=branch,
+        )
+
+    assert not (root / ".ai-team/project.yaml").exists()
+
+
+def test_project_init_rejects_custom_branch_without_skills_repository(
+    tmp_path: Path, kit_repository: Path,
+) -> None:
+    root = tmp_path / "demo"
+
+    with pytest.raises(AgentKitError, match="skills_repository_url"):
+        init_project(
+            root, kit_repository, paths(tmp_path, kit_repository), skills_default_branch="release",
+        )
+
+    assert not root.exists()
 
 
 def test_monorepo_detects_nested_components(tmp_path: Path, kit_repository: Path) -> None:

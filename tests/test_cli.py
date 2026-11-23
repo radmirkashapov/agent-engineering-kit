@@ -874,6 +874,94 @@ def test_project_init_parser_exposes_language_and_stack() -> None:
     assert args.stack == "fastapi"
 
 
+def test_project_init_parses_skills_repository_arguments() -> None:
+    url = "git@gitlab.example:team/demo-skills.git"
+    args = _parser().parse_args([
+        "project", "init", "--skills-repository-url", url,
+        "--skills-default-branch", "release",
+    ])
+
+    assert args.skills_repository_url == url
+    assert args.skills_default_branch == "release"
+
+
+@pytest.mark.parametrize("answer", [" git@gitlab.example:team/demo-skills.git ", ""])
+def test_interactive_project_init_offers_optional_skills_repository(
+    isolated_data: Path, monkeypatch: pytest.MonkeyPatch, answer: str,
+) -> None:
+    root = isolated_data / "interactive-project"
+    answers = iter(["1", "y", "develop", answer])
+    prompts = []
+
+    def read(prompt: str) -> str:
+        prompts.append(prompt)
+        return next(answers)
+
+    monkeypatch.setattr(cli_module.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", read)
+
+    assert run(["project", "init", str(root)]) == 0
+
+    manifest = load_yaml(root / ".ai-team/project.yaml")
+    assert len(prompts) == 4
+    assert "project-skills" in prompts[-1]
+    assert (root / ".git/HEAD").read_text(encoding="utf-8").strip() == "ref: refs/heads/develop"
+    if answer:
+        assert manifest["skills"]["repository"] == {
+            "url": "git@gitlab.example:team/demo-skills.git", "default_branch": "main",
+        }
+    else:
+        assert "skills" not in manifest
+
+
+@pytest.mark.parametrize("is_tty", [True, False])
+def test_project_init_records_explicit_skills_repository_without_prompts(
+    isolated_data: Path, monkeypatch: pytest.MonkeyPatch, is_tty: bool,
+) -> None:
+    root = isolated_data / "explicit-project"
+    url = "git@gitlab.example:team/demo-skills.git"
+    monkeypatch.setattr(cli_module.sys.stdin, "isatty", lambda: is_tty)
+    monkeypatch.setattr("builtins.input", lambda _: pytest.fail("unexpected project init prompt"))
+
+    assert run([
+        "project", "init", str(root), "--skills-repository-url", url,
+        "--skills-default-branch", "release",
+    ]) == 0
+
+    assert load_yaml(root / ".ai-team/project.yaml")["skills"]["repository"] == {
+        "url": url, "default_branch": "release",
+    }
+
+
+def test_project_init_rejects_skills_branch_without_skills_repository(
+    isolated_data: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    root = isolated_data / "branch-only"
+    monkeypatch.setattr(cli_module.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda _: pytest.fail("unexpected project init prompt"))
+
+    assert run(["project", "init", str(root), "--skills-default-branch", "main"]) == 1
+
+    assert "--skills-repository-url" in capsys.readouterr().err
+    assert not root.exists()
+
+
+def test_interactive_project_reinit_preserves_existing_manifest_without_prompts(
+    isolated_data: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = isolated_data / "existing-project"
+    monkeypatch.setattr("builtins.input", lambda _: pytest.fail("unexpected project init prompt"))
+    monkeypatch.setattr(cli_module.sys.stdin, "isatty", lambda: False)
+    assert run(["project", "init", str(root)]) == 0
+    manifest = root / ".ai-team/project.yaml"
+    before = manifest.read_bytes()
+    assert "skills" not in load_yaml(manifest)
+
+    monkeypatch.setattr(cli_module.sys.stdin, "isatty", lambda: True)
+    assert run(["project", "init", str(root)]) == 0
+    assert manifest.read_bytes() == before
+
+
 def test_project_memory_refresh_command_updates_native_indexes(
     isolated_data: Path,
     capsys: pytest.CaptureFixture[str],
