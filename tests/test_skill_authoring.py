@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass, replace
@@ -99,6 +100,59 @@ def test_add_bundled_skill_copies_validated_directory(tmp_path: Path, kit_reposi
     assert (target / "references" / "guide.md").read_text(encoding="utf-8") == "# Guide\n"
     assert git(kit_repository, "rev-parse", "HEAD") == original_head
     assert git(kit_repository, "diff", "--cached", "--name-only") == ""
+
+
+@pytest.mark.parametrize("layer", ["bundled", "project"])
+def test_add_skill_preserves_compound_tree_and_relative_links(fixture: ProjectFixture, layer: str):
+    source = write_skill(fixture.source.with_name("compound-review"), "compound-review")
+    skill_file = source / "SKILL.md"
+    skill_file.write_text(
+        skill_file.read_text(encoding="utf-8")
+        + "\n- [Plan the review](steps/preparation/plan.md)\n"
+        + "- [Verify the review](steps/verification/check.md)\n",
+        encoding="utf-8",
+    )
+    files = {
+        "steps/preparation/plan.md": "# Plan\n\n[Request contract](../../contracts/api/request.json)\n",
+        "steps/verification/check.md": "# Check\n\n[Scenario](../../specs/fixtures/scenario.yaml)\n",
+        "contracts/api/request.json": '{"type": "object"}\n',
+        "specs/fixtures/scenario.yaml": "scenario: review-api\n",
+    }
+    for relative, content in files.items():
+        file = source / relative
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_text(content, encoding="utf-8")
+    (source / "specs/examples").mkdir()
+
+    if layer == "bundled":
+        target = add_bundled_skill(fixture.repository, source)
+        assert target == fixture.repository / "skills/first-party/compound-review"
+    else:
+        checkout = fixture.clone_sibling()
+        target = add_project_skill(fixture.repository, fixture.project, source, checkout)
+        assert target == checkout / "skills/compound-review"
+        assert "`compound-review/SKILL.md`" in (checkout / "skills/INDEX.md").read_text(encoding="utf-8")
+
+    expected_tree = {path.relative_to(source) for path in source.rglob("*")}
+    assert {path.relative_to(target) for path in target.rglob("*")} == expected_tree
+    expected_links = {
+        "SKILL.md": ["steps/preparation/plan.md", "steps/verification/check.md"],
+        "steps/preparation/plan.md": ["contracts/api/request.json"],
+        "steps/verification/check.md": ["specs/fixtures/scenario.yaml"],
+    }
+    for relative in expected_tree:
+        copied = target / relative
+        assert not copied.is_symlink()
+        original = source / relative
+        if original.is_dir():
+            assert copied.is_dir()
+        else:
+            assert copied.read_bytes() == original.read_bytes()
+    for relative, destinations in expected_links.items():
+        document = target / relative
+        links = re.findall(r"\]\(([^)]+)\)", document.read_text(encoding="utf-8"))
+        resolved = [(document.parent / link).resolve(strict=True) for link in links]
+        assert [path.relative_to(target).as_posix() for path in resolved] == destinations
 
 
 @pytest.mark.parametrize("identifier", ["../review-api", "different-name", ""])
