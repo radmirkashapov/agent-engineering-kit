@@ -6,6 +6,7 @@
 - [Встроенная справка и каталог команд](../README.md#встроенная-справка-и-каталог-команд).
 - [AI.md](../AI.md) — точка входа для AI-агента.
 - [Установка из корпоративного GitLab, корпоративная конфигурация и синхронизация с GitHub](runbooks/install-from-gitlab-fork.md).
+- [Добавление корпоративных навыков, проектные пакеты и учётные данные MCP](runbooks/corporate-extensions-and-mcp-credentials.md).
 - [ADR](adr/) — архитектурные решения.
 - [Политика моделей](../models/README.md).
 - [Дизайн централизованной регистрации моделей в клиентах](superpowers/specs/2026-11-17-client-model-registration-design.md).
@@ -20,7 +21,7 @@
 - [Дизайн базовых SDLC-skills и профилей](superpowers/specs/2026-10-28-sdlc-skills-profiles-design.md).
 - [План реализации базовых SDLC-ролей агентов](superpowers/plans/2026-10-28-sdlc-agent-roles.md).
 - [План реализации единого Git-репозитория проектных skills](superpowers/plans/2026-10-26-project-skills-repository.md).
-- [Эксплуатация project-skills: подключение, ветки и диагностика](../README.md#единый-репозиторий-проектных-skills).
+- [Подключение project-skills, добавление навыков и проверка ветки](wiki/Project-skills.md).
 - [Локальные переопределения](../README.md#локальные-переопределения).
 - [Kit как control plane для внешних agent harness](adr/0012-harness-control-plane.md).
 - [Capability kernel, multi-repo topology и безопасная параллельная работа](adr/0013-capability-kernel.md).

@@ -1,38 +1,38 @@
-# Project Skill Authoring Implementation Plan
+# План реализации команд для добавления проектных навыков
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Инструкция для агентов.** Для выполнения плана по задачам используйте `superpowers:subagent-driven-development` или `superpowers:executing-plans`. Отмечайте выполненные шаги в списке `- [ ]`.
 
-**Goal:** Add safe authoring commands for corporate bundled skills and sibling project-skills checkouts, plus indexes that let agents discover project and effective skills.
+**Цель.** Добавить безопасные команды для импорта корпоративных навыков и работы с отдельной Git-копией `project-skills`. Индексы помогут агентам находить проектные навыки и видеть итоговый набор.
 
-**Architecture:** A new `skill_authoring.py` owns validation, safe copy, Git checkout verification and tracked project index generation. `projects.py` owns manifest construction, while `clients.py` produces the runtime effective index from the existing precedence resolver. `cli.py` only parses arguments and delegates to these services.
+**Архитектура.** Модуль `skill_authoring.py` проверяет пакет и рабочую копию Git, безопасно копирует файлы и составляет отслеживаемый индекс проекта. `projects.py` формирует манифест. `clients.py` составляет итоговый индекс по уже действующим приоритетам источников. `cli.py` разбирает аргументы и вызывает эти модули.
 
-**Tech Stack:** Python 3.10+, argparse, pathlib, shutil, subprocess through `run_command`, PyYAML, pytest.
+**Инструменты.** Python 3.10+, `argparse`, `pathlib`, `shutil`, `subprocess` через `run_command`, PyYAML и pytest.
 
-**Spec:** `docs/superpowers/specs/2026-11-23-project-skill-authoring-design.md`
+[Дизайн команд и форматов](../specs/2026-11-23-project-skill-authoring-design.md)
 
-## Global Constraints
+## Общие ограничения
 
-- Never write project-specific skills into a product repository or Kit-managed checkout.
-- Never create commits, branches, push, PR/MR or a remote repository.
-- Validate `SKILL.md` against `schemas/skill.schema.json` before publication.
-- Source and target skill IDs must match their directory names.
-- Existing target directories require explicit `--replace` and a clean developer checkout.
-- TTY prompts are skipped for non-interactive stdin and explicit CLI options.
-- All user-visible Russian documentation and messages remain professional Russian.
+- Храните проектные навыки в отдельной рабочей копии. Запись в продуктовые репозитории и управляемую копию Kit запрещена.
+- Создание ветки и удалённого репозитория, коммиты, push и PR/MR выполняются средствами Git и Git-платформы.
+- Проверяйте `SKILL.md` по схеме `schemas/skill.schema.json` перед публикацией.
+- ID навыка в источнике и назначении должны совпадать с именами соответствующих каталогов.
+- Замена существующего каталога требует явного `--replace` и чистой рабочей копии.
+- Пропускайте интерактивные вопросы при перенаправленном вводе и при явной передаче соответствующих параметров CLI.
+- Пишите пользовательскую документацию и сообщения на русском языке.
 
 ---
 
-### Task 1: Implement safe authoring service and tracked project index
+### Задача 1. Безопасный импорт и отслеживаемый индекс проекта
 
-**Files:**
-- Create: `src/agent_engineering_kit/skill_authoring.py`
-- Test: `tests/test_skill_authoring.py`
+**Файлы**
+- Создать `src/agent_engineering_kit/skill_authoring.py`
+- Проверить `tests/test_skill_authoring.py`
 
-**Interfaces:**
-- Consumes: `LogicalProject`, `run_command`, `validate_skill_directory`, `atomic_write`.
-- Produces: `add_bundled_skill(repository, source, identifier=None, replace=False) -> Path`; `checkout_project_skills(project, destination) -> Path`; `add_project_skill(repository, project, source, checkout, identifier=None, replace=False) -> Path`; `write_project_skill_index(repository, checkout) -> Path`.
+**Интерфейсы**
+- Использует `LogicalProject`, `run_command`, `validate_skill_directory`, `atomic_write`.
+- Предоставляет `add_bundled_skill(repository, source, identifier=None, replace=False) -> Path`, `checkout_project_skills(project, destination) -> Path`, `add_project_skill(repository, project, source, checkout, identifier=None, replace=False) -> Path` и `write_project_skill_index(repository, checkout) -> Path`.
 
-- [ ] **Step 1: Write failing service tests**
+- [ ] **Шаг 1. Написать тесты сервиса до реализации**
 
 ```python
 def test_add_bundled_skill_copies_validated_directory(tmp_path, kit_repository):
@@ -51,13 +51,13 @@ def test_add_project_skill_writes_deterministic_index(fixture):
     assert "review-api" in (checkout / "skills/INDEX.md").read_text(encoding="utf-8")
 ```
 
-- [ ] **Step 2: Verify RED**
+- [ ] **Шаг 2. Подтвердить ожидаемое падение тестов**
 
-Run: `uv run --extra dev pytest tests/test_skill_authoring.py -q`
+Команда проверки. `uv run --extra dev pytest tests/test_skill_authoring.py -q`
 
-Expected: collection fails because `agent_engineering_kit.skill_authoring` does not exist.
+Ожидаемый результат. Сбор тестов прерывается из-за отсутствующего модуля `agent_engineering_kit.skill_authoring`.
 
-- [ ] **Step 3: Implement minimal service**
+- [ ] **Шаг 3. Реализовать сервис**
 
 ```python
 def add_bundled_skill(repository: Path, source: Path, *, identifier: str | None = None, replace: bool = False) -> Path:
@@ -72,34 +72,34 @@ def write_project_skill_index(repository: Path, checkout: Path) -> Path:
     return target
 ```
 
-Require regular directories (no symlink source/destination), normalized `origin` equality, empty checkout destination for clone, and a clean `git status --porcelain` before `--replace` can overwrite a tracked skill. Stage the copy in a temporary sibling and atomically replace it only after validation.
+Проверяйте, что исходный и целевой каталоги обычные и не являются символическими ссылками, нормализованные URL `origin` и манифеста совпадают, а каталог для клонирования пуст. Для замены отслеживаемого навыка с `--replace` требуйте чистый `git status --porcelain`. Подготовьте копию во временном соседнем каталоге и замените исходный пакет атомарно после проверки.
 
-- [ ] **Step 4: Verify GREEN**
+- [ ] **Шаг 4. Подтвердить успешное прохождение тестов**
 
-Run: `uv run --extra dev pytest tests/test_skill_authoring.py -q`
+Команда проверки. `uv run --extra dev pytest tests/test_skill_authoring.py -q`
 
-Expected: all new unit and Git-fixture tests pass.
+Ожидаемый результат. Проходят все новые модульные тесты и тесты с временными Git-репозиториями.
 
-- [ ] **Step 5: Commit**
+- [ ] **Шаг 5. Создать коммит**
 
 ```bash
 git add src/agent_engineering_kit/skill_authoring.py tests/test_skill_authoring.py
 git commit -m "feat(skills): add safe skill authoring service"
 ```
 
-### Task 2: Configure project skills during init, including TTY flow
+### Задача 2. Настройка проектных навыков при инициализации
 
-**Files:**
-- Modify: `src/agent_engineering_kit/projects.py`
-- Modify: `src/agent_engineering_kit/cli.py`
-- Modify: `tests/test_projects.py`
-- Modify: `tests/test_cli.py`
+**Файлы**
+- Изменить `src/agent_engineering_kit/projects.py`
+- Изменить `src/agent_engineering_kit/cli.py`
+- Изменить `tests/test_projects.py`
+- Изменить `tests/test_cli.py`
 
-**Interfaces:**
-- Consumes: `init_project(..., skills_repository_url: str | None, skills_default_branch: str = "main")`.
-- Produces: a validated optional `skills.repository` manifest section.
+**Интерфейсы**
+- Использует `init_project(..., skills_repository_url: str | None, skills_default_branch: str = "main")`.
+- Формирует необязательную секцию `skills.repository` в манифесте и проверяет её.
 
-- [ ] **Step 1: Write failing init and CLI tests**
+- [ ] **Шаг 1. Написать тесты инициализации и CLI до реализации**
 
 ```python
 def test_project_init_records_explicit_skills_repository(tmp_path, kit_repository):
@@ -122,44 +122,44 @@ def test_project_init_keeps_full_codebase_memory_and_serena_indexing(tmp_path, k
     assert calls == ["full"]
 ```
 
-- [ ] **Step 2: Verify RED**
+- [ ] **Шаг 2. Подтвердить ожидаемое падение тестов**
 
-Run: `uv run --extra dev pytest tests/test_projects.py tests/test_cli.py -k 'skills_repository or interactive_project' -q`
+Команда проверки. `uv run --extra dev pytest tests/test_projects.py tests/test_cli.py -k 'skills_repository or interactive_project' -q`
 
-Expected: failures from unknown `init_project` keyword and absent parser fields.
+Ожидаемый результат. Тесты выявляют неизвестный именованный аргумент `init_project` и отсутствующие параметры CLI.
 
-- [ ] **Step 3: Implement manifest and TTY handling**
+- [ ] **Шаг 3. Записывать источник в манифест и обрабатывать интерактивный ввод**
 
-Add `--skills-repository-url` and `--skills-default-branch` to `project init`; reject a branch without URL. Extend `_interactive_project_setup()` with one optional URL prompt after Git selection and use the default `main` branch when a URL is entered. Pass the values to `init_project()`, which inserts `skills.repository` before schema validation. Preserve idempotent init behavior and never prompt in non-TTY mode.
+Добавьте `--skills-repository-url` и `--skills-default-branch` к `project init`. Для передачи ветки требуется URL. Расширьте `_interactive_project_setup()` одним необязательным вопросом об URL после выбора Git. Для введённого URL используйте ветку `main` по умолчанию. Передайте значения в `init_project()`, который добавляет `skills.repository` до проверки схемы. Сохраните идемпотентность инициализации. Задавайте вопрос только при вводе через TTY.
 
-Keep the existing `ProjectMemoryManager.index(project, mode="full")` call after manifest creation; do not add a second scan. The focused test must prove the full mode remains requested.
+После создания манифеста сохраните единственный вызов `ProjectMemoryManager.index(project, mode="full")`. Отдельный тест должен подтвердить, что по-прежнему запрашивается полная индексация.
 
-- [ ] **Step 4: Verify GREEN**
+- [ ] **Шаг 4. Подтвердить успешное прохождение тестов**
 
-Run: `uv run --extra dev pytest tests/test_projects.py tests/test_cli.py -k 'skills_repository or interactive_project' -q`
+Команда проверки. `uv run --extra dev pytest tests/test_projects.py tests/test_cli.py -k 'skills_repository or interactive_project' -q`
 
-Expected: all targeted tests pass.
+Ожидаемый результат. Все выбранные тесты проходят.
 
-- [ ] **Step 5: Commit**
+- [ ] **Шаг 5. Создать коммит**
 
 ```bash
 git add src/agent_engineering_kit/projects.py src/agent_engineering_kit/cli.py tests/test_projects.py tests/test_cli.py
 git commit -m "feat(projects): configure project skill repositories at init"
 ```
 
-### Task 3: Expose authoring commands and effective runtime index
+### Задача 3. Команды импорта и индекс доступных навыков
 
-**Files:**
-- Modify: `src/agent_engineering_kit/cli.py`
-- Modify: `src/agent_engineering_kit/clients.py`
-- Modify: `tests/test_cli.py`
-- Modify: `tests/test_clients.py`
+**Файлы**
+- Изменить `src/agent_engineering_kit/cli.py`
+- Изменить `src/agent_engineering_kit/clients.py`
+- Изменить `tests/test_cli.py`
+- Изменить `tests/test_clients.py`
 
-**Interfaces:**
-- Consumes: Task 1 service and `effective_skill_sources()`.
-- Produces: `agent-kit skills add`; `agent-kit project skills checkout|add|index`; `effective-skills.md` adjacent to `skills-provenance.json`.
+**Интерфейсы**
+- Использует сервис из задачи 1 и `effective_skill_sources()`.
+- Предоставляет `agent-kit skills add` и `agent-kit project skills checkout|add|index`. Сохраняет `effective-skills.md` рядом с `skills-provenance.json`.
 
-- [ ] **Step 1: Write failing CLI and runtime-index tests**
+- [ ] **Шаг 1. Написать тесты CLI и индекса до реализации**
 
 ```python
 def test_skill_add_invokes_bundled_authoring(isolated_data, monkeypatch, capsys):
@@ -181,47 +181,47 @@ def test_resync_keeps_native_mcp_when_docker_is_unavailable(paths, monkeypatch):
     assert resync(REPOSITORY, paths, update_kit=False).mcp
 ```
 
-- [ ] **Step 2: Verify RED**
+- [ ] **Шаг 2. Подтвердить ожидаемое падение тестов**
 
-Run: `uv run --extra dev pytest tests/test_cli.py tests/test_clients.py -k 'skill_add or project_skills_checkout or effective_skill_index' -q`
+Команда проверки. `uv run --extra dev pytest tests/test_cli.py tests/test_clients.py -k 'skill_add or project_skills_checkout or effective_skill_index' -q`
 
-Expected: parser tests fail because commands and generated Markdown do not exist.
+Ожидаемый результат. Проверки выявляют отсутствие команд и генерируемого Markdown.
 
-- [ ] **Step 3: Implement command routing and runtime index**
+- [ ] **Шаг 3. Подключить команды и генерацию индекса**
 
-Add parser entries and CLI dispatch that resolve and validate the current logical project before invoking the service. Print changed file paths and no Git lifecycle claims. In `sync_clients()`, render one deterministic Markdown row per `EffectiveSkillSource` with ID, `description`, effective source, state, revision and shadowed source names; write it atomically to `shared.parent / "effective-skills.md"`. Add the index path to generated adapter content.
+Добавьте параметры и диспетчеризацию CLI. Перед вызовом сервиса найдите и проверьте текущий логический проект. Выведите пути изменённых файлов. В `sync_clients()` сформируйте по одной детерминированной строке Markdown на `EffectiveSkillSource` с ID, `description`, источником, состоянием, ревизией и именами вытесненных источников. Атомарно запишите индекс в `shared.parent / "effective-skills.md"` и добавьте его путь в сгенерированный адаптер.
 
-Keep Docker MCP Toolkit optional during `resync`: if Docker or its MCP Toolkit is unavailable, preserve the native MCP route and return a successful resync with an explicit skipped/unavailable diagnostic instead of failing the entire operation. Other MCP installation failures remain errors.
+Docker MCP Toolkit остаётся необязательным при `resync`. Если Docker или Toolkit недоступен либо ранее применённый профиль не проходит проверку, восстановите нативную маршрутизацию MCP и сообщите о пропуске Toolkit. Ошибки обязательной нативной установки или регистрации MCP должны прерывать синхронизацию.
 
-- [ ] **Step 4: Verify GREEN**
+- [ ] **Шаг 4. Подтвердить успешное прохождение тестов**
 
-Run: `uv run --extra dev pytest tests/test_cli.py tests/test_clients.py -k 'skill_add or project_skills_checkout or effective_skill_index' -q`
+Команда проверки. `uv run --extra dev pytest tests/test_cli.py tests/test_clients.py -k 'skill_add or project_skills_checkout or effective_skill_index' -q`
 
-Expected: all targeted tests pass.
+Ожидаемый результат. Все выбранные тесты проходят.
 
-- [ ] **Step 5: Commit**
+- [ ] **Шаг 5. Создать коммит**
 
 ```bash
 git add src/agent_engineering_kit/cli.py src/agent_engineering_kit/clients.py tests/test_cli.py tests/test_clients.py
 git commit -m "feat(skills): expose project skill authoring commands"
 ```
 
-### Task 4: Document and validate the completed workflow
+### Задача 4. Документация и проверка рабочего процесса
 
-**Files:**
-- Modify: `docs/runbooks/corporate-extensions-and-mcp-credentials.md`
-- Modify: `docs/wiki/Project-skills.md`
-- Modify: `docs/wiki/CLI.md`
-- Modify: `README.md`
-- Modify: `docs/INDEX.md`
-- Test: `tests/test_repository.py`
-- Test: `tests/test_documentation.py`
+**Файлы**
+- Изменить `docs/runbooks/corporate-extensions-and-mcp-credentials.md`
+- Изменить `docs/wiki/Project-skills.md`
+- Изменить `docs/wiki/CLI.md`
+- Изменить `README.md`
+- Изменить `docs/INDEX.md`
+- Проверить `tests/test_repository.py`
+- Проверить `tests/test_documentation.py`
 
-**Interfaces:**
-- Consumes: final CLI contracts and source precedence.
-- Produces: canonical Russian usage guidance and indexed design/plan documentation.
+**Интерфейсы**
+- Использует итоговый интерфейс CLI и приоритет источников.
+- Публикует русскоязычное руководство и связывает дизайн и план с индексом.
 
-- [ ] **Step 1: Write failing documentation contract tests where a stable command list is asserted**
+- [ ] **Шаг 1. Зафиксировать проверку списка команд в руководстве**
 
 ```python
 def test_project_skills_guide_lists_authoring_commands():
@@ -230,17 +230,17 @@ def test_project_skills_guide_lists_authoring_commands():
     assert "project skills add" in guide
 ```
 
-- [ ] **Step 2: Verify RED**
+- [ ] **Шаг 2. Подтвердить ожидаемое падение тестов**
 
-Run: `uv run --extra dev pytest tests/test_repository.py tests/test_documentation.py -k 'project_skills_guide' -q`
+Команда проверки. `uv run --extra dev pytest tests/test_repository.py tests/test_documentation.py -k 'project_skills_guide' -q`
 
-Expected: the new documentation test fails until the guide is updated.
+Ожидаемый результат. Новая проверка выявляет отсутствие команд до обновления руководства.
 
-- [ ] **Step 3: Update documentation and indexes**
+- [ ] **Шаг 3. Обновить документацию и индексы**
 
-Document the sibling checkout workflow, all new flags/commands, the distinction between tracked `skills/INDEX.md` and generated `effective-skills.md`, and the prohibition on authoring through managed storage. Add the plan to `docs/INDEX.md` with a relative link.
+Опишите работу с отдельной Git-копией, новые команды и флаги, отслеживаемый `skills/INDEX.md` и генерируемый `effective-skills.md`. Укажите, что управляемое хранилище закрыто для редактирования навыков. При импорте обычное дерево пакета копируется целиком. `SKILL.md` может ссылаться на Markdown-файлы шагов и вложенные каталоги контрактов и спецификаций. Относительные ссылки внутри пакета продолжают работать, а символические ссылки отклоняются. Опишите необязательную интеграцию Docker MCP Toolkit, возврат к нативной маршрутизации и сообщение о пропуске при недоступном Toolkit или непригодном профиле. Укажите относительную ссылку на план в `docs/INDEX.md`.
 
-- [ ] **Step 4: Verify GREEN and full regression suite**
+- [ ] **Шаг 4. Запустить весь набор регрессионных тестов и проверок**
 
 Run:
 
@@ -250,9 +250,9 @@ uv run --extra dev agent-kit validate --ci
 git diff --check
 ```
 
-Expected: all tests and CI validation succeed and the diff has no whitespace errors.
+Ожидаемый результат. Тесты и проверка CI проходят, а Git не находит ошибок пробелов.
 
-- [ ] **Step 5: Commit**
+- [ ] **Шаг 5. Создать коммит**
 
 ```bash
 git add README.md docs tests
