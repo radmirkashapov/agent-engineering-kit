@@ -369,6 +369,10 @@ def _print_rows(rows: list[dict]) -> None:
         print(f"{row['id']}: {row.get('status', 'UNKNOWN')} ({row.get('source', row.get('category', 'managed'))})")
 
 
+def _prompt_project_skills_url() -> str | None:
+    return input("URL репозитория project-skills [Enter — пропустить]: ").strip() or None
+
+
 def _interactive_project_setup(repository: Path) -> dict[str, object]:
     """Запросить шаблон, настройки Git и необязательный URL project-skills."""
     templates = load_project_templates(repository)
@@ -387,12 +391,11 @@ def _interactive_project_setup(repository: Path) -> dict[str, object]:
     default_branch = "main"
     if initialize_git:
         default_branch = input("Основная ветка [main]: ").strip() or "main"
-    skills_repository_url = input("URL репозитория project-skills [Enter — пропустить]: ").strip() or None
     return {
         "template_id": str(selected["id"]),
         "initialize_git": initialize_git,
         "default_branch": default_branch,
-        "skills_repository_url": skills_repository_url,
+        "skills_repository_url": _prompt_project_skills_url(),
     }
 
 
@@ -873,11 +876,13 @@ def run(argv: list[str] | None = None) -> int:
             }
             if (
                 args.skills_repository_url is None
-                and not any((args.template_id, args.language, args.stack, args.initialize_git))
                 and not (root / ".ai-team/project.yaml").exists()
                 and sys.stdin.isatty()
             ):
-                setup.update(_interactive_project_setup(repository))
+                if any((args.template_id, args.language, args.stack, args.initialize_git)):
+                    setup["skills_repository_url"] = _prompt_project_skills_url()
+                else:
+                    setup.update(_interactive_project_setup(repository))
             skills_repository_url = setup["skills_repository_url"]
             project = init_project(
                 root,
@@ -891,7 +896,7 @@ def run(argv: list[str] | None = None) -> int:
                 default_branch=str(setup["default_branch"]),
                 nested=bool(setup["nested"]),
                 skills_repository_url=skills_repository_url if isinstance(skills_repository_url, str) else None,
-                skills_default_branch=args.skills_default_branch if args.skills_default_branch is not None else "main",
+                skills_default_branch=args.skills_default_branch,
             )
             print(f"Logical project создан/найден: {project.identifier}\nManifest: {project.manifest_path}\nMemory: {paths.projects / project.identifier}")
             return 0

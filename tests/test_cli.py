@@ -914,6 +914,35 @@ def test_interactive_project_init_offers_optional_skills_repository(
         assert "skills" not in manifest
 
 
+@pytest.mark.parametrize("setup", [
+    ["--template", "python-fastapi"],
+    ["--language", "python"],
+    ["--stack", "fastapi"],
+    ["--git"],
+])
+def test_interactive_project_init_with_explicit_setup_prompts_only_for_skills_repository(
+    isolated_data: Path, monkeypatch: pytest.MonkeyPatch, setup: list[str],
+) -> None:
+    root = isolated_data / "interactive-project"
+    url = "git@gitlab.example:team/demo-skills.git"
+    prompts = []
+
+    def read(prompt: str) -> str:
+        prompts.append(prompt)
+        return url
+
+    monkeypatch.setattr(cli_module.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", read)
+
+    assert run(["project", "init", str(root), *setup]) == 0
+
+    assert len(prompts) == 1
+    assert "project-skills" in prompts[0]
+    assert load_yaml(root / ".ai-team/project.yaml")["skills"]["repository"] == {
+        "url": url, "default_branch": "main",
+    }
+
+
 @pytest.mark.parametrize("is_tty", [True, False])
 def test_project_init_records_explicit_skills_repository_without_prompts(
     isolated_data: Path, monkeypatch: pytest.MonkeyPatch, is_tty: bool,
@@ -959,6 +988,39 @@ def test_interactive_project_reinit_preserves_existing_manifest_without_prompts(
 
     monkeypatch.setattr(cli_module.sys.stdin, "isatty", lambda: True)
     assert run(["project", "init", str(root)]) == 0
+    assert manifest.read_bytes() == before
+
+
+@pytest.mark.parametrize(("configured", "same_url", "branch", "status"), [
+    (True, True, None, 0),
+    (True, True, "release", 0),
+    (True, True, "main", 1),
+    (True, False, None, 1),
+    (False, True, None, 1),
+])
+def test_project_reinit_checks_explicit_skills_repository_configuration(
+    isolated_data: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+    configured: bool, same_url: bool, branch: str | None, status: int,
+) -> None:
+    root = isolated_data / "existing-project"
+    url = "git@gitlab.example:team/demo-skills.git"
+    args = ["project", "init", str(root)]
+    monkeypatch.setattr(cli_module.sys.stdin, "isatty", lambda: False)
+    monkeypatch.setattr("builtins.input", lambda _: pytest.fail("unexpected project init prompt"))
+
+    initial = ["--skills-repository-url", url, "--skills-default-branch", "release"] if configured else []
+    assert run([*args, *initial]) == 0
+    capsys.readouterr()
+    manifest = root / ".ai-team/project.yaml"
+    before = manifest.read_bytes()
+
+    monkeypatch.setattr(cli_module.sys.stdin, "isatty", lambda: True)
+    requested_url = url if same_url else "git@gitlab.example:team/other-skills.git"
+    requested_branch = ["--skills-default-branch", branch] if branch is not None else []
+    assert run([*args, "--skills-repository-url", requested_url, *requested_branch]) == status
+
+    if status:
+        assert ".ai-team/project.yaml" in capsys.readouterr().err
     assert manifest.read_bytes() == before
 
 

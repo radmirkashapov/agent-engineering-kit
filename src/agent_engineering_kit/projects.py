@@ -9,6 +9,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import yaml
 
@@ -109,6 +110,35 @@ def _safe_remote(value: str) -> str | None:
     if not candidate or re.search(r"(?:[?#]|://[^/]*@)", candidate):
         return None
     return candidate
+
+
+def _validate_skills_repository_url(value: str) -> str:
+    error = "Некорректный skills.repository.url: укажите Git URL или явный локальный путь"
+    url = _safe_remote(value)
+    if url is None or not url.isprintable():
+        raise AgentKitError(error)
+    if Path(url).is_absolute() or url.startswith(("./", "../")):
+        return url
+    if any(character.isspace() for character in url):
+        raise AgentKitError(error)
+    if "://" in url:
+        try:
+            parts = urlsplit(url)
+            port = parts.port
+            if parts.scheme == "file" and parts.netloc.lower() in ("", "localhost") and parts.path.startswith("/"):
+                return url
+            if (
+                parts.scheme in {"http", "https", "ssh", "git", "git+ssh", "ssh+git"}
+                and parts.hostname
+                and not parts.netloc.endswith(":")
+                and (port is None or port > 0)
+            ):
+                return url
+        except ValueError:
+            raise AgentKitError(error) from None
+    elif re.fullmatch(r"(?:[\w.-]+@)?(?:[\w.-]+|\[[0-9A-Fa-f:]+\]):[^:][^\s]*", url):
+        return url
+    raise AgentKitError(error)
 
 
 def _repository_remotes(path: Path) -> list[dict[str, str | bool]]:
@@ -297,16 +327,37 @@ def init_project(
     default_branch: str = "main",
     nested: bool = False,
     skills_repository_url: str | None = None,
-    skills_default_branch: str = "main",
+    skills_default_branch: str | None = None,
 ) -> LogicalProject:
-    if skills_repository_url is None and skills_default_branch != "main":
+    if skills_repository_url is None and skills_default_branch is not None:
         raise AgentKitError("skills_default_branch требует skills_repository_url")
+    if skills_repository_url is not None:
+        skills_repository_url = _validate_skills_repository_url(skills_repository_url)
+    if skills_default_branch is not None:
+        branch_error = "Некорректное имя ветки skills.repository.default_branch"
+        if re.search(r"[\s\x00]", skills_default_branch):
+            raise AgentKitError(branch_error)
+        checked = run_command(["git", "check-ref-format", "--branch", skills_default_branch])
+        if not checked.ok or checked.stdout.strip() != skills_default_branch:
+            raise AgentKitError(branch_error)
 
     root = root.expanduser().resolve()
-    root.mkdir(parents=True, exist_ok=True)
     manifest_path = root / ".ai-team" / "project.yaml"
     if manifest_path.exists():
         project = LogicalProject(root, manifest_path, load_yaml(manifest_path))
+        if skills_repository_url is not None:
+            existing = project.skills_repository or {}
+            existing_url = existing.get("url")
+            url_matches = (
+                isinstance(existing_url, str)
+                and existing_url.strip().rstrip("/") == skills_repository_url.rstrip("/")
+            )
+            branch_matches = skills_default_branch is None or existing.get("default_branch") == skills_default_branch
+            if not (url_matches and branch_matches):
+                raise AgentKitError(
+                    "Параметры project-skills не совпадают с текущей конфигурацией. "
+                    "Измените skills.repository в .ai-team/project.yaml"
+                )
         _install_project_provenance_hooks(project)
         register_integrations(project, repository, paths)
         memory_report = ProjectMemoryManager(repository, paths).index(project, mode="full")
@@ -314,6 +365,7 @@ def init_project(
             raise AgentKitError("Индексация памяти проекта завершилась ошибкой")
         return project
 
+    root.mkdir(parents=True, exist_ok=True)
     parent = find_project(root.parent)
     if parent is not None and parent.root != root and not nested:
         raise AgentKitError(
@@ -359,7 +411,7 @@ def init_project(
         manifest["parent_project"] = {"id": parent.identifier, "path": os.path.relpath(parent.root, root).replace(os.sep, "/")}
     if skills_repository_url is not None:
         manifest["skills"] = {
-            "repository": {"url": skills_repository_url.strip(), "default_branch": skills_default_branch},
+            "repository": {"url": skills_repository_url, "default_branch": skills_default_branch or "main"},
         }
     schema_result = validate_instance(manifest, repository / "schemas" / "project.schema.json", str(manifest_path))
     if not schema_result.ok:

@@ -82,24 +82,33 @@ def test_project_init_indexes_full_after_recording_skills_repository(
 
 
 @pytest.mark.parametrize(
-    ("url", "branch"),
+    ("url", "branch", "error"),
     [
-        ("https://user:secret@gitlab.example/team/demo-skills.git", "main"),
-        ("git@gitlab.example:team/demo-skills.git", "bad branch"),
+        ("https://user:secret@gitlab.example/team/demo-skills.git", "main", "skills.repository.url"),
+        ("   ", "main", "skills.repository.url"),
+        ("https:///team/demo-skills.git", "main", "skills.repository.url"),
+        ("not a URL", "main", "skills.repository.url"),
+        ("git@gitlab.example:team/demo-skills.git", "bad branch", "skills.repository.default_branch"),
+        ("git@gitlab.example:team/demo-skills.git", "release\u00a0candidate", "skills.repository.default_branch"),
+        ("git@gitlab.example:team/demo-skills.git", "release.lock", "skills.repository.default_branch"),
     ],
 )
-def test_project_init_rejects_invalid_skills_repository(
-    tmp_path: Path, kit_repository: Path, url: str, branch: str,
+def test_project_init_rejects_invalid_skills_repository_before_scaffolding(
+    tmp_path: Path, kit_repository: Path, url: str, branch: str, error: str,
 ) -> None:
     root = tmp_path / "demo"
+    root.mkdir()
 
-    with pytest.raises(AgentKitError, match="валидный project manifest"):
+    with pytest.raises(AgentKitError) as failure:
         init_project(
             root, kit_repository, paths(tmp_path, kit_repository),
+            template_id="python-fastapi", initialize_git=True,
             skills_repository_url=url, skills_default_branch=branch,
         )
 
-    assert not (root / ".ai-team/project.yaml").exists()
+    assert error in str(failure.value)
+    assert "secret" not in str(failure.value)
+    assert list(root.iterdir()) == []
 
 
 def test_project_init_rejects_custom_branch_without_skills_repository(
