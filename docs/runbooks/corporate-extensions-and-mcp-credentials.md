@@ -44,6 +44,7 @@ GITHUB_PERSONAL_ACCESS_TOKEN=ghp_...
 SENTRY_ACCESS_TOKEN=...
 SENTRY_HOST=sentry.corp.example
 SONARQUBE_TOKEN=...
+SONARQUBE_URL=https://sonarqube.company.example
 ```
 
 Не добавляйте кавычки, shell-команды, `$(...)`, `${...}`, URL с токеном или дополнительные неизвестные переменные. Не выполняйте `source mcp-creds.env`: Kit сам разбирает файл и не экспортирует его содержимое в shell-историю.
@@ -64,23 +65,23 @@ agent-kit mcp creds status
 3. записывает значения в `<data>/secrets/mcp-creds.env` с правами только владельца;
 4. сохраняет в state только имена переменных и статусы, но не значения.
 
-Проверяйте статус до включения MCP:
+Проверьте учётные данные и примените текущую конфигурацию.
 
 ```bash
 agent-kit mcp available
 agent-kit mcp creds status
-agent-kit mcp enable github --scope global --resync
+agent-kit resync --no-update
 agent-kit doctor
 ```
 
 ### 2.3. Как ключи попадают в клиенты
 
-Для Codex CLI, Codex Desktop и Claude Code `resync` создаёт управляемые launcher-контракты. В конфигурацию клиента попадают имя MCP, команда запуска и имена переменных; само значение токена остаётся в локальном vault. Поэтому после импорта обычно достаточно перезапустить клиент.
+При `resync` Kit автоматически обновляет управляемые регистрации в Codex, Claude Code, OpenCode и Cline. Для stdio MCP с учётными данными клиент получает команду локального launcher. Launcher читает значения из защищённого хранилища и передаёт их при запуске серверного процесса.
 
-Для Claude Desktop, OpenCode и Cline получите безопасную команду запуска:
+Для ручной настройки Claude Desktop можно получить команду запуска уже включённого stdio MCP. Например, для встроенного Context7 с доступным `npx` выполните следующую команду.
 
 ```bash
-agent-kit mcp launch-command github
+agent-kit mcp launch-command context7
 ```
 
 Скопируйте выданные `command` и `args` в нативную форму конкретного клиента. Значения credentials вручную в его JSON/YAML не вставляйте.
@@ -93,13 +94,13 @@ agent-kit mcp launch-command github
 agent-kit mcp creds import --from ./mcp-creds.env
 ```
 
-Изменение только значения токена не требует `resync`; новый launcher прочитает его при следующем запуске MCP. Изменение registry, команды или разрешений требует:
+При смене значения токена действующий launcher прочитает его при следующем запуске MCP. После изменения описания, команды или разрешений уже включённого MCP явно выполните синхронизацию.
 
 ```bash
-agent-kit mcp enable <mcp-id> --scope global --resync
+agent-kit resync --no-update
 ```
 
-OAuth — отдельный механизм. Для Atlassian, GitLab и Context7 авторизация выполняется в каждом клиенте или профиле отдельно. Токен из `.env` не заменяет OAuth-сессию. Если все клиенты подключены через Docker MCP Gateway, владельцем OAuth-состояния становится Docker Desktop.
+Для удалённого MCP с OAuth, например GitLab, завершите вход в соответствующем клиенте и профиле. Встроенный Context7 запускается через stdio. Необязательный ключ `CONTEXT7_API_KEY` повышает лимиты и передаётся дочернему процессу через launcher.
 
 ### 2.5. Docker MCP Toolkit при синхронизации
 
@@ -150,28 +151,36 @@ git push -u origin HEAD
 
 После merge пользователи получают изменения из своей корпоративной копии Kit и выполняют `agent-kit resync --no-update`.
 
-## 4. Как добавить корпоративные роли агентов
+## 4. Как адаптировать роли агентов в корпоративном форке
 
-Создайте новый файл `agents/<role-id>.md`. Переносимые поля роли и её описание по умолчанию пишутся на английском, чтобы одинаково интерпретироваться разными harness. Внутри Markdown можно подробно описать процесс и ожидаемые артефакты.
+Для корпоративных требований отредактируйте существующую роль, например `agents/reviewer.md`. Сохраните её ID. Проверка допускает фиксированный набор стандартных ID и требует англоязычное определение длиной не менее 45 строк.
 
-Минимальный пример:
+Ниже приведён пример frontmatter для этой роли с дополнительным требованием проверять обработку данных. Сохраните и при необходимости дополните существующий Markdown после frontmatter.
 
 ```markdown
 ---
-id: data-steward
-name: Data Steward
-description: Protects sensitive data boundaries and validates data handling decisions
+version: 1
+id: reviewer
+role: Identify correctness, security, compatibility, and test defects and verify compliance with corporate data handling rules.
 policy: configurable
+model:
+  preferred: claude-opus-4.6
+  allowed:
+    - gpt-5.6-sol
+    - claude-opus-4.6
 requires:
-  model_capabilities: [reasoning]
+  model_capabilities:
+    - reasoning
+    - coding
+    - tool_use
+tools:
+  - code-search
+  - git-diff
+  - tests
 ---
-
-# Data Steward
-
-Review data classification, access boundaries, retention and redaction evidence.
 ```
 
-Если роль должна входить в стандартный профиль, добавьте её ID в соответствующий `profiles/*.yaml`. Затем проверьте полный набор:
+Состав стандартного профиля задаётся в соответствующем `profiles/*.yaml`. После правок проверьте роли и профили.
 
 ```bash
 agent-kit validate agents
@@ -179,7 +188,7 @@ agent-kit validate profiles
 agent-kit validate --ci
 ```
 
-Добавление роли не выдаёт ей право на merge, публикацию или deployment: это должно быть отдельно разрешено процессом и внешним harness.
+Права на merge, публикацию и развёртывание определяют рабочий процесс и клиент, исполняющий роль.
 
 ## 5. Как добавить корпоративные skills
 
@@ -193,7 +202,7 @@ agent-kit skills add --from ../draft-skills/api-contract-review
 git status --short
 ```
 
-Kit проверяет корневой `SKILL.md` и копирует пакет в `skills/first-party/api-contract-review/`. По умолчанию ID берётся из поля `name`. Флаг `--id <id>` можно указать с тем же значением. Для замены существующего пакета используйте `--replace` в чистом Git checkout с отслеживаемым `SKILL.md`.
+Kit проверяет корневой `SKILL.md` и копирует пакет в `skills/first-party/api-contract-review/`. Имя исходного каталога должно точно совпадать с полем `name` в `SKILL.md` и со значением `--id`, если оно передано. Для замены существующего пакета используйте `--replace` в чистом Git checkout с отслеживаемым `SKILL.md`.
 
 Обе команды импорта копируют весь пакет, включая обычные каталоги с Markdown-шагами, контрактами, спецификациями и тестовыми данными. Ссылки между файлами внутри пакета остаются относительными и продолжают работать после импорта. Символические ссылки запрещены.
 
@@ -265,7 +274,7 @@ agent-kit project skills add \
 git -C ../delivery-platform-project-skills status --short
 ```
 
-`checkout` клонирует ветку из манифеста в новый или пустой каталог. Существующий checkout можно использовать, если его `origin` совпадает с проектным источником. Для изменения навыков используйте отдельную Git-копию вне продуктовых репозиториев и управляемого хранилища Kit. Флаги `--id` и `--replace` действуют по тем же правилам, что и при импорте корпоративного пакета.
+`checkout` клонирует ветку из манифеста в новый или пустой каталог. В `--checkout` передайте корень обычной самостоятельной Git-копии с собственным каталогом `.git` и `origin`, совпадающим с проектным источником. Kit отклоняет связанные копии, созданные через `git worktree add`, даже при совпадающем `origin`. Выберите каталог вне продуктовых репозиториев и управляемого хранилища Kit. Имя исходного каталога, `--id` и `--replace` проверяются по тем же правилам, что и при импорте корпоративного пакета.
 
 `project skills add` обновляет отслеживаемый в Git каталог `skills/INDEX.md`. После ручных правок пересоберите его командой `agent-kit project skills index --checkout ../delivery-platform-project-skills`. Включите пакет и индекс в один коммит, отправьте ветку и откройте PR/MR.
 
@@ -293,11 +302,11 @@ agent-kit resync
 
 ## 7. Локальные пользовательские skills
 
-Локальный skill не добавляйте в корпоративный Git или `project-skills`, пока он не прошёл командную проверку. Для личной замены используйте:
+Храните экспериментальную версию вне корпоративного Git до командной проверки. Локальная замена требует известного ID навыка, для которого разрешено переопределение. В примере используется встроенный `greeting` с политикой `configurable`. Подготовьте собственный валидный `SKILL.md` с полем `name: greeting` в указанном исходном каталоге.
 
 ```bash
-agent-kit skills override my-review-skill \
-  --from "$HOME/src/my-review-skill" \
+agent-kit skills override greeting \
+  --from "$HOME/src/local-skills/greeting" \
   --scope global \
   --resync
 ```
@@ -305,8 +314,8 @@ agent-kit skills override my-review-skill \
 Для текущего logical project запускайте команду из его корня и используйте `--scope project`:
 
 ```bash
-agent-kit skills override my-review-skill \
-  --from ./local-skills/my-review-skill \
+agent-kit skills override greeting \
+  --from "$HOME/src/local-skills/greeting" \
   --scope project \
   --resync
 ```
@@ -314,7 +323,7 @@ agent-kit skills override my-review-skill \
 Локальный override хранится вне Git в `<data>/overrides/`. Проверить источник и приоритет можно так:
 
 ```bash
-agent-kit skills explain my-review-skill
+agent-kit skills explain greeting
 agent-kit override list --scope global
 agent-kit project skills status
 ```
@@ -322,7 +331,7 @@ agent-kit project skills status
 Сброс локальной замены:
 
 ```bash
-agent-kit skills reset my-review-skill --scope global --resync
+agent-kit skills reset greeting --scope global --resync
 ```
 
 Приоритет источников: встроенный Kit → внешний каталог → project-skills → глобальный локальный override → локальный override проекта. При одинаковом ID побеждает более высокий слой; содержимое каталогов автоматически не объединяется.
