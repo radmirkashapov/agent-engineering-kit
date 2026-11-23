@@ -23,6 +23,13 @@ def _server_name(uri: str) -> str:
     return Path(parsed.path).name or parsed.netloc
 
 
+def _snapshot_routes(state: dict[str, Any]) -> dict[str, str] | None:
+    routes = state.get("routes")
+    if not isinstance(routes, dict) or any(route not in ("docker", "native") for route in routes.values()):
+        return None
+    return routes
+
+
 def confirmed_docker_routes(paths: KitPaths, project_id: str | None) -> tuple[set[str], dict[str, Any] | None]:
     """Прочитать только успешно подтверждённый routing snapshot."""
     target = paths.state / "docker-mcp-toolkit.json"
@@ -30,13 +37,16 @@ def confirmed_docker_routes(paths: KitPaths, project_id: str | None) -> tuple[se
         return set(), None
     try:
         state = json.loads(target.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, ValueError):
+        return set(), None
+    if not isinstance(state, dict):
         return set(), None
     if state.get("status") != "SYNCED" or state.get("project_id") != project_id:
         return set(), state
+    routes = _snapshot_routes(state) or {}
     return {
         identifier
-        for identifier, route in state.get("routes", {}).items()
+        for identifier, route in routes.items()
         if route == "docker"
     }, state
 
@@ -108,7 +118,8 @@ class DockerMcpToolkit:
                 )
         return target
 
-    def _toolkit_status(self) -> tuple[str, str]:
+    def availability(self) -> tuple[str, str]:
+        """Проверить CLI Toolkit без изменения Docker profile."""
         if not self.docker_executable:
             return "NOT_INSTALLED", "Команда docker не найдена"
         probe = self.runner([self.docker_executable, "mcp", "--help"])
@@ -116,24 +127,60 @@ class DockerMcpToolkit:
             return "CONFIG_REQUIRED", "Docker MCP Toolkit недоступен; обновите Docker Desktop и включите MCP Toolkit"
         return "READY", "Docker MCP Toolkit доступен"
 
+    def routing_for_resync(
+        self, project_id: str | None,
+    ) -> tuple[set[str], dict[str, Any] | None, str | None]:
+        """Перепроверить только ранее применённые routes, без изменения profile."""
+        toolkit_status, message = self.availability()
+        routes, state = confirmed_docker_routes(self.paths, project_id)
+        if toolkit_status != "READY":
+            return set(), state, message
+        if state is None or state.get("status") != "SYNCED" or state.get("project_id") != project_id:
+            return set(), state, None
+        if _snapshot_routes(state) is None:
+            return set(), state, "Некорректный snapshot Docker routes"
+        if not routes:
+            return set(), state, None
+        profile = state.get("profile")
+        managed_servers = state.get("managed_servers")
+        if (
+            not isinstance(profile, str) or not profile
+            or not isinstance(managed_servers, dict)
+            or any(not isinstance(managed_servers.get(identifier), str) or not managed_servers[identifier]
+                   for identifier in routes)
+        ):
+            return set(), state, "Некорректный snapshot Docker profile"
+        exists, current = self._inspect_profile(profile)
+        if not exists or not {managed_servers[identifier] for identifier in routes} <= set(current.values()):
+            return set(), state, "Docker profile недоступен или не содержит подтверждённые MCP servers"
+        return routes, state, None
+
     def _inspect_profile(self, profile: str) -> tuple[bool, dict[str, str]]:
         if not self.docker_executable:
             return False, {}
-        inspected = self.runner([
-            self.docker_executable, "mcp", "profile", "show", profile, "--format", "json",
-        ])
+        try:
+            inspected = self.runner([
+                self.docker_executable, "mcp", "profile", "show", profile, "--format", "json",
+            ])
+        except (OSError, ValueError):
+            return False, {}
         if not inspected.ok:
             return False, {}
         try:
             document = json.loads(inspected.stdout)
         except json.JSONDecodeError:
             return False, {}
+        if not isinstance(document, dict) or not isinstance(document.get("servers", []), list):
+            return False, {}
         servers: dict[str, str] = {}
-        for item in document.get("servers", []):
-            if isinstance(item, str):
-                servers[_server_name(item)] = item
-            elif isinstance(item, dict) and item.get("uri"):
-                servers[str(item.get("name") or _server_name(str(item["uri"])))]=str(item["uri"])
+        try:
+            for item in document.get("servers", []):
+                if isinstance(item, str):
+                    servers[_server_name(item)] = item
+                elif isinstance(item, dict) and item.get("uri"):
+                    servers[str(item.get("name") or _server_name(str(item["uri"])))] = str(item["uri"])
+        except ValueError:
+            return False, {}
         return True, servers
 
     def _desired_ids(self, project: Any, access_profile: str) -> set[str]:
@@ -158,7 +205,7 @@ class DockerMcpToolkit:
         desired = set(desired_ids) if desired_ids is not None else self._desired_ids(project, access_profile)
         mappings = {key: str(value) for key, value in config.get("mappings", {}).items()}
         selected = {identifier: mappings[identifier] for identifier in sorted(desired & mappings.keys())} if config["enabled"] else {}
-        toolkit_status, message = self._toolkit_status()
+        toolkit_status, message = self.availability()
         routes = {
             identifier: (
                 "unavailable" if config["enabled"] and identifier in mappings and toolkit_status != "READY"

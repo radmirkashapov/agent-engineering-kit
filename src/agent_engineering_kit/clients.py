@@ -8,7 +8,10 @@ import os
 import re
 from collections import Counter
 from dataclasses import dataclass, replace
+from html import escape
 from pathlib import Path
+from typing import Any
+from urllib.parse import quote
 
 from .access import resolve_access
 from .catalog import resolve_desired
@@ -91,6 +94,13 @@ def _load_opencode_config(path: Path) -> dict:
     return document
 
 
+def _write_mcp_config(path: Path, content: str) -> None:
+    try:
+        atomic_write(path, content)
+    except (OSError, UnicodeError) as error:
+        raise AgentKitError(f"Не удалось записать MCP config: {path}") from error
+
+
 def _sync_opencode_mcp(
     paths: KitPaths,
     desired: dict[str, dict],
@@ -140,10 +150,7 @@ def _sync_opencode_mcp(
         servers[name] = entry
     changed = previous != json.dumps(servers, ensure_ascii=False, sort_keys=True) or not config_path.is_file()
     if changed:
-        try:
-            atomic_write(config_path, json.dumps(document, ensure_ascii=False, indent=2) + "\n")
-        except OSError:
-            return "CONFIG_REQUIRED", False, str(config_path)
+        _write_mcp_config(config_path, json.dumps(document, ensure_ascii=False, indent=2) + "\n")
     return "SYNCED", changed, str(config_path)
 
 
@@ -196,10 +203,7 @@ def _sync_cline_mcp(
         servers[name] = entry
     changed = previous != json.dumps(servers, ensure_ascii=False, sort_keys=True) or not config_path.is_file()
     if changed:
-        try:
-            atomic_write(config_path, json.dumps(document, ensure_ascii=False, indent=2) + "\n")
-        except OSError:
-            return "CONFIG_REQUIRED", False, str(config_path)
+        _write_mcp_config(config_path, json.dumps(document, ensure_ascii=False, indent=2) + "\n")
     return "SYNCED", changed, str(config_path)
 
 
@@ -248,8 +252,8 @@ def _sync_codex_mcp(
     from .mcp_endpoint import resolved_endpoint
 
     config_path = _codex_config_path(home or Path.home(), environment)
-    original = config_path.read_text(encoding="utf-8") if config_path.is_file() else ""
     try:
+        original = config_path.read_text(encoding="utf-8") if config_path.is_file() else ""
         if original.strip():
             tomllib.loads(original)
     except (OSError, UnicodeError, tomllib.TOMLDecodeError) as error:
@@ -283,10 +287,7 @@ def _sync_codex_mcp(
         raise AgentKitError(f"Не удалось безопасно объединить MCP с Codex config: {config_path}") from error
     changed = candidate != original
     if changed:
-        try:
-            atomic_write(config_path, candidate)
-        except OSError:
-            return "CONFIG_REQUIRED", False, str(config_path)
+        _write_mcp_config(config_path, candidate)
     return "SYNCED", changed, str(config_path)
 
 
@@ -598,6 +599,36 @@ def validate_clients(repository: Path) -> ValidationResult:
     return result
 
 
+def _markdown_table_cell(value: str) -> str:
+    text = re.sub(r"[\ud800-\udfff]", "\ufffd", " ".join(value.split()))
+    return re.sub(r"([\\|`*_\[\]~])", r"\\\1", escape(text, quote=False))
+
+
+def _render_effective_skill_index(sources: dict[str, EffectiveSkillSource]) -> str:
+    rows = [
+        "# Effective skills",
+        "",
+        "| ID | Description | Source | Status | Revision | Shadowed sources | Definition |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    for identifier, source in sorted(sources.items()):
+        try:
+            description = markdown_frontmatter(source.path / "SKILL.md").get("description")
+        except (AgentKitError, OSError, ValueError):
+            # Some published external skills lack readable frontmatter.
+            description = None
+        summary = _markdown_table_cell(description) if isinstance(description, str) else ""
+        skill_id = f"`{identifier}`" if re.fullmatch(r"[a-z0-9-]+", identifier) else _markdown_table_cell(identifier)
+        shadowed = ", ".join(item.source for item in sorted(source.shadowed, key=lambda item: item.priority))
+        definition = f"skills/{quote(identifier, safe='')}/SKILL.md"
+        rows.append(
+            f"| {skill_id} | {summary or '—'} | {_markdown_table_cell(source.source)} | {Lifecycle.ACTIVE.value} "
+            f"| {_markdown_table_cell(source.revision or '') or '—'} | {_markdown_table_cell(shadowed) or '—'} "
+            f"| [SKILL.md]({definition}) |"
+        )
+    return "\n".join(rows) + "\n"
+
+
 def sync_clients(
     repository: Path,
     paths: KitPaths,
@@ -627,6 +658,8 @@ def sync_clients(
         json.dumps({"version": 1, "skills": {identifier: source.as_dict()
                    for identifier, source in sorted(skill_sources.items())}}, ensure_ascii=False, indent=2) + "\n",
     )
+    effective_index = shared.parent / "effective-skills.md"
+    atomic_write(effective_index, _render_effective_skill_index(skill_sources))
 
     agents = []
     for path in sorted((repository / "agents").glob("*.md")):
@@ -678,6 +711,7 @@ def sync_clients(
             f"entrypoint: {repository / adapter['entrypoint']}\n"
             f"effective_policy: {effective_policy}\n"
             f"skills: {shared}\n"
+            f"effective_skills: {json.dumps(str(effective_index), ensure_ascii=False)}\n"
             f"mcp_registry: {repository / 'mcp' / 'registry.yaml'}\n"
         )
         atomic_write(target, content)
@@ -827,6 +861,7 @@ def register_native_mcp(
     *,
     project=None,
     access_profile: str = "readonly",
+    docker_routing: tuple[set[str], dict[str, Any] | None] | None = None,
     runner=run_command,
 ) -> Path:
     """Добавить namespaced core MCP, не изменяя чужие client entries."""
@@ -847,9 +882,11 @@ def register_native_mcp(
         if manager.is_enabled(item, project)
     }
     project_id = project.identifier if project else None
-    docker_routes, docker_state = confirmed_docker_routes(paths, project_id)
+    if docker_routing is None:
+        docker_routing = confirmed_docker_routes(paths, project_id)
+    docker_routes, docker_state = docker_routing
     # Подтверждённый snapshot не может расширять более свежую effective policy.
-    docker_routes &= set(desired)
+    docker_routes = docker_routes.intersection(desired)
     for identifier in docker_routes:
         desired.pop(identifier, None)
     gateway = {
@@ -885,28 +922,20 @@ def register_native_mcp(
     credential_store = McpCredentialStore(paths)
     credential_status = {row["name"]: row["status"] for row in credential_store.status(desired.values())}
     endpoint_values = {**os.environ, **credential_store.load()}
+    # Инъецированный runner используется только в тестах и dry интеграциях.
     config_home = None if runner is run_command else paths.data / "test-home"
-    try:
-        opencode_status, opencode_changed, opencode_path = _sync_opencode_mcp(
-            paths, desired, manager, endpoint_values,
-            # Инъецированный runner используется только в тестах и dry интеграциях:
-            # не позволяем им менять настоящий user-level config.
-            home=config_home,
-        )
-    except AgentKitError:
-        opencode_status, opencode_changed, opencode_path = "CONFIG_REQUIRED", False, ""
-    try:
-        codex_status, codex_changed, codex_path = _sync_codex_mcp(
-            paths, desired, manager, endpoint_values, home=config_home,
-        )
-    except AgentKitError:
-        codex_status, codex_changed, codex_path = "CONFIG_REQUIRED", False, ""
-    try:
-        cline_status, cline_changed, cline_path = _sync_cline_mcp(
-            paths, desired, manager, endpoint_values, home=config_home,
-        )
-    except AgentKitError:
-        cline_status, cline_changed, cline_path = "CONFIG_REQUIRED", False, ""
+    config_results: dict[str, tuple[str, bool, str, str | None]] = {}
+    for client, sync_config in (
+        ("opencode", _sync_opencode_mcp),
+        ("codex", _sync_codex_mcp),
+        ("cline", _sync_cline_mcp),
+    ):
+        try:
+            status, changed, path = sync_config(paths, desired, manager, endpoint_values, home=config_home)
+        except AgentKitError as error:
+            config_results[client] = (Lifecycle.ERROR.value, False, "", str(error))
+        else:
+            config_results[client] = (status, changed, path, None)
     target = paths.state / "client-mcp-registrations.json"
     previous_rows: list[dict] = []
     if target.is_file():
@@ -1031,36 +1060,32 @@ def register_native_mcp(
                 "status": "CONFIG_REQUIRED",
                 "contract": f"clients/{client}/README.md",
             })
-    for client, status, changed, path in (
-        ("codex", codex_status, codex_changed, codex_path),
-        ("cline", cline_status, cline_changed, cline_path),
-    ):
+    for client in ("codex", "cline", "opencode"):
+        status, changed, path, reason = config_results[client]
         for identifier, item in desired.items():
-            missing_environment = sorted(
-                name for name in item.get("required_environment", [])
-                if credential_status.get(name) != "SET" and not os.environ.get(name)
-            ) if item["installation"]["type"] != "remote" else []
-            readiness = (
-                "AUTH_REQUIRED" if item["installation"].get("authentication") == "oauth"
-                else "CONFIG_REQUIRED" if missing_environment else "ACTIVE"
-            )
-            rows.append({
+            row = {
                 "client": client,
                 "mcp": identifier,
                 "required": bool(item.get("required")),
-                "status": status if status != "SYNCED" else readiness,
+                "status": status,
                 "changed": changed,
                 "path": path,
-                **({"missing_environment": missing_environment} if missing_environment else {}),
-            })
-    for identifier, item in desired.items():
-        rows.append({
-            "client": "opencode",
-            "mcp": identifier,
-            "required": bool(item.get("required")),
-            "status": opencode_status,
-            "changed": opencode_changed,
-            "path": opencode_path,
-        })
+            }
+            if reason:
+                row["reason"] = reason
+                row["desired_verified"] = False
+            if client != "opencode":
+                missing_environment = sorted(
+                    name for name in item.get("required_environment", [])
+                    if credential_status.get(name) != "SET" and not os.environ.get(name)
+                ) if item["installation"]["type"] != "remote" else []
+                if missing_environment:
+                    row["missing_environment"] = missing_environment
+                if status == "SYNCED":
+                    row["status"] = (
+                        "AUTH_REQUIRED" if item["installation"].get("authentication") == "oauth"
+                        else "CONFIG_REQUIRED" if missing_environment else "ACTIVE"
+                    )
+            rows.append(row)
     atomic_write(target, json.dumps({"version": 1, "registrations": rows}, ensure_ascii=False, indent=2) + "\n")
     return target

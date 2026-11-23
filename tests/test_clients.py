@@ -217,6 +217,82 @@ def test_sync_preserves_builtin_skill_validation(tmp_path: Path) -> None:
         sync_clients(repository, paths)
 
 
+def test_effective_skill_index_keeps_description_in_one_markdown_cell(tmp_path: Path) -> None:
+    repository = tmp_path / "kit"
+    real = Path(__file__).resolve().parents[1]
+    for directory in ("clients", "catalog", "locks", "schemas"):
+        shutil.copytree(real / directory, repository / directory)
+    skill = repository / "skills/first-party/example/SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text(
+        "---\nversion: 1\nname: example\ndescription: |\n"
+        "  Review API | database changes.\n  Verify the contracts.\n"
+        "requires:\n  model_capabilities: []\n---\n",
+        encoding="utf-8",
+    )
+    data = tmp_path / "data"
+    paths = KitPaths(repository, data, data / "runtime", data / "projects", data / "overrides")
+
+    sync_clients(repository, paths)
+
+    content = (paths.installations / "clients/shared/effective-skills.md").read_text(encoding="utf-8")
+    assert r"| `example` | Review API \| database changes. Verify the contracts. | built-in | ACTIVE |" in content
+
+
+@pytest.mark.parametrize(("frontmatter", "summary"), [
+    ("---\nname: legacy\n", "—"),
+    ("---\nname: legacy\ndescription: 2024-02-31\n---\n", "—"),
+    ('---\nname: legacy\ndescription: "Review \\uD800 contracts."\n---\n', "Review � contracts."),
+])
+def test_effective_skill_index_accepts_published_skills_without_valid_description(
+    tmp_path: Path, frontmatter: str, summary: str,
+) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    data = tmp_path / "data"
+    paths = KitPaths(repository, data, data / "runtime", data / "projects", data / "overrides")
+    revision = "a" * 40
+    external = paths.installations / "skills/superpowers/revisions" / revision
+    write_publication_skill(external / "skills/legacy", "legacy", "external-only")
+    (external / "skills/legacy/SKILL.md").write_text(frontmatter, encoding="utf-8")
+    write_state(paths, "skills", "superpowers", Lifecycle.ACTIVE,
+                installation_path=str(external), revision=revision)
+
+    sync_clients(repository, paths)
+
+    shared = paths.installations / "clients/shared"
+    assert (shared / "skills/legacy").resolve() == external / "skills/legacy"
+    content = (shared / "effective-skills.md").read_text(encoding="utf-8")
+    assert f"| `legacy` | {summary} | external-catalog | ACTIVE | {revision} | — |" in content
+
+
+def test_effective_skill_index_escapes_legacy_identifiers_and_description_markup(tmp_path: Path) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    data = tmp_path / "data"
+    paths = KitPaths(repository, data, data / "runtime", data / "projects", data / "overrides")
+    revision = "a" * 40
+    external = paths.installations / "skills/superpowers/revisions" / revision
+    identifier = "legacy|`\nname"
+    skill = external / "skills" / identifier / "SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text(
+        "---\ndescription: |\n  <tag> [Audit](other.md)\n  More | details.\n---\n",
+        encoding="utf-8",
+    )
+    write_state(paths, "skills", "superpowers", Lifecycle.ACTIVE,
+                installation_path=str(external), revision=revision)
+
+    sync_clients(repository, paths)
+
+    shared = paths.installations / "clients/shared"
+    content = (shared / "effective-skills.md").read_text(encoding="utf-8")
+    rows = [line for line in content.splitlines() if f" | external-catalog | ACTIVE | {revision} | " in line]
+    assert rows == [
+        r"| legacy\|\` name | &lt;tag&gt; \[Audit\](other.md) More \| details. | external-catalog | "
+        f"ACTIVE | {revision} | — | [SKILL.md](skills/legacy%7C%60%0Aname/SKILL.md) |"
+    ]
+    assert (shared / "skills" / identifier / "SKILL.md").resolve() == skill
+
+
 def test_external_package_allowlist_keeps_publishing_its_capabilities(tmp_path: Path) -> None:
     repository = Path(__file__).resolve().parents[1]
     data = tmp_path / "data"
@@ -282,6 +358,7 @@ def test_sync_generates_thin_runtime_adapters(tmp_path: Path) -> None:
         f"entrypoint: {repository / 'AI.md'}\n"
         f"effective_policy: {data / 'installations/clients/shared/effective-policy.json'}\n"
         f"skills: {data / 'installations/clients/shared/skills'}\n"
+        f"effective_skills: {json.dumps(str(data / 'installations/clients/shared/effective-skills.md'))}\n"
         f"mcp_registry: {repository / 'mcp' / 'registry.yaml'}\n"
     )
     assert content == expected

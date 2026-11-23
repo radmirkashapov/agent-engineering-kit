@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -10,6 +11,8 @@ import pytest
 import agent_engineering_kit.cli as cli_module
 from agent_engineering_kit.cli import _parser, run
 from agent_engineering_kit.io import load_yaml
+from agent_engineering_kit.resync import ResyncReport
+from conftest import write_yaml
 
 
 REPOSITORY = Path(__file__).resolve().parents[1]
@@ -23,13 +26,13 @@ def isolated_data(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     return tmp_path
 
 
-def _write_skill_source(path: Path) -> Path:
+def _write_skill_source(path: Path, *, description: str = "Локальная проверка результата.") -> Path:
     path.mkdir(parents=True)
     (path / "SKILL.md").write_text(
-        """---
+        f"""---
 version: 1
 name: verification
-description: Локальная проверка результата.
+description: {description}
 requires:
   model_capabilities: [reasoning]
 ---
@@ -46,6 +49,17 @@ def _write_mcp_source(path: Path) -> Path:
     return path
 
 
+def _git(root: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+         "-c", "commit.gpgsign=false", *args],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
 @pytest.mark.parametrize("resource", ["skills", "mcp"])
 @pytest.mark.parametrize("action", ["enable", "disable", "reset"])
 def test_mutating_commands_require_explicit_scope(resource: str, action: str) -> None:
@@ -57,6 +71,77 @@ def test_available_does_not_require_scope() -> None:
     args = _parser().parse_args(["skills", "available"])
 
     assert args.skills_command == "available"
+
+
+def test_skill_add_copies_bundle_into_current_kit(isolated_data, monkeypatch, capsys):
+    repository = isolated_data / "kit"
+    (repository / "schemas").mkdir(parents=True)
+    shutil.copyfile(REPOSITORY / "schemas/skill.schema.json", repository / "schemas/skill.schema.json")
+    _git(repository, "init", "-qb", "main")
+    monkeypatch.setenv("AGENT_KIT_REPOSITORY", str(repository))
+    source = _write_skill_source(isolated_data / "verification", description="Verify repository changes before release.")
+    (source / "steps").mkdir()
+    (source / "steps/check.md").write_text("# Check contracts\n", encoding="utf-8")
+    with (source / "SKILL.md").open("a", encoding="utf-8") as skill:
+        skill.write("\n[Check contracts](steps/check.md)\n")
+
+    assert run(["skills", "add", "--from", "verification", "--id", "verification"]) == 0
+
+    target = repository / "skills/first-party/verification"
+    assert (target / "SKILL.md").read_bytes() == (source / "SKILL.md").read_bytes()
+    assert (target / "steps/check.md").read_text(encoding="utf-8") == "# Check contracts\n"
+    assert str(target) in capsys.readouterr().out
+    assert _git(repository, "diff", "--cached", "--name-only") == ""
+
+
+def test_project_skills_checkout_add_and_index_use_current_project(skills_project, monkeypatch, capsys):
+    parent = skills_project.parent
+    monkeypatch.setenv("AGENT_KIT_DATA_HOME", str(parent / "managed"))
+    upstream = parent / "skills-upstream"
+    upstream.mkdir()
+    _git(upstream, "init", "-qb", "project-skills")
+    _git(upstream, "commit", "--allow-empty", "-qm", "Initialize project skills")
+    manifest_path = skills_project / ".ai-team/project.yaml"
+    manifest = load_yaml(manifest_path)
+    manifest["skills"]["repository"] = {"url": str(upstream), "default_branch": "project-skills"}
+    write_yaml(manifest_path, manifest)
+    _git(skills_project, "init", "-qb", "main")
+    source = _write_skill_source(parent / "verification")
+    (source / "contracts").mkdir()
+    (source / "contracts/api.md").write_text("# API contract\n", encoding="utf-8")
+    with (source / "SKILL.md").open("a", encoding="utf-8") as skill:
+        skill.write("\n[API contract](contracts/api.md)\n")
+    checkout = parent / "skills-checkout"
+    monkeypatch.chdir(skills_project)
+
+    assert run(["project", "skills", "checkout", "--into", "../skills-checkout"]) == 0
+    assert str(checkout) in capsys.readouterr().out
+    assert _git(checkout, "branch", "--show-current") == "project-skills"
+
+    assert run(["project", "skills", "add", "--from", "../verification", "--checkout", "../skills-checkout"]) == 0
+    target = checkout / "skills/verification"
+    index = checkout / "skills/INDEX.md"
+    output = capsys.readouterr().out
+    assert str(target) in output
+    assert str(index) in output
+    assert (target / "SKILL.md").read_bytes() == (source / "SKILL.md").read_bytes()
+    assert (target / "contracts/api.md").read_text(encoding="utf-8") == "# API contract\n"
+    original_index = index.read_bytes()
+    index.write_text("# Old index\n", encoding="utf-8")
+
+    assert run(["project", "skills", "index", "--checkout", "../skills-checkout"]) == 0
+    assert str(index) in capsys.readouterr().out
+    assert index.read_bytes() == original_index
+    assert _git(checkout, "diff", "--cached", "--name-only") == ""
+
+
+def test_project_skills_checkout_requires_logical_project(isolated_data, capsys):
+    target = isolated_data / "checkout"
+
+    assert run(["project", "skills", "checkout", "--into", str(target)]) == 1
+
+    assert "Logical project не найден" in capsys.readouterr().err
+    assert not target.exists()
 
 
 def test_models_commands_parse_targeted_client() -> None:
@@ -310,8 +395,6 @@ def test_project_skills_requires_logical_project(isolated_data, capsys, command)
 
 @pytest.fixture
 def skills_project(isolated_data):
-    from conftest import write_yaml
-
     root = isolated_data / "product"
     manifest = root / ".ai-team/project.yaml"
     write_yaml(manifest, {
@@ -615,9 +698,9 @@ def test_resync_runs_only_after_successful_atomic_mutation(
     calls: list[bool] = []
     access_path = isolated_data / "overrides" / "global" / "access.yaml"
 
-    def fake_resync(*args: object, **kwargs: object) -> SimpleNamespace:
+    def fake_resync(*args: object, **kwargs: object) -> ResyncReport:
         calls.append(access_path.is_file())
-        return SimpleNamespace(incomplete=[], revision="test", changed=True, skills=[], mcp=[], clients=[])
+        return ResyncReport(revision="test", security=[], skills=[], mcp=[], clients=[], changed=True, incomplete=[])
 
     monkeypatch.setattr(cli_module, "resync", fake_resync)
 
@@ -643,9 +726,9 @@ def test_reset_without_changes_does_not_run_resync(
 ) -> None:
     calls: list[object] = []
 
-    def fake_resync(*args: object, **kwargs: object) -> SimpleNamespace:
+    def fake_resync(*args: object, **kwargs: object) -> ResyncReport:
         calls.append((args, kwargs))
-        return SimpleNamespace(incomplete=[], revision="test", changed=True, skills=[], mcp=[], clients=[])
+        return ResyncReport(revision="test", security=[], skills=[], mcp=[], clients=[], changed=True, incomplete=[])
 
     monkeypatch.setattr(cli_module, "resync", fake_resync)
 
@@ -874,6 +957,156 @@ def test_project_init_parser_exposes_language_and_stack() -> None:
     assert args.stack == "fastapi"
 
 
+def test_project_init_parses_skills_repository_arguments() -> None:
+    url = "git@gitlab.example:team/demo-skills.git"
+    args = _parser().parse_args([
+        "project", "init", "--skills-repository-url", url,
+        "--skills-default-branch", "release",
+    ])
+
+    assert args.skills_repository_url == url
+    assert args.skills_default_branch == "release"
+
+
+@pytest.mark.parametrize("answer", [" git@gitlab.example:team/demo-skills.git ", ""])
+def test_interactive_project_init_offers_optional_skills_repository(
+    isolated_data: Path, monkeypatch: pytest.MonkeyPatch, answer: str,
+) -> None:
+    root = isolated_data / "interactive-project"
+    answers = iter(["1", "y", "develop", answer])
+    prompts = []
+
+    def read(prompt: str) -> str:
+        prompts.append(prompt)
+        return next(answers)
+
+    monkeypatch.setattr(cli_module.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", read)
+
+    assert run(["project", "init", str(root)]) == 0
+
+    manifest = load_yaml(root / ".ai-team/project.yaml")
+    assert len(prompts) == 4
+    assert "project-skills" in prompts[-1]
+    assert (root / ".git/HEAD").read_text(encoding="utf-8").strip() == "ref: refs/heads/develop"
+    if answer:
+        assert manifest["skills"]["repository"] == {
+            "url": "git@gitlab.example:team/demo-skills.git", "default_branch": "main",
+        }
+    else:
+        assert "skills" not in manifest
+
+
+@pytest.mark.parametrize("setup", [
+    ["--template", "python-fastapi"],
+    ["--language", "python"],
+    ["--stack", "fastapi"],
+    ["--git"],
+])
+def test_interactive_project_init_with_explicit_setup_prompts_only_for_skills_repository(
+    isolated_data: Path, monkeypatch: pytest.MonkeyPatch, setup: list[str],
+) -> None:
+    root = isolated_data / "interactive-project"
+    url = "git@gitlab.example:team/demo-skills.git"
+    prompts = []
+
+    def read(prompt: str) -> str:
+        prompts.append(prompt)
+        return url
+
+    monkeypatch.setattr(cli_module.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", read)
+
+    assert run(["project", "init", str(root), *setup]) == 0
+
+    assert len(prompts) == 1
+    assert "project-skills" in prompts[0]
+    assert load_yaml(root / ".ai-team/project.yaml")["skills"]["repository"] == {
+        "url": url, "default_branch": "main",
+    }
+
+
+@pytest.mark.parametrize("is_tty", [True, False])
+def test_project_init_records_explicit_skills_repository_without_prompts(
+    isolated_data: Path, monkeypatch: pytest.MonkeyPatch, is_tty: bool,
+) -> None:
+    root = isolated_data / "explicit-project"
+    url = "git@gitlab.example:team/demo-skills.git"
+    monkeypatch.setattr(cli_module.sys.stdin, "isatty", lambda: is_tty)
+    monkeypatch.setattr("builtins.input", lambda _: pytest.fail("unexpected project init prompt"))
+
+    assert run([
+        "project", "init", str(root), "--skills-repository-url", url,
+        "--skills-default-branch", "release",
+    ]) == 0
+
+    assert load_yaml(root / ".ai-team/project.yaml")["skills"]["repository"] == {
+        "url": url, "default_branch": "release",
+    }
+
+
+def test_project_init_rejects_skills_branch_without_skills_repository(
+    isolated_data: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    root = isolated_data / "branch-only"
+    monkeypatch.setattr(cli_module.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda _: pytest.fail("unexpected project init prompt"))
+
+    assert run(["project", "init", str(root), "--skills-default-branch", "main"]) == 1
+
+    assert "--skills-repository-url" in capsys.readouterr().err
+    assert not root.exists()
+
+
+def test_interactive_project_reinit_preserves_existing_manifest_without_prompts(
+    isolated_data: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = isolated_data / "existing-project"
+    monkeypatch.setattr("builtins.input", lambda _: pytest.fail("unexpected project init prompt"))
+    monkeypatch.setattr(cli_module.sys.stdin, "isatty", lambda: False)
+    assert run(["project", "init", str(root)]) == 0
+    manifest = root / ".ai-team/project.yaml"
+    before = manifest.read_bytes()
+    assert "skills" not in load_yaml(manifest)
+
+    monkeypatch.setattr(cli_module.sys.stdin, "isatty", lambda: True)
+    assert run(["project", "init", str(root)]) == 0
+    assert manifest.read_bytes() == before
+
+
+@pytest.mark.parametrize(("configured", "same_url", "branch", "status"), [
+    (True, True, None, 0),
+    (True, True, "release", 0),
+    (True, True, "main", 1),
+    (True, False, None, 1),
+    (False, True, None, 1),
+])
+def test_project_reinit_checks_explicit_skills_repository_configuration(
+    isolated_data: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+    configured: bool, same_url: bool, branch: str | None, status: int,
+) -> None:
+    root = isolated_data / "existing-project"
+    url = "git@gitlab.example:team/demo-skills.git"
+    args = ["project", "init", str(root)]
+    monkeypatch.setattr(cli_module.sys.stdin, "isatty", lambda: False)
+    monkeypatch.setattr("builtins.input", lambda _: pytest.fail("unexpected project init prompt"))
+
+    initial = ["--skills-repository-url", url, "--skills-default-branch", "release"] if configured else []
+    assert run([*args, *initial]) == 0
+    capsys.readouterr()
+    manifest = root / ".ai-team/project.yaml"
+    before = manifest.read_bytes()
+
+    monkeypatch.setattr(cli_module.sys.stdin, "isatty", lambda: True)
+    requested_url = url if same_url else "git@gitlab.example:team/other-skills.git"
+    requested_branch = ["--skills-default-branch", branch] if branch is not None else []
+    assert run([*args, "--skills-repository-url", requested_url, *requested_branch]) == status
+
+    if status:
+        assert ".ai-team/project.yaml" in capsys.readouterr().err
+    assert manifest.read_bytes() == before
+
+
 def test_project_memory_refresh_command_updates_native_indexes(
     isolated_data: Path,
     capsys: pytest.CaptureFixture[str],
@@ -937,7 +1170,7 @@ def test_mcp_docker_enable_writes_local_override_and_resyncs(
 
     def fake_resync(*args, **kwargs):
         calls.append(True)
-        return SimpleNamespace(incomplete=[], revision="test", changed=True, skills=[], mcp=[], clients=[])
+        return ResyncReport(revision="test", security=[], skills=[], mcp=[], clients=[], changed=True, incomplete=[])
 
     monkeypatch.setattr(cli_module, "resync", fake_resync)
 

@@ -15,7 +15,7 @@ import pytest
 from agent_engineering_kit.errors import AgentKitError
 from agent_engineering_kit.paths import KitPaths
 from agent_engineering_kit.process import CommandResult, run_command
-from agent_engineering_kit.projects import LogicalProject
+from agent_engineering_kit.projects import LogicalProject, find_project, init_project
 from agent_engineering_kit.project_skills import ProjectSkillRepositoryManager, redact_url
 from agent_engineering_kit.clients import (
     effective_skill_inventory,
@@ -26,6 +26,7 @@ from agent_engineering_kit.clients import (
 )
 from agent_engineering_kit.cli import _effective_skill_roots
 from agent_engineering_kit.component_state import Lifecycle, write_state
+from agent_engineering_kit.io import load_yaml
 from agent_engineering_kit.validation import validate_effective_overrides
 from conftest import write_yaml
 
@@ -124,6 +125,31 @@ def publication_fixture(fixture):
     for directory in ("clients", "catalog", "locks", "schemas"):
         shutil.copytree(real / directory, fixture.paths.repository / directory, dirs_exist_ok=True)
     return fixture
+
+
+def test_effective_skill_index_lists_project_winner_and_shadowed_sources(publication_fixture):
+    fixture = publication_fixture
+    status = fixture.manager(validator=lambda _: (True, [])).resync()
+    repository, paths = fixture.paths.repository, fixture.paths
+    builtin = repository / "skills/first-party/example/SKILL.md"
+    builtin.parent.mkdir(parents=True)
+    builtin.write_text("---\nname: example\n---\n", encoding="utf-8")
+
+    sync_clients(repository, paths, project=fixture.project)
+
+    index = paths.installations / "clients/shared/effective-skills.md"
+    content = index.read_text(encoding="utf-8")
+    assert [line for line in content.splitlines() if "| `example` |" in line] == [
+        f"| `example` | fixture | project-skills | ACTIVE | {status.active_revision} | built-in "
+        "| [SKILL.md](skills/example/SKILL.md) |",
+    ]
+    assert (index.parent / "skills/example/SKILL.md").is_file()
+    for client in ("codex", "claude-code", "claude-desktop", "opencode", "cline"):
+        for root in (paths.installations, paths.runtime):
+            adapter = load_yaml(root / "clients" / client / "adapter.yaml")
+            assert adapter["effective_skills"] == str(index)
+    sync_clients(repository, paths, project=fixture.project)
+    assert index.read_text(encoding="utf-8") == content
 
 
 @pytest.mark.parametrize("local_override", [False, True])
@@ -499,6 +525,59 @@ def test_fetch_candidate_resolves_remote_commit_without_touching_product_tree(fi
     assert git(candidate, "rev-parse", "HEAD") == revision
     assert subprocess.run(["git", "-C", str(candidate), "symbolic-ref", "-q", "HEAD"], capture_output=True).returncode == 1
     assert fixture.product_state() == before
+
+
+def test_project_init_relative_skills_repository_can_be_fetched_from_another_directory(
+    fixture: RepositoryFixture, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    paths = replace(fixture.paths, repository=repository)
+    cwd = tmp_path / "unrelated" / "cwd"
+    cwd.mkdir(parents=True)
+    monkeypatch.chdir(cwd)
+
+    init_project(
+        fixture.project.root, repository, paths,
+        skills_repository_url="../upstream.git",
+    )
+    project = find_project(fixture.project.root)
+    assert project is not None
+    manager = ProjectSkillRepositoryManager(repository, paths, project)
+
+    candidate, revision = manager.fetch_candidate()
+
+    assert revision == fixture.remote_revision("main")
+    assert (candidate / "skills/example/SKILL.md").is_file()
+    assert project.skills_repository == {
+        "url": str(fixture.upstream.resolve()), "default_branch": "main",
+    }
+
+
+def test_fetch_candidate_resolves_legacy_relative_skills_repository_from_project_root(
+    fixture: RepositoryFixture, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    paths = replace(fixture.paths, repository=repository)
+    fixture.project.manifest["skills"]["repository"]["url"] = "../upstream.git"
+    manifest_path = fixture.project.manifest_path
+    write_yaml(manifest_path, fixture.project.manifest)
+    original_manifest = manifest_path.read_bytes()
+    cwd = tmp_path / "unrelated" / "cwd"
+    cwd.mkdir(parents=True)
+    monkeypatch.chdir(cwd)
+
+    project = init_project(
+        fixture.project.root, repository, paths,
+        skills_repository_url=str(fixture.upstream.resolve()),
+    )
+    manager = ProjectSkillRepositoryManager(repository, paths, project)
+
+    candidate, revision = manager.fetch_candidate()
+
+    assert revision == fixture.remote_revision("main")
+    assert (candidate / "skills/example/SKILL.md").is_file()
+    assert git(manager.checkout, "remote", "get-url", "origin") == str(fixture.upstream.resolve())
+    assert manifest_path.read_bytes() == original_manifest
 
 
 def test_fetch_candidate_uses_override_but_ci_uses_default(fixture):

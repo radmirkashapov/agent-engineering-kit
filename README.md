@@ -246,6 +246,8 @@ agent-kit enable --reset
 ```bash
 agent-kit help
 agent-kit help project init
+agent-kit help project skills
+agent-kit help skills add
 agent-kit help task lane
 agent-kit help mcp docker
 agent-kit help security scan
@@ -266,7 +268,7 @@ agent-kit project init --help
 | `agent-kit models ...` | Просмотреть каталог моделей, объяснить поддержку клиента или безопасно синхронизировать provider и модели. |
 | `agent-kit project ...` | Создать, подключить, обнаружить или сверить logical project и его память. |
 | `agent-kit config explain` | Показать effective configuration, выбранный harness и происхождение решений. |
-| `agent-kit skills ...` | Просмотреть, включить, отключить или переопределить skills. |
+| `agent-kit skills ...` | Просмотреть, импортировать, включить, отключить или переопределить skills. |
 | `agent-kit mcp ...` | Просмотреть, включить, отключить или переопределить MCP. |
 | `agent-kit mcp launch-command <id>` | Создать контракт и JSON команды для ручной регистрации stdio MCP без Codex и Claude Code. |
 | `agent-kit mcp docker ...` | Управлять выделенным профилем Docker MCP Toolkit. |
@@ -363,7 +365,9 @@ agent-kit mcp docker sync
 agent-kit mcp docker disable --scope global
 ```
 
-`plan` ничего не изменяет. `sync` добавляет и удаляет только записи, которыми владеет Kit; пользовательские серверы в Docker profile сохраняются. Клиенты переключаются на namespaced gateway `agent-kit-docker` только после успешной сверки профиля. Если `docker mcp` недоступен, команда возвращает `CONFIG_REQUIRED`, а нативные MCP продолжают работать.
+`plan` показывает предстоящие изменения. Явная команда `agent-kit mcp docker sync` применяет их к записям Kit, сохраняя пользовательские серверы в Docker profile. Клиенты переключаются на gateway `agent-kit-docker` после успешной сверки профиля. Если интеграция включена, явный `mcp docker sync` сообщает `NOT_INSTALLED` при отсутствии команды `docker` и `CONFIG_REQUIRED`, если команда есть, но Toolkit недоступен.
+
+Для общего `agent-kit resync` Toolkit необязателен. Если Docker или Toolkit недоступен либо ранее применённый профиль не проходит проверку, Kit выводит `SKIPPED: Docker MCP Toolkit` и восстанавливает нативные маршруты MCP, в том числе после прежнего переключения на gateway. Ошибки обязательной нативной установки или регистрации MCP завершают `resync` с ошибкой. Для MCP, чья нативная команда запуска использует Docker, требуется Docker Engine.
 
 ## Skills из коробки
 
@@ -635,19 +639,19 @@ Kit не ограничивается ссылкой на `AI.md`: при `resyn
 
 ## Credentials и OAuth для MCP
 
-Для stdio MCP скопируйте шаблон и заполните только те значения, которые нужны включённым интеграциям. Импорт сохраняет значения в machine-local хранилище; исходный файл остаётся у вас.
+При первой настройке stdio MCP скопируйте шаблон и заполните значения для включённых интеграций. В примере используется встроенный Context7 с необязательным API-ключом.
 
 ```bash
 cp mcp-creds.example.env mcp-creds.env
-# Заполнить только нужные значения.
+# При наличии ключа заполнить CONTEXT7_API_KEY в mcp-creds.env.
 agent-kit mcp creds import --from ./mcp-creds.env
 agent-kit mcp creds status
-agent-kit mcp enable github --scope global --resync
+agent-kit resync --no-update
 agent-kit doctor
 agent-kit security scan
 ```
 
-Не вставляйте literal credentials в `mcp/registry.yaml`, конфигурации клиентов, команды или Git. В конфигурации указываются только имена переменных окружения; секреты вводятся через файл-шаблон и команду импорта. Локальные `mcp-creds.env` и `mcp-creds.*.env` исключены из Git, а `mcp-creds.example.env` содержит только пустые значения.
+Храните секреты в локальном файле для импорта в защищённое хранилище. В `mcp/registry.yaml` и клиентских настройках используются ссылки на переменные окружения. Локальные `mcp-creds.env` и `mcp-creds.*.env` исключены из Git, а `mcp-creds.example.env` содержит имена переменных и примеры несекретных параметров.
 
 | Клиент | Регистрация MCP | Подключение |
 |---|---|---|
@@ -657,9 +661,9 @@ agent-kit security scan
 | OpenCode | Автоматическая: merge только `mcp.servers.agent-kit-*` в глобальном JSON/JSONC. | `agent-kit mcp enable <id> --scope global --resync` |
 | Cline | Автоматическая: merge только `mcpServers.agent-kit-*` в штатном глобальном JSON. | `agent-kit mcp enable <id> --scope global --resync` |
 
-Если диагностика показывает `AUTH_REQUIRED`, сначала проверьте `agent-kit mcp creds status`. Для stdio MCP импортируйте недостающие credentials и перезапустите соответствующий клиент. Для remote OAuth завершите авторизацию в конкретном клиенте и профиле, затем повторите запрос. GitLab и Context7 хранят OAuth-состояние отдельно в каждом клиенте или профиле; авторизация в одном не переносится в другой. Исключение — выбранная схема, где все клиенты подключены к одному Docker MCP Gateway: в этом случае OAuth-состоянием владеет Docker Desktop.
+Для удалённого MCP с OAuth, например GitLab, при `AUTH_REQUIRED` завершите вход в соответствующем клиенте и профиле. Для stdio MCP проверьте учётные данные через `agent-kit mcp creds status`, обновите файл импорта и перезапустите клиент. Встроенный Context7 запускается через stdio с необязательным `CONTEXT7_API_KEY`, который launcher передаёт дочернему процессу.
 
-После ротации токена повторите `agent-kit mcp creds import --from ./mcp-creds.env`; новое значение применяется при следующем запуске MCP без `resync`. Изменение определения MCP или команды запуска требует `agent-kit mcp enable <id> --scope global --resync`. `agent-kit mcp creds clear --yes` удаляет только machine-local хранилище credentials Kit; он не удаляет OAuth-состояние клиентов или Docker Desktop. После настройки запускайте `agent-kit security scan`.
+После ротации токена повторите `agent-kit mcp creds import --from ./mcp-creds.env` со всеми учётными данными, которые должны остаться в хранилище. Импорт целиком заменяет содержимое хранилища. Новый токен применяется при следующем запуске MCP. После изменения определения или команды запуска уже включённого MCP явно выполните `agent-kit resync --no-update`. Команда `agent-kit mcp creds clear --yes` очищает локальное хранилище учётных данных Kit. Клиенты и Docker Desktop управляют своими OAuth-сессиями отдельно. После настройки запустите `agent-kit security scan`.
 
 Для диагностики и ручных клиентов команда `agent-kit mcp launch-command <id>` печатает JSON с абсолютным `command` и списком `args`: для MCP с credential-переменными создаёт контракт launcher, для остальных возвращает прямую команду. Она работает без установленных Codex и Claude Code; нужны включённый stdio MCP и его установленный executable. Если executable отсутствует, выполните `agent-kit resync --no-update`. Учитывается текущий профиль доступа: сервер, запрещённый профилем, зарегистрировать этой командой нельзя. Для Claude Desktop запись по-прежнему добавляется вручную.
 
@@ -691,14 +695,15 @@ agent-kit security scan
 
 ## Единый репозиторий проектных skills
 
-Команда может хранить общие для логического проекта skills в отдельном обычном Git-репозитории `project-skills`. Это не специальный формат хранилища и не зеркало продуктового кода: разработчики клонируют его, создают ветки, делают commit и push, открывают PR/MR и объединяют изменения привычными средствами Git-платформы. Agent Engineering Kit только загружает выбранную удалённую ревизию, проверяет её и публикует skills клиентам.
+Команда может хранить общие для логического проекта skills в отдельном Git-репозитории `project-skills`. Kit может клонировать рабочую копию, импортировать пакет и обновить его индекс. Ветки, коммиты, push, PR/MR и слияние выполняются средствами Git и Git-платформы. При синхронизации Kit проверяет выбранную удалённую ревизию и публикует её навыки клиентам.
 
-Минимальная структура репозитория:
+Рабочая копия может иметь следующую структуру.
 
 ```text
 project-skills/
 ├── README.md
 └── skills/
+    ├── INDEX.md
     ├── api-review/
     │   └── SKILL.md
     └── release-check/
@@ -721,7 +726,15 @@ description: Review API changes for compatibility and migration risks
 
 ### Подключение к logical project
 
-После `agent-kit project init` укажите источник в `.ai-team/project.yaml`. Секция необязательна: её отсутствие означает, что проектные skills не настроены.
+При создании проекта можно указать URL источника и основную ветку.
+
+```bash
+agent-kit project init \
+  --skills-repository-url git@gitlab.company.example:delivery/project-skills.git \
+  --skills-default-branch main
+```
+
+`--skills-default-branch` допускается вместе с URL. По умолчанию используется `main`. Интерактивный `project init` без URL при создании проекта предлагает ввести URL или пропустить настройку. Для существующего проекта добавьте необязательную секцию `skills.repository` в `.ai-team/project.yaml`.
 
 ```yaml
 # Один и тот же id объединяет локальное состояние нескольких продуктовых репозиториев.
@@ -746,12 +759,31 @@ agent-kit project skills status
 
 Без локального выбора ветки `resync` всегда берёт `default_branch`, обычно `main`. Candidate сначала проходит структурную проверку и действующий security pipeline. Только после успешной проверки Kit атомарно делает новую ревизию активной и публикует её через thin adapters.
 
-### Проверка ветки перед PR/MR
+### Подготовка пакета в рабочей копии
 
-Чтобы испытать удалённую ветку `project-skills` до merge, выберите её только для текущего компьютера:
+Запускайте команды из корня продуктового репозитория. Пример использует отдельный checkout рядом с ним.
 
 ```bash
-agent-kit project skills use-branch feat/26-10-2026-api-review
+agent-kit project skills checkout --into ../delivery-platform-skills
+git -C ../delivery-platform-skills switch -c feat/23-11-2026-api-review
+agent-kit project skills add --from ../draft-skills/api-review --checkout ../delivery-platform-skills
+git -C ../delivery-platform-skills status --short
+```
+
+Для клонирования нужен новый или пустой каталог. В `--checkout` передайте корень обычной самостоятельной Git-копии с собственным каталогом `.git` и `origin`, совпадающим с источником из манифеста. Kit отклоняет связанные копии, созданные через `git worktree add`, даже при совпадающем `origin`. Изменяйте навыки в рабочей копии за пределами продуктовых репозиториев и управляемого хранилища Kit. Для корпоративного навыка используйте `agent-kit skills add --from <directory>`. Команда пишет в активный checkout Kit. Из корня другой корпоративной копии можно выбрать её для этой команды через `AGENT_KIT_REPOSITORY="$PWD"`.
+
+Обе команды `add` копируют пакет целиком, включая обычные вложенные файлы шагов, контракты, спецификации и данные для примеров. Относительные ссылки внутри пакета сохраняются. Символические ссылки запрещены. Имя исходного каталога должно точно совпадать с полем `name` в `SKILL.md` и со значением `--id`, если оно передано. При замене существующего пакета укажите `--replace` в чистой рабочей копии с отслеживаемым `SKILL.md`.
+
+В Git рабочего checkout хранится `skills/INDEX.md` с проектными навыками. `project skills add` обновляет его автоматически, а после ручных правок его можно пересобрать командой `agent-kit project skills index --checkout ../delivery-platform-skills`. После `resync` у клиентских адаптеров появляется локальный `effective-skills.md` с итоговым набором, приоритетом источников и происхождением навыков. Этот файл генерируется для текущего окружения и хранится вне Git.
+
+Подробнее о корпоративных и проектных пакетах в [эксплуатационном руководстве](docs/runbooks/corporate-extensions-and-mcp-credentials.md).
+
+### Проверка ветки перед PR/MR
+
+Отправьте рабочую ветку `project-skills` в `origin` перед проверкой. До слияния выберите опубликованную ветку локально на текущем компьютере.
+
+```bash
+agent-kit project skills use-branch feat/23-11-2026-api-review
 agent-kit resync
 agent-kit project skills status
 ```
@@ -781,7 +813,7 @@ agent-kit project skills status
 
 Candidate никогда не становится исполняемым частично. При сетевой ошибке или отклонении небезопасного обновления Kit сохраняет last-known-good ревизию. Если первая синхронизация не удалась и проверенной ревизии ещё нет, команда завершится ошибкой, а непроверенные файлы не будут опубликованы клиентам.
 
-Kit намеренно не делает commit, push, merge, не создаёт PR/MR и не копирует project skills в продуктовые репозитории. Изменения самого `project-skills` проходят обычный Git workflow, а `agent-kit resync` только читает удалённую ветку и обновляет проверенное machine-local состояние.
+После публикации изменений `agent-kit resync` получает удалённую ветку и обновляет проверенное локальное состояние.
 
 ### Происхождение agent-коммитов
 

@@ -5,6 +5,8 @@
 ~~~bash
 agent-kit help
 agent-kit help project init
+agent-kit help project skills
+agent-kit help skills add
 agent-kit help task lane
 agent-kit help mcp docker
 agent-kit help security scan
@@ -35,11 +37,27 @@ agent-kit project init --help
 
 Раздел проекта включает `skills`, `init`, `detect`, `status`, `attach`, `bind`, `reconcile` и `memory-refresh`. При создании проекта можно задать путь, `--id`, `--template`, `--language`, `--stack`, `--git` и `--default-branch`.
 
+Для подключения проектного набора при создании проекта передайте `--skills-repository-url <git-url>`. Основную ветку набора задаёт `--skills-default-branch <branch>`, который используется вместе с URL и по умолчанию принимает значение `main`. При интерактивном создании без URL команда предлагает ввести его или оставить проектный набор отключённым.
+
 Для задач доступны `create`, `status`, `retry`, `lease`, `complete`, `release`, `gc`, `worktree-plan`, `worktree-create` и `lane`. Для параллельных частей предусмотрены `lane create`, `status`, `integrate` и `complete`. При создании задачи задаются логический проект, тип ветки, краткое описание и обязательная область записи. Планирование рабочего дерева требует префикса ветки.
 
 ## MCP, skills и overrides
 
 Для навыков и MCP доступны просмотр состояния и полного каталога, включение, отключение, сброс, локальное переопределение и объяснение результата. Дополнительно для навыков предусмотрен откат; для MCP — формирование команды запуска, учётные данные и Docker MCP Toolkit. Docker MCP Toolkit предлагает просмотр состояния, предварительный план, применение плана, включение и отключение.
+
+| Команда | Для чего нужна |
+|---|---|
+| `agent-kit skills add --from <directory> [--id <id>] [--replace]` | Импортировать пакет в `skills/first-party/<id>/` активной копии Kit. |
+| `agent-kit project skills checkout --into <directory>` | Клонировать источник проекта в отдельный новый или пустой рабочий каталог. |
+| `agent-kit project skills add --from <directory> --checkout <directory> [--id <id>] [--replace]` | Импортировать пакет в `skills/<id>/` и обновить `skills/INDEX.md`. |
+| `agent-kit project skills index --checkout <directory>` | Пересобрать `skills/INDEX.md` после ручной правки. |
+| `agent-kit project skills use-branch <branch>` / `use-main` / `status` | Выбрать удалённую ветку для текущей машины, вернуться к ветке из манифеста или проверить активную ревизию и происхождение навыков. |
+
+Для обеих команд `add` имя каталога из `--from` должно точно совпадать с полем `name` в `SKILL.md` и со значением `--id`, если оно передано. Параметр `--checkout` принимает корень обычной самостоятельной Git-копии со своим каталогом `.git` и ожидаемым `origin`. Рабочие деревья, созданные через `git worktree add`, отклоняются даже при совпадающем `origin`.
+
+Описание структуры пакета и пример публикации ветки приведены в [руководстве по project-skills](Project-skills).
+
+Если Docker или Toolkit недоступен либо ранее применённый профиль Toolkit не проходит проверку, `resync` выводит `SKIPPED: Docker MCP Toolkit` и использует нативные маршруты MCP. Ошибки обязательной нативной установки или регистрации MCP завершают `resync` с ошибкой. Для управления профилем используйте `agent-kit mcp docker sync`.
 
 Команда `override set` принимает тип сущности и её ID, а также обязательные параметры: `--mode {extend,replace,disable}`, `--from`, `--reason` и `--scope {global,project}`. При необходимости она может выполнить последующую синхронизацию.
 

@@ -291,17 +291,21 @@ class ProjectSkillRepositoryManager:
         self._check_storage()
         branch = self.requested_branch(ci=ci)
         self._check_branch(branch)
+        source_url = source.url
+        # Двоеточие перед первым "/" обозначает Git-транспорт или SCP-адрес.
+        if source_url and not Path(source_url).is_absolute() and ":" not in source_url.split("/", 1)[0]:
+            source_url = str((self.project.root / source_url).resolve())
         self.root.mkdir(parents=True, exist_ok=True)
         if not self.checkout.exists():
             try:
-                self._git(["clone", "--quiet", "--no-checkout", "--", source.url, str(self.checkout)])
+                self._git(["clone", "--quiet", "--no-checkout", "--", source_url, str(self.checkout)])
             except Exception:
                 if self.checkout.exists():
                     shutil.rmtree(self.checkout)
                 raise
         if not (self.checkout / ".git").is_dir():
             raise AgentKitError("Некорректный managed checkout project-skills")
-        self._git(["-C", str(self.checkout), "remote", "set-url", "origin", source.url])
+        self._git(["-C", str(self.checkout), "remote", "set-url", "origin", source_url])
         # Явный refspec обновляет remote ref также после force push/rewind.
         remote_ref = f"refs/remotes/origin/{branch}"
         self._git(["-C", str(self.checkout), "fetch", "--quiet", "--prune", "origin",

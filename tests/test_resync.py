@@ -1,18 +1,202 @@
 from __future__ import annotations
 
 import json
+import shutil
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from agent_engineering_kit.errors import AgentKitError
+from agent_engineering_kit.cli import _print_resync_report
+from agent_engineering_kit.component_state import Lifecycle, write_state
 from agent_engineering_kit.paths import KitPaths
 from agent_engineering_kit.project_skills import ProjectSkillsStatus
 from agent_engineering_kit.projects import LogicalProject
+from agent_engineering_kit.result import ValidationResult
 from agent_engineering_kit.resync import resync
 from agent_engineering_kit.resync import build_session_manifest
+import agent_engineering_kit.clients as clients_module
 import agent_engineering_kit.resync as resync_module
+from conftest import write_yaml
+
+
+@pytest.fixture
+def native_mcp_environment(monkeypatch, tmp_path: Path):
+    repository = Path(__file__).resolve().parents[1]
+    data = tmp_path / "data"
+    paths = KitPaths(repository, data, data / "runtime", data / "projects", data / "overrides")
+    home = tmp_path / "home"
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(Path, "home", lambda: home)
+    monkeypatch.setenv("CODEX_HOME", str(home / ".codex"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
+    monkeypatch.setattr(resync_module, "validate", lambda *_args, **_kwargs: ValidationResult())
+    monkeypatch.setattr(resync_module.ExternalSkillManager, "resync", lambda *_args, **_kwargs: [])
+    for item, lock in resync_module.McpManager(repository, paths).desired():
+        if item["required"]:
+            binary = paths.installations / "mcp" / item["id"] / "bin" / item["command"]
+            binary.parent.mkdir(parents=True)
+            binary.touch()
+            write_state(paths, "mcp", item["id"], Lifecycle.ACTIVE, revision=lock.revision)
+    write_yaml(paths.overrides / "global/docker-toolkit.yaml", {"version": 1, "enabled": True})
+    return repository, paths, home
+
+
+@pytest.mark.parametrize("docker_executable", [None, sys.executable])
+@pytest.mark.parametrize("malformed_routes", [False, True])
+def test_resync_keeps_native_mcp_when_docker_is_unavailable(
+    confirmed_docker_mcp, monkeypatch, capsys, docker_executable, malformed_routes,
+):
+    repository, paths, config = confirmed_docker_mcp
+    if malformed_routes:
+        state_path = paths.state / "docker-mcp-toolkit.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state_path.write_text(json.dumps({**state, "routes": None}), encoding="utf-8")
+    find_executable = shutil.which
+
+    def which(name):
+        if name == "docker":
+            return docker_executable
+        if name == "claude":
+            return None
+        return find_executable(name)
+
+    monkeypatch.setattr(shutil, "which", which)
+    report = resync(repository, paths, update_kit=False, install_security=False)
+
+    assert any(item["id"] == "context7" and item["status"] == "ACTIVE" for item in report.mcp)
+    config_content = config.read_text(encoding="utf-8")
+    assert "[mcp_servers.agent-kit-context7]" in config_content
+    assert "[mcp_servers.agent-kit-docker]" not in config_content
+    assert "claude-desktop/context7: CONFIG_REQUIRED (required)" in report.incomplete
+    _print_resync_report(report)
+    assert "SKIPPED: Docker MCP Toolkit" in capsys.readouterr().out
+
+
+@pytest.fixture
+def confirmed_docker_mcp(native_mcp_environment):
+    repository, paths, home = native_mcp_environment
+    (paths.state / "docker-mcp-toolkit.json").write_text(json.dumps({
+        "version": 1, "status": "SYNCED", "project_id": None,
+        "profile": "agent-engineering-kit", "gateway_registration": "agent-kit-docker",
+        "routes": {"context7": "docker"},
+        "managed_servers": {"context7": "catalog://context7"},
+    }), encoding="utf-8")
+    config = home / ".codex/config.toml"
+    config.parent.mkdir(parents=True)
+    config.write_text('[mcp_servers.agent-kit-docker]\ncommand = "docker"\n', encoding="utf-8")
+    return repository, paths, config
+
+
+@pytest.mark.parametrize(("exit_code", "profile_output", "snapshot_override", "uses_docker"), [
+    (1, "", {}, False),
+    (0, '{"servers": []}', {}, False),
+    (0, '{"servers": null}', {}, False),
+    (0, '{"servers": ["catalog://["]}', {}, False),
+    (0, '{"servers": ["catalog://context7"]}', {"profile": "agent-engineering-kit\0extra"}, False),
+    (0, '{"servers": ["catalog://context7"]}', {"profile": "agent-engineering-kit\ud800"}, False),
+    (0, '{"servers": ["catalog://context7"]}', {"managed_servers": None}, False),
+    (0, '{"servers": ["catalog://context7"]}', {"routes": {"context7": "docker", "playwright": None}}, False),
+    (0, '{"servers": ["catalog://context7", "catalog://other"]}', {}, True),
+])
+def test_resync_uses_confirmed_docker_routes_only_when_profile_is_usable(
+    confirmed_docker_mcp, monkeypatch, exit_code, profile_output, snapshot_override, uses_docker,
+):
+    repository, paths, config = confirmed_docker_mcp
+    if snapshot_override:
+        state_path = paths.state / "docker-mcp-toolkit.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state_path.write_text(json.dumps({**state, **snapshot_override}), encoding="utf-8")
+    # Use the Python executable as a fake Docker CLI. Its script is the
+    # first argument, which DockerMcpToolkit supplies as "mcp".
+    (Path.cwd() / "mcp").write_text(
+        "import sys\n"
+        "if sys.argv[1:] == ['--help']:\n"
+        "    raise SystemExit(0)\n"
+        "assert sys.argv[1:] == ['profile', 'show', 'agent-engineering-kit', '--format', 'json']\n"
+        f"print({profile_output!r})\n"
+        f"raise SystemExit({exit_code})\n",
+        encoding="utf-8",
+    )
+    find_executable = shutil.which
+
+    def which(name):
+        if name == "docker":
+            return sys.executable
+        if name == "claude":
+            return None
+        return find_executable(name)
+
+    monkeypatch.setattr(shutil, "which", which)
+
+    report = resync(repository, paths, update_kit=False, install_security=False)
+
+    config_content = config.read_text(encoding="utf-8")
+    assert ("[mcp_servers.agent-kit-context7]" in config_content) is not uses_docker
+    assert ("[mcp_servers.agent-kit-docker]" in config_content) is uses_docker
+    assert (report.docker_mcp_skipped is None) is uses_docker
+
+
+def test_resync_fails_if_required_native_mcp_installation_fails_without_docker(
+    native_mcp_environment, monkeypatch,
+):
+    repository, paths, _ = native_mcp_environment
+    (paths.installations / "mcp/context7/bin/npx").unlink()
+    find_executable = shutil.which
+    monkeypatch.setattr(shutil, "which", lambda name: None if name in {"npx", "docker"} else find_executable(name))
+
+    with pytest.raises(AgentKitError, match="MCP installation: context7"):
+        resync(repository, paths, update_kit=False, install_security=False)
+
+
+@pytest.mark.parametrize(("client", "failure"), [
+    ("codex", "parse"),
+    ("codex", "write"),
+    ("cline", "write"),
+    ("opencode", "write"),
+])
+def test_resync_fails_if_required_native_mcp_registration_fails_without_docker(
+    confirmed_docker_mcp, monkeypatch, client, failure,
+):
+    repository, paths, codex_config = confirmed_docker_mcp
+    home = codex_config.parent.parent
+    cline_config = home / "cline/settings.json"
+    monkeypatch.setenv("CLINE_MCP_SETTINGS_PATH", str(cline_config))
+    find_executable = shutil.which
+    monkeypatch.setattr(shutil, "which", lambda name: None if name in {"docker", "claude"} else find_executable(name))
+    monkeypatch.setattr(resync_module, "sync_client_models", lambda *_args, **_kwargs: None)
+    if failure == "parse":
+        codex_config.write_text(codex_config.read_text(encoding="utf-8") + "[invalid\n", encoding="utf-8")
+    else:
+        target = {
+            "codex": codex_config,
+            "cline": cline_config,
+            "opencode": home / ".config/opencode/opencode.json",
+        }[client]
+        atomic_write = clients_module.atomic_write
+
+        def fail_mcp_config_write(path, content):
+            if path == target and (client != "opencode" or '"mcp":' in content):
+                raise PermissionError("test MCP config is not writable")
+            return atomic_write(path, content)
+
+        monkeypatch.setattr(clients_module, "atomic_write", fail_mcp_config_write)
+
+    original_config = codex_config.read_text(encoding="utf-8")
+
+    with pytest.raises(AgentKitError, match=rf"client MCP registration: .*{client}/context7"):
+        resync(repository, paths, update_kit=False, install_security=False)
+
+    registrations = json.loads((paths.state / "client-mcp-registrations.json").read_text(encoding="utf-8"))
+    row = next(item for item in registrations["registrations"] if item.get("mcp") == "context7" and item["client"] == client)
+    assert row["status"] == "ERROR"
+    assert row["desired_verified"] is False
+    assert row["reason"]
+    assert not (paths.state / "effective-environment.json").exists()
+    if client == "codex":
+        assert codex_config.read_text(encoding="utf-8") == original_config
 
 
 def test_resync_initializes_overrides_before_local_validation(monkeypatch, tmp_path: Path) -> None:
