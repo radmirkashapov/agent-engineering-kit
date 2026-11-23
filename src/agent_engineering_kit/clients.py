@@ -602,8 +602,8 @@ def validate_clients(repository: Path) -> ValidationResult:
 
 
 def _markdown_table_cell(value: str) -> str:
-    text = escape(" ".join(value.split()), quote=False)
-    return re.sub(r"([\\|`*_\[\]~])", r"\\\1", text)
+    text = re.sub(r"[\ud800-\udfff]", "\ufffd", " ".join(value.split()))
+    return re.sub(r"([\\|`*_\[\]~])", r"\\\1", escape(text, quote=False))
 
 
 def _render_effective_skill_index(sources: dict[str, EffectiveSkillSource]) -> str:

@@ -158,9 +158,12 @@ class DockerMcpToolkit:
     def _inspect_profile(self, profile: str) -> tuple[bool, dict[str, str]]:
         if not self.docker_executable:
             return False, {}
-        inspected = self.runner([
-            self.docker_executable, "mcp", "profile", "show", profile, "--format", "json",
-        ])
+        try:
+            inspected = self.runner([
+                self.docker_executable, "mcp", "profile", "show", profile, "--format", "json",
+            ])
+        except (OSError, ValueError):
+            return False, {}
         if not inspected.ok:
             return False, {}
         try:

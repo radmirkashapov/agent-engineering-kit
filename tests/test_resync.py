@@ -93,6 +93,8 @@ def confirmed_docker_mcp(native_mcp_environment):
     (0, '{"servers": []}', {}, False),
     (0, '{"servers": null}', {}, False),
     (0, '{"servers": ["catalog://["]}', {}, False),
+    (0, '{"servers": ["catalog://context7"]}', {"profile": "agent-engineering-kit\0extra"}, False),
+    (0, '{"servers": ["catalog://context7"]}', {"profile": "agent-engineering-kit\ud800"}, False),
     (0, '{"servers": ["catalog://context7"]}', {"managed_servers": None}, False),
     (0, '{"servers": ["catalog://context7"]}', {"routes": {"context7": "docker", "playwright": None}}, False),
     (0, '{"servers": ["catalog://context7", "catalog://other"]}', {}, True),
