@@ -69,6 +69,8 @@ agent-kit project skills index --checkout <directory>
 
 Client adapters получают generated index вместе с skills и могут ссылаться на него в своей документации. Конфликты ID показывают только выигравший effective source и список shadowed источников.
 
+Docker MCP Toolkit остаётся необязательным runtime: `resync` при отсутствии Docker или недоступном Docker MCP Toolkit сохраняет/использует native MCP route, сообщает о пропуске и завершается успешно. Ошибки обязательной нативной MCP-установки по-прежнему прерывают `resync`.
+
 ## Ошибки и восстановление
 
 - Не-Git checkout, несовпадающий origin, невалидный `SKILL.md`, path traversal, symlink за пределы source/destination или конфликт ID завершаются до записи.
@@ -89,6 +91,7 @@ Client adapters получают generated index вместе с skills и мо�
 | Не-TTY или явный URL | `project init` | Не читает stdin; manifest соответствует аргументам |
 | Новый project manifest | `project init` | Для каждого repository запускаются доступные Codebase Memory и Serena в полном режиме; их отчёт сохранён в local state |
 | Любой успешный `resync` | client sync | Публикует effective skills index с provenance |
+| Docker отсутствует или Toolkit недоступен | `resync` | Native MCP route сохранён, Docker помечен skipped/unavailable, resync успешен |
 
 ## Вне области
 

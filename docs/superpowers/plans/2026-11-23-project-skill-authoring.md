@@ -175,6 +175,10 @@ def test_client_sync_writes_effective_skill_index(publication_fixture):
     sync_clients(publication_fixture.paths.repository, publication_fixture.paths, project=publication_fixture.project)
     index = publication_fixture.paths.installations / "clients/shared/effective-skills.md"
     assert "project-skills" in index.read_text(encoding="utf-8")
+
+def test_resync_keeps_native_mcp_when_docker_is_unavailable(paths, monkeypatch):
+    monkeypatch.setattr("agent_engineering_kit.docker_mcp.shutil.which", lambda _: None)
+    assert resync(REPOSITORY, paths, update_kit=False).mcp
 ```
 
 - [ ] **Step 2: Verify RED**
@@ -186,6 +190,8 @@ Expected: parser tests fail because commands and generated Markdown do not exist
 - [ ] **Step 3: Implement command routing and runtime index**
 
 Add parser entries and CLI dispatch that resolve and validate the current logical project before invoking the service. Print changed file paths and no Git lifecycle claims. In `sync_clients()`, render one deterministic Markdown row per `EffectiveSkillSource` with ID, `description`, effective source, state, revision and shadowed source names; write it atomically to `shared.parent / "effective-skills.md"`. Add the index path to generated adapter content.
+
+Keep Docker MCP Toolkit optional during `resync`: if Docker or its MCP Toolkit is unavailable, preserve the native MCP route and return a successful resync with an explicit skipped/unavailable diagnostic instead of failing the entire operation. Other MCP installation failures remain errors.
 
 - [ ] **Step 4: Verify GREEN**
 
