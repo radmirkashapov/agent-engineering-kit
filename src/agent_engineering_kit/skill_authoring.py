@@ -8,7 +8,7 @@ import shutil
 import stat
 import tempfile
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
@@ -86,6 +86,14 @@ def _validated_skill(repository: Path, directory: Path, identifier: str | None =
     return _Skill(identifier, metadata["description"])
 
 
+def _validated_source(repository: Path, source: Path, identifier: str | None) -> tuple[Path, _Skill]:
+    source = _directory_path(source)
+    skill = _validated_skill(repository, source, identifier)
+    if source.name != skill.identifier:
+        raise AgentKitError(f"Имя каталога skill {source.name!r} должно совпадать с ID {skill.identifier!r}")
+    return source, skill
+
+
 def _git(directory: Path, *args: str) -> str:
     if any(name in _GIT_STATE_ENVIRONMENT or name.startswith("GIT_CONFIG_") for name in os.environ):
         raise AgentKitError("Небезопасное окружение Git: очистите repository-local переменные")
@@ -135,27 +143,40 @@ def _normalized_origin(url: str, relative_to: Path) -> str:
     return str((relative_to / url).resolve())
 
 
-def _check_destination(checkout: Path, project: LogicalProject | None) -> None:
-    if checkout.is_relative_to(resolve_paths().data):
+def _inside_directory(path: Path, root: Path) -> bool:
+    if path.is_relative_to(root):
+        return True
+    try:
+        root_info = root.stat()
+    except FileNotFoundError:
+        return False
+    for candidate in (path, *path.parents):
+        try:
+            if os.path.samestat(candidate.stat(), root_info):
+                return True
+        except FileNotFoundError:
+            continue
+    return False
+
+
+def _check_destination(checkout: Path, project: LogicalProject) -> None:
+    if _inside_directory(checkout, resolve_paths().data):
         raise AgentKitError(f"Authoring checkout находится в managed-хранилище: {checkout}")
-    if project is None:
-        return
     for repository in project.manifest.get("repositories", []):
         root = (project.root / repository["path"]).resolve()
         git_root = next((path for path in (root, *root.parents) if os.path.lexists(path / ".git")), root)
-        if checkout.is_relative_to(git_root):
+        if _inside_directory(checkout, git_root):
             raise AgentKitError(f"Authoring checkout находится внутри product repository: {checkout}")
 
 
-def _authoring_checkout(checkout: Path, project: LogicalProject | None) -> Path:
+def _authoring_checkout(checkout: Path, project: LogicalProject) -> Path:
     checkout = _directory_path(checkout)
     _check_destination(checkout, project)
-    source = _project_source(project) if project is not None else None
+    url, _ = _project_source(project)
     _normal_checkout(checkout)
-    if source is not None:
-        origin = _git(checkout, "remote", "get-url", "origin")
-        if _normalized_origin(origin, checkout) != _normalized_origin(source[0], project.root):
-            raise AgentKitError("Git origin checkout должен совпадать с skills.repository.url")
+    origin = _git(checkout, "remote", "get-url", "origin")
+    if _normalized_origin(origin, checkout) != _normalized_origin(url, project.root):
+        raise AgentKitError("Git origin checkout должен совпадать с skills.repository.url")
     return checkout
 
 
@@ -181,6 +202,10 @@ def _check_replacement(checkout: Path, target: Path, replace: bool) -> bool:
     tracked = _git(checkout, "ls-files", "--", f"{relative}/SKILL.md")
     if not tracked:
         raise AgentKitError(f"Замена требует tracked SKILL.md: {target}")
+    # ls-files -v uses a lowercase tag for assume-unchanged and S for skip-worktree.
+    entries = _git(checkout, "ls-files", "-v", "-z", "--", relative).split("\0")
+    if any(entry and (entry[0].islower() or entry[0] == "S") for entry in entries):
+        raise AgentKitError(f"Замена требует снять флаги assume-unchanged и skip-worktree: {target}")
     dirty = _git(checkout, "status", "--porcelain", "--untracked-files=all")
     ignored_at_target = _git(checkout, "ls-files", "--others", "--ignored", "--exclude-standard", "--", relative)
     if dirty or ignored_at_target:
@@ -222,15 +247,15 @@ def _copy_skill(
         raise
     finally:
         if not preserve_backup:
-            shutil.rmtree(temporary)
+            with suppress(OSError):
+                shutil.rmtree(temporary)
 
 
 def add_bundled_skill(
     repository: Path, source: Path, *, identifier: str | None = None, replace: bool = False,
 ) -> Path:
     repository = _directory_path(repository)
-    source = _directory_path(source)
-    skill = _validated_skill(repository, source, identifier)
+    source, skill = _validated_source(repository, source, identifier)
     target = _directory_path(repository / "skills" / "first-party" / skill.identifier, optional=True)
     exists = _check_replacement(repository, target, replace)
     try:
@@ -295,8 +320,7 @@ def add_project_skill(
     replace: bool = False,
 ) -> Path:
     checkout = _authoring_checkout(checkout, project)
-    source = _directory_path(source)
-    skill = _validated_skill(repository, source, identifier)
+    source, skill = _validated_source(repository, source, identifier)
     with _project_authoring_lock(checkout):
         index = _index_target(checkout)
         target = index.parent / skill.identifier
@@ -308,7 +332,7 @@ def add_project_skill(
 
 
 def write_project_skill_index(
-    repository: Path, checkout: Path, *, project: LogicalProject | None = None,
+    repository: Path, checkout: Path, *, project: LogicalProject,
 ) -> Path:
     checkout = _authoring_checkout(checkout, project)
     with _project_authoring_lock(checkout):
