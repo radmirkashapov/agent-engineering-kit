@@ -7,6 +7,7 @@ import json
 import os
 import re
 from dataclasses import dataclass
+from ipaddress import IPv6Address
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -112,13 +113,24 @@ def _safe_remote(value: str) -> str | None:
     return candidate
 
 
-def _validate_skills_repository_url(value: str) -> str:
+def _local_skills_repository_path(url: str, root: Path) -> Path | None:
+    path = Path(url)
+    if path.is_absolute() or url.startswith(("./", "../")):
+        return (root / path).resolve()
+    return None
+
+
+def _validate_skills_repository_url(value: str, root: Path) -> str:
     error = "Некорректный skills.repository.url: укажите Git URL или явный локальный путь"
     url = _safe_remote(value)
     if url is None or not url.isprintable():
         raise AgentKitError(error)
-    if Path(url).is_absolute() or url.startswith(("./", "../")):
-        return url
+    local_path = _local_skills_repository_path(url, root)
+    if local_path is not None:
+        resolved = str(local_path)
+        if _safe_remote(resolved) != resolved or not resolved.isprintable():
+            raise AgentKitError(error)
+        return resolved
     if any(character.isspace() for character in url):
         raise AgentKitError(error)
     if "://" in url:
@@ -136,8 +148,16 @@ def _validate_skills_repository_url(value: str) -> str:
                 return url
         except ValueError:
             raise AgentKitError(error) from None
-    elif re.fullmatch(r"(?:[\w.-]+@)?(?:[\w.-]+|\[[0-9A-Fa-f:]+\]):[^:][^\s]*", url):
-        return url
+    else:
+        scp = re.fullmatch(r"(?:[\w.-]+@)?(?P<host>[\w.-]+|\[[^\[\]]+\]):[^:][^\s]*", url)
+        if scp:
+            host = scp["host"]
+            if host.startswith("["):
+                try:
+                    IPv6Address(host[1:-1])
+                except ValueError:
+                    raise AgentKitError(error) from None
+            return url
     raise AgentKitError(error)
 
 
@@ -329,10 +349,11 @@ def init_project(
     skills_repository_url: str | None = None,
     skills_default_branch: str | None = None,
 ) -> LogicalProject:
+    root = root.expanduser().resolve()
     if skills_repository_url is None and skills_default_branch is not None:
         raise AgentKitError("skills_default_branch требует skills_repository_url")
     if skills_repository_url is not None:
-        skills_repository_url = _validate_skills_repository_url(skills_repository_url)
+        skills_repository_url = _validate_skills_repository_url(skills_repository_url, root)
     if skills_default_branch is not None:
         branch_error = "Некорректное имя ветки skills.repository.default_branch"
         if re.search(r"[\s\x00]", skills_default_branch):
@@ -341,17 +362,17 @@ def init_project(
         if not checked.ok or checked.stdout.strip() != skills_default_branch:
             raise AgentKitError(branch_error)
 
-    root = root.expanduser().resolve()
     manifest_path = root / ".ai-team" / "project.yaml"
     if manifest_path.exists():
         project = LogicalProject(root, manifest_path, load_yaml(manifest_path))
         if skills_repository_url is not None:
             existing = project.skills_repository or {}
-            existing_url = existing.get("url")
-            url_matches = (
-                isinstance(existing_url, str)
-                and existing_url.strip().rstrip("/") == skills_repository_url.rstrip("/")
-            )
+            previous = existing.get("url")
+            existing_url = previous.strip() if isinstance(previous, str) else ""
+            existing_path = _local_skills_repository_path(existing_url, root)
+            if existing_path is not None:
+                existing_url = str(existing_path)
+            url_matches = bool(existing_url) and existing_url.rstrip("/") == skills_repository_url.rstrip("/")
             branch_matches = skills_default_branch is None or existing.get("default_branch") == skills_default_branch
             if not (url_matches and branch_matches):
                 raise AgentKitError(

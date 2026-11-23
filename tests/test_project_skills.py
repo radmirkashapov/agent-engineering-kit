@@ -15,7 +15,7 @@ import pytest
 from agent_engineering_kit.errors import AgentKitError
 from agent_engineering_kit.paths import KitPaths
 from agent_engineering_kit.process import CommandResult, run_command
-from agent_engineering_kit.projects import LogicalProject
+from agent_engineering_kit.projects import LogicalProject, find_project, init_project
 from agent_engineering_kit.project_skills import ProjectSkillRepositoryManager, redact_url
 from agent_engineering_kit.clients import (
     effective_skill_inventory,
@@ -499,6 +499,32 @@ def test_fetch_candidate_resolves_remote_commit_without_touching_product_tree(fi
     assert git(candidate, "rev-parse", "HEAD") == revision
     assert subprocess.run(["git", "-C", str(candidate), "symbolic-ref", "-q", "HEAD"], capture_output=True).returncode == 1
     assert fixture.product_state() == before
+
+
+def test_project_init_relative_skills_repository_can_be_fetched_from_another_directory(
+    fixture: RepositoryFixture, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    paths = replace(fixture.paths, repository=repository)
+    cwd = tmp_path / "unrelated" / "cwd"
+    cwd.mkdir(parents=True)
+    monkeypatch.chdir(cwd)
+
+    init_project(
+        fixture.project.root, repository, paths,
+        skills_repository_url="../upstream.git",
+    )
+    project = find_project(fixture.project.root)
+    assert project is not None
+    manager = ProjectSkillRepositoryManager(repository, paths, project)
+
+    candidate, revision = manager.fetch_candidate()
+
+    assert revision == fixture.remote_revision("main")
+    assert (candidate / "skills/example/SKILL.md").is_file()
+    assert project.skills_repository == {
+        "url": str(fixture.upstream.resolve()), "default_branch": "main",
+    }
 
 
 def test_fetch_candidate_uses_override_but_ci_uses_default(fixture):

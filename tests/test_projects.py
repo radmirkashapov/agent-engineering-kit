@@ -88,6 +88,7 @@ def test_project_init_indexes_full_after_recording_skills_repository(
         ("   ", "main", "skills.repository.url"),
         ("https:///team/demo-skills.git", "main", "skills.repository.url"),
         ("not a URL", "main", "skills.repository.url"),
+        ("git@[:::]:skills.git", "main", "skills.repository.url"),
         ("git@gitlab.example:team/demo-skills.git", "bad branch", "skills.repository.default_branch"),
         ("git@gitlab.example:team/demo-skills.git", "release\u00a0candidate", "skills.repository.default_branch"),
         ("git@gitlab.example:team/demo-skills.git", "release.lock", "skills.repository.default_branch"),
@@ -122,6 +123,33 @@ def test_project_init_rejects_custom_branch_without_skills_repository(
         )
 
     assert not root.exists()
+
+
+def test_project_reinit_matches_relative_and_absolute_skills_repository_paths(
+    tmp_path: Path, kit_repository: Path,
+) -> None:
+    root = tmp_path / "demo"
+    skills = tmp_path / "skills.git"
+    kit_paths = paths(tmp_path, kit_repository)
+    project = init_project(root, kit_repository, kit_paths, skills_repository_url=str(skills))
+    before = project.manifest_path.read_bytes()
+
+    reinitialized = init_project(root, kit_repository, kit_paths, skills_repository_url="../skills.git")
+
+    assert reinitialized.skills_repository == {"url": str(skills.resolve()), "default_branch": "main"}
+    assert project.manifest_path.read_bytes() == before
+
+
+def test_project_init_preserves_skills_repository_with_valid_ipv6_scp_host(
+    tmp_path: Path, kit_repository: Path,
+) -> None:
+    url = "git@[2001:db8::1]:team/skills.git"
+
+    project = init_project(
+        tmp_path / "demo", kit_repository, paths(tmp_path, kit_repository), skills_repository_url=url,
+    )
+
+    assert project.skills_repository == {"url": url, "default_branch": "main"}
 
 
 def test_monorepo_detects_nested_components(tmp_path: Path, kit_repository: Path) -> None:
