@@ -527,6 +527,33 @@ def test_project_init_relative_skills_repository_can_be_fetched_from_another_dir
     }
 
 
+def test_fetch_candidate_resolves_legacy_relative_skills_repository_from_project_root(
+    fixture: RepositoryFixture, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    paths = replace(fixture.paths, repository=repository)
+    fixture.project.manifest["skills"]["repository"]["url"] = "../upstream.git"
+    manifest_path = fixture.project.manifest_path
+    write_yaml(manifest_path, fixture.project.manifest)
+    original_manifest = manifest_path.read_bytes()
+    cwd = tmp_path / "unrelated" / "cwd"
+    cwd.mkdir(parents=True)
+    monkeypatch.chdir(cwd)
+
+    project = init_project(
+        fixture.project.root, repository, paths,
+        skills_repository_url=str(fixture.upstream.resolve()),
+    )
+    manager = ProjectSkillRepositoryManager(repository, paths, project)
+
+    candidate, revision = manager.fetch_candidate()
+
+    assert revision == fixture.remote_revision("main")
+    assert (candidate / "skills/example/SKILL.md").is_file()
+    assert git(manager.checkout, "remote", "get-url", "origin") == str(fixture.upstream.resolve())
+    assert manifest_path.read_bytes() == original_manifest
+
+
 def test_fetch_candidate_uses_override_but_ci_uses_default(fixture):
     manager = fixture.manager()
     manager.set_branch("feat/new-check")
