@@ -114,6 +114,12 @@ def test_project_init_parses_skills_repository_arguments():
 def test_interactive_project_init_prompts_for_skills_repository(monkeypatch):
     monkeypatch.setattr("builtins.input", lambda _: "git@gitlab.example:team/demo-skills.git")
     assert _interactive_project_setup(REPOSITORY)["skills_repository_url"].endswith("demo-skills.git")
+
+def test_project_init_keeps_full_codebase_memory_and_serena_indexing(tmp_path, kit_repository, monkeypatch):
+    calls = []
+    monkeypatch.setattr(projects_module.ProjectMemoryManager, "index", lambda _self, _project, *, mode: calls.append(mode) or {"status": "PASS"})
+    init_project(tmp_path / "demo", kit_repository, paths(tmp_path, kit_repository))
+    assert calls == ["full"]
 ```
 
 - [ ] **Step 2: Verify RED**
@@ -125,6 +131,8 @@ Expected: failures from unknown `init_project` keyword and absent parser fields.
 - [ ] **Step 3: Implement manifest and TTY handling**
 
 Add `--skills-repository-url` and `--skills-default-branch` to `project init`; reject a branch without URL. Extend `_interactive_project_setup()` with one optional URL prompt after Git selection and use the default `main` branch when a URL is entered. Pass the values to `init_project()`, which inserts `skills.repository` before schema validation. Preserve idempotent init behavior and never prompt in non-TTY mode.
+
+Keep the existing `ProjectMemoryManager.index(project, mode="full")` call after manifest creation; do not add a second scan. The focused test must prove the full mode remains requested.
 
 - [ ] **Step 4: Verify GREEN**
 

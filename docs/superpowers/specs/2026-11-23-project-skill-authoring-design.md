@@ -58,6 +58,8 @@ agent-kit project skills index --checkout <directory>
 
 В интерактивном TTY, когда URL не передан, `project init` спрашивает один раз: пропустить настройку или ввести URL project-skills. Никакого prompt нет при перенаправленном stdin, при переданном URL или когда manifest уже существует. Init только записывает manifest; sibling checkout создаётся отдельной явной командой `project skills checkout`.
 
+После создания manifest `project init` сохраняет существующую полную индексацию каждого product repository: `ProjectMemoryManager.index(..., mode="full")` запускает доступные Codebase Memory MCP и Serena. Доступный, но завершившийся ошибкой индекс отменяет init; отсутствующий или отключённый MCP фиксируется как `SKIPPED`. Вторая отдельная индексация не выполняется.
+
 ### Индексы для агентов
 
 Используются два разных каталога, чтобы не смешивать авторский набор и effective runtime:
@@ -85,6 +87,7 @@ Client adapters получают generated index вместе с skills и мо�
 | Валидный project skill | `project skills add` | Skill и детерминированный `skills/INDEX.md` обновлены вместе |
 | Интерактивный stdin без URL | `project init` | Предлагает URL или skip и сохраняет ответ в manifest |
 | Не-TTY или явный URL | `project init` | Не читает stdin; manifest соответствует аргументам |
+| Новый project manifest | `project init` | Для каждого repository запускаются доступные Codebase Memory и Serena в полном режиме; их отчёт сохранён в local state |
 | Любой успешный `resync` | client sync | Публикует effective skills index с provenance |
 
 ## Вне области
