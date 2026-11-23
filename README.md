@@ -639,19 +639,19 @@ Kit не ограничивается ссылкой на `AI.md`: при `resyn
 
 ## Credentials и OAuth для MCP
 
-Для stdio MCP скопируйте шаблон и заполните только те значения, которые нужны включённым интеграциям. Импорт сохраняет значения в machine-local хранилище; исходный файл остаётся у вас.
+При первой настройке stdio MCP скопируйте шаблон и заполните значения для включённых интеграций. В примере используется встроенный Context7 с необязательным API-ключом.
 
 ```bash
 cp mcp-creds.example.env mcp-creds.env
-# Заполнить только нужные значения.
+# При наличии ключа заполнить CONTEXT7_API_KEY в mcp-creds.env.
 agent-kit mcp creds import --from ./mcp-creds.env
 agent-kit mcp creds status
-agent-kit mcp enable github --scope global --resync
+agent-kit resync --no-update
 agent-kit doctor
 agent-kit security scan
 ```
 
-Не вставляйте literal credentials в `mcp/registry.yaml`, конфигурации клиентов, команды или Git. В конфигурации указываются только имена переменных окружения; секреты вводятся через файл-шаблон и команду импорта. Локальные `mcp-creds.env` и `mcp-creds.*.env` исключены из Git, а `mcp-creds.example.env` содержит только пустые значения.
+Храните секреты в локальном файле для импорта в защищённое хранилище. В `mcp/registry.yaml` и клиентских настройках используются ссылки на переменные окружения. Локальные `mcp-creds.env` и `mcp-creds.*.env` исключены из Git, а `mcp-creds.example.env` содержит имена переменных и примеры несекретных параметров.
 
 | Клиент | Регистрация MCP | Подключение |
 |---|---|---|
@@ -661,9 +661,9 @@ agent-kit security scan
 | OpenCode | Автоматическая: merge только `mcp.servers.agent-kit-*` в глобальном JSON/JSONC. | `agent-kit mcp enable <id> --scope global --resync` |
 | Cline | Автоматическая: merge только `mcpServers.agent-kit-*` в штатном глобальном JSON. | `agent-kit mcp enable <id> --scope global --resync` |
 
-Если диагностика показывает `AUTH_REQUIRED`, сначала проверьте `agent-kit mcp creds status`. Для stdio MCP импортируйте недостающие credentials и перезапустите соответствующий клиент. Для remote OAuth завершите авторизацию в конкретном клиенте и профиле, затем повторите запрос. GitLab и Context7 хранят OAuth-состояние отдельно в каждом клиенте или профиле; авторизация в одном не переносится в другой. Исключение — выбранная схема, где все клиенты подключены к одному Docker MCP Gateway: в этом случае OAuth-состоянием владеет Docker Desktop.
+Для удалённого MCP с OAuth, например GitLab, при `AUTH_REQUIRED` завершите вход в соответствующем клиенте и профиле. Для stdio MCP проверьте учётные данные через `agent-kit mcp creds status`, обновите файл импорта и перезапустите клиент. Встроенный Context7 запускается через stdio с необязательным `CONTEXT7_API_KEY`, который launcher передаёт дочернему процессу.
 
-После ротации токена повторите `agent-kit mcp creds import --from ./mcp-creds.env`; новое значение применяется при следующем запуске MCP без `resync`. Изменение определения MCP или команды запуска требует `agent-kit mcp enable <id> --scope global --resync`. `agent-kit mcp creds clear --yes` удаляет только machine-local хранилище credentials Kit; он не удаляет OAuth-состояние клиентов или Docker Desktop. После настройки запускайте `agent-kit security scan`.
+После ротации токена повторите `agent-kit mcp creds import --from ./mcp-creds.env` со всеми учётными данными, которые должны остаться в хранилище. Импорт целиком заменяет содержимое хранилища. Новый токен применяется при следующем запуске MCP. После изменения определения или команды запуска уже включённого MCP явно выполните `agent-kit resync --no-update`. Команда `agent-kit mcp creds clear --yes` очищает локальное хранилище учётных данных Kit. Клиенты и Docker Desktop управляют своими OAuth-сессиями отдельно. После настройки запустите `agent-kit security scan`.
 
 Для диагностики и ручных клиентов команда `agent-kit mcp launch-command <id>` печатает JSON с абсолютным `command` и списком `args`: для MCP с credential-переменными создаёт контракт launcher, для остальных возвращает прямую команду. Она работает без установленных Codex и Claude Code; нужны включённый stdio MCP и его установленный executable. Если executable отсутствует, выполните `agent-kit resync --no-update`. Учитывается текущий профиль доступа: сервер, запрещённый профилем, зарегистрировать этой командой нельзя. Для Claude Desktop запись по-прежнему добавляется вручную.
 
