@@ -907,7 +907,7 @@ def test_agent_and_rule_overrides_are_materialized_into_effective_policy(tmp_pat
 
     sync_clients(repository, paths, project_id="demo")
 
-    policy = json.loads((paths.installations / "clients/shared/effective-policy.json").read_text(encoding="utf-8"))
+    policy = json.loads((paths.installations / "clients/projects/demo/effective-policy.json").read_text(encoding="utf-8"))
     assert next(item for item in policy["agents"] if item["id"] == "reviewer")["local_note"] == "strict"
     assert next(item for item in policy["rules"] if item["id"] == "review")["local_note"] == "project"
 

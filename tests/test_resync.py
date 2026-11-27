@@ -270,7 +270,7 @@ def resync_environment(monkeypatch, tmp_path: Path):
     repository = Path(__file__).resolve().parents[1]
     data = tmp_path / "data"
     paths = KitPaths(repository, data, data / "runtime", data / "projects", data / "overrides")
-    project = LogicalProject(tmp_path, tmp_path / ".ai-team/project.yaml", {"id": "demo"})
+    project = LogicalProject(tmp_path, tmp_path / ".ai-team/project.yaml", {"id": "demo", "repositories": []})
     calls: list[str] = []
     published_projects: list[LogicalProject | None] = []
 
@@ -298,7 +298,9 @@ def resync_environment(monkeypatch, tmp_path: Path):
     def sync(_repository, _paths, **kwargs):
         calls.append("clients")
         published_projects.append(kwargs.get("project"))
-        policy = paths.installations / "clients/shared/effective-policy.json"
+        selected = kwargs.get('project')
+        policy = (paths.installations / 'clients/projects' / selected.identifier / 'effective-policy.json'
+                  if selected else paths.installations / "clients/shared/effective-policy.json")
         policy.parent.mkdir(parents=True, exist_ok=True)
         policy.write_text("{}\n", encoding="utf-8")
         return []

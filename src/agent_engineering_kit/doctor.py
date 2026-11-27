@@ -42,6 +42,19 @@ def doctor(repository: Path, paths: KitPaths) -> ValidationResult:
     policy = load_policy(repository, local_path=paths.overrides / "models.yaml")
     result.info("doctor", f"Corporate models: {len(policy.corporate)}; user-local models: {len(policy.local)}")
     project = find_project(Path.cwd())
+    from .local_runtime import model_enforcement
+    result.info('doctor', 'Model enforcement: ' + ('ON' if model_enforcement(paths, project.identifier if project else None) else 'OFF (client-selected model)'))
+    if project:
+        import json
+        for report in sorted((paths.projects / project.identifier / 'state').glob('memory-result-*.json')):
+            try:
+                status = json.loads(report.read_text()).get('status', 'UNKNOWN')
+                if status == 'FAIL':
+                    result.warning('memory', f'Индексация: FAIL; отчёт: {report}')
+                else:
+                    result.info('memory', f'Индексация: {status}; отчёт: {report}')
+            except (OSError, ValueError):
+                result.warning('memory', f'Некорректный отчёт: {report}')
     access_profile = str(effective_policy(repository, paths, project).values["mcp.access_profile"])
     credentials = McpCredentialStore(paths).load()
     result.extend(

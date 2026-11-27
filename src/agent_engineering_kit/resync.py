@@ -7,6 +7,7 @@ import hashlib
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from .conventions import load_conventions
 
 from .clients import (
     effective_skill_sources,
@@ -122,6 +123,7 @@ def resync(
         paths.overrides,
         project.identifier if project else None,
         additional_skill_ids=known_skill_ids,
+        additional_convention_ids={item['id'] for item in load_conventions(repository, project)} if project else None,
     )
     if not override_validation.ok:
         messages = "; ".join(item.message for item in override_validation.diagnostics if item.severity == "ERROR")
@@ -214,7 +216,8 @@ def resync(
             project.manifest if project else None,
             policy_values=capability_resolution.values,
         ),
-        effective_policy=paths.installations / "clients" / "shared" / "effective-policy.json",
+        effective_policy=(paths.installations / "clients" / "projects" / project.identifier / "effective-policy.json"
+                          if project else paths.installations / "clients" / "shared" / "effective-policy.json"),
         recorded_at=datetime.now(timezone.utc).isoformat(),
         project_skills=project_skills,
     )
@@ -235,6 +238,12 @@ def resync(
         paths.state / "session-revision.json",
         json.dumps({"revision": current_revision, "immutable_for_session": True}, ensure_ascii=False, indent=2) + "\n",
     )
+    if project and agent_kit_enabled:
+        from .memory_events import enqueue, install_memory_hooks
+        from .bindings import repository_paths
+        for root in repository_paths(project, paths).values():
+            install_memory_hooks(root)
+        enqueue(project, paths)
     return ResyncReport(
         current_revision, security_state, skill_state, mcp_state,
         [str(path) for path in generated], changed, incomplete, project_skills,

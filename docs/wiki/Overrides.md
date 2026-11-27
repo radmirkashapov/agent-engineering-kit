@@ -32,3 +32,7 @@ agent-kit override reset skills <skill-id> --scope global
 Владелец машины может локально расширить, заменить или отключить элемент, включая пометки `enforced`, `locked` и `required`. Это не переписывает Git и не меняет проверки CI для переносимой основы. Корпоративная политика моделей продолжает ограничивать закоммиченные роли, навыки и описания клиентов.
 
 Для диагностики происхождения используйте `override explain`, `skills explain`, `mcp explain` и `config explain`. Затем проверьте `agent-kit validate overrides`. Значения секретов запрещено помещать в личные переопределения.
+
+## Дополнение: единая локальная настройка
+
+Новые команды выбора agents/rules/conventions, локального model enforcement и разрешения коллизий описаны в [Local-runtime-commands](Local-runtime-commands).

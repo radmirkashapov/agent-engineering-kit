@@ -332,6 +332,8 @@ def _install_project_provenance_hooks(project: LogicalProject) -> None:
         # и не причина ломать project init.
         if path.is_dir():
             install_provenance_hook(path)
+            from .memory_events import install_memory_hooks
+            install_memory_hooks(path)
 
 
 def init_project(

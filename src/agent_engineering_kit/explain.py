@@ -22,7 +22,7 @@ from .sync import revision
 def explain(repository: Path, paths: KitPaths, start: Path, *, output_format: str = "text") -> str:
     policy = load_policy(repository, local_path=paths.overrides / "models.yaml")
     project = find_project(start)
-    conventions = load_conventions(repository, project)
+    conventions = load_conventions(repository, project, paths=paths)
     resolved_policy = effective_policy(repository, paths, project)
     agent_kit_status = read_status(paths)
     if output_format == "json":
@@ -58,6 +58,9 @@ def explain(repository: Path, paths: KitPaths, start: Path, *, output_format: st
     )
     lines.extend(["Models:", f"corporate policy: {'active' if policy.corporate_active else 'empty'}", "effective allowed models:"])
     effective_models = resolved_policy.values.get("models.allowed", sorted(policy.runtime_allowed_ids))
+    if resolved_policy.values.get('models.enforcement') is False:
+        lines.append('Ограничения отключены локально; модель выбирает клиент')
+        effective_models = []
     lines.extend(f"- {item}" for item in sorted(effective_models))
     lines.extend(["", "User-local models:"])
     lines.extend([f"- {item} (local-only)" for item in sorted(policy.local)] or ["- отсутствуют"])

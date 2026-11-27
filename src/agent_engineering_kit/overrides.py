@@ -12,7 +12,7 @@ from .result import ValidationResult
 from .schema import validate_instance
 
 
-KINDS = ("skills", "agents", "mcp", "rules")
+KINDS = ("skills", "agents", "mcp", "rules", "conventions")
 MODES = {"extend", "replace", "disable"}
 PROTECTED_FIELDS: dict[str, frozenset[str]] = {}
 
@@ -71,6 +71,11 @@ def apply_local_overrides(
 
 
 def _core_ids(repository: Path, kind: str) -> dict[str, bool]:
+    if kind == "conventions":
+        if not (repository / 'conventions').is_dir():
+            return {}
+        from .conventions import load_conventions
+        return {item['id']: False for item in load_conventions(repository)}
     if kind == "mcp":
         registry_path = repository / "mcp" / "registry.yaml"
         if not registry_path.is_file():
@@ -111,6 +116,7 @@ def validate_overrides(
     project_id: str | None = None,
     *,
     additional_skill_ids: set[str] | None = None,
+    additional_convention_ids: set[str] | None = None,
 ) -> ValidationResult:
     result = ValidationResult()
     known_skill_ids = additional_skill_ids or set()
@@ -126,6 +132,8 @@ def validate_overrides(
             core = _core_ids(repository, kind)
             if kind == "skills":
                 core.update({identifier: False for identifier in known_skill_ids})
+            if kind == 'conventions':
+                core.update({identifier: False for identifier in additional_convention_ids or set()})
             for path in sorted(directory.glob("*.yaml")):
                 checked += 1
                 document = load_yaml(path)
@@ -169,6 +177,9 @@ def validate_overrides(
             {
                 "mcp": set(_core_ids(repository, "mcp")),
                 "skills": set(_core_ids(repository, "skills")) | known_skill_ids,
+                "agents": set(_core_ids(repository, "agents")),
+                "rules": set(_core_ids(repository, "rules")),
+                "conventions": set(_core_ids(repository, "conventions")) | (additional_convention_ids or set()),
             },
             override_root,
             project_id,

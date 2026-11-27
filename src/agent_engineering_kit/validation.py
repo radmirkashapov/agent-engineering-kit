@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .clients import effective_skill_sources, validate_clients
-from .conventions import validate_conventions
+from .conventions import validate_conventions, load_conventions
 from .definitions import validate_agents, validate_locks, validate_mcp, validate_skills
 from .git_hygiene import validate_git_hygiene
 from .models import validate_models
@@ -63,6 +63,7 @@ def validate_effective_overrides(repository: Path, paths: KitPaths, *, include_l
         paths.overrides,
         project.identifier if project else None,
         additional_skill_ids=identifiers,
+        additional_convention_ids={item['id'] for item in load_conventions(repository, project)} if project and (repository / 'conventions').is_dir() else None,
     )
 
 

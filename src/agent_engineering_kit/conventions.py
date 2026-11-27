@@ -84,9 +84,20 @@ def validate_conventions(repository: Path, project: LogicalProject | None = None
     return result
 
 
-def load_conventions(repository: Path, project: LogicalProject | None = None) -> list[dict[str, Any]]:
+def load_conventions(repository: Path, project: LogicalProject | None = None, *, paths=None) -> list[dict[str, Any]]:
     items, result = _collect(repository, project)
     if not result.ok:
         failures = "; ".join(item.message for item in result.diagnostics if item.severity == "ERROR")
         raise AgentKitError(f"Невозможно активировать conventions: {failures}")
+    if paths is not None:
+        from .overrides import apply_local_overrides
+        from .access import resolve_access
+        project_id = project.identifier if project else None
+        items = apply_local_overrides(items, paths.overrides, 'conventions', project_id)
+        decisions = resolve_access({item['id'] for item in items}, paths.overrides, 'conventions', project_id)
+        items = [item for item in items if decisions[item['id']].enabled]
+        for item in items:
+            result = validate_instance({'version': 1, 'conventions': [{k: v for k, v in item.items() if k != 'source'}]}, repository / 'schemas/conventions.schema.json', 'effective conventions')
+            if not result.ok:
+                raise AgentKitError('Некорректное локальное соглашение')
     return items

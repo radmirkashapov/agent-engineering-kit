@@ -23,9 +23,9 @@ from .schema import repository_schema_path, validate_instance
 
 _IDENTIFIER_PATTERN = re.compile(r"^[a-z][a-z0-9-]*$")
 GENERIC_OVERRIDE_KINDS = frozenset({
-    "agents", "rules", "models", "skills", "mcp", "approvals", "sandbox", "network", "tools", "harness"
+    "agents", "rules", "conventions", "models", "skills", "mcp", "approvals", "sandbox", "network", "tools", "harness"
 })
-_COMPONENT_KINDS = frozenset({"agents", "rules", "skills", "mcp"})
+_COMPONENT_KINDS = frozenset({"agents", "rules", "skills", "mcp", "conventions"})
 _POLICY_KEY_ALIASES = {
     "harness.client": "client.preferred",
     "mcp.access-profile": "mcp.access_profile",
@@ -376,6 +376,7 @@ def reset_component_override(
     candidates = [_scope_path(scope, kind, f"{identifier}.yaml")]
     if kind == "skills":
         candidates.append(_scope_path(scope, "sources", "skills", identifier))
+        candidates.append(_scope_path(scope, 'skill-sources', f'{identifier}.yaml'))
     existing = [candidate for candidate in candidates if candidate.exists()]
     if not existing and not access_changed:
         return []

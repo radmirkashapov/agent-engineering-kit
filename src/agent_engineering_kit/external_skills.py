@@ -164,6 +164,9 @@ class ExternalSkillManager:
         return root / f"{identifier}-{uuid.uuid4().hex}"
 
     def _validate_model_policy(self, candidate: Path, item: dict[str, Any]) -> list[str]:
+        from .local_runtime import model_enforcement
+        if not model_enforcement(self.paths, self.project_id):
+            return []
         policy = load_policy(self.repository, local_path=self.paths.overrides / "models.yaml")
         allowed = allowed_model_references(policy)
         errors: list[str] = []

@@ -7,7 +7,10 @@
   "properties": {
     "version": {"const": 1},
     "mcp": {"$ref": "#/$defs/access-list"},
-    "skills": {"$ref": "#/$defs/access-list"}
+    "skills": {"$ref": "#/$defs/access-list"},
+    "agents": {"$ref": "#/$defs/access-list"},
+    "rules": {"$ref": "#/$defs/access-list"},
+    "conventions": {"$ref": "#/$defs/access-list"}
   },
   "$defs": {
     "access-list": {

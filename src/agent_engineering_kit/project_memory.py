@@ -65,6 +65,9 @@ class ProjectMemoryManager:
         repositories = self._repositories(project)
         for repository_id, root in sorted(repositories.items()):
             name = f"{project.identifier}--{repository_id}"
+            if (root / '.git').is_file():
+                import hashlib
+                name += '--' + hashlib.sha256(str(root.resolve()).encode()).hexdigest()[:12]
             commands: list[tuple[str, list[str]]] = []
             if executable := executables.get("codebase-memory"):
                 commands.append((

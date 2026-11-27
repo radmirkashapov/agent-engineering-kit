@@ -128,6 +128,10 @@ def _parser() -> argparse.ArgumentParser:
         dest="models_command", required=True,
     )
     models.add_parser("list", help="Показать effective каталог provider и моделей")
+    enforcement = models.add_parser("enforcement", help="Локально включить или отключить ограничения моделей")
+    enforcement.add_argument("mode", choices=["on", "off", "status"])
+    enforcement.add_argument("--scope", choices=["global", "project"], default="global")
+    enforcement.add_argument("--resync", action="store_true")
     models.add_parser("status", help="Показать режимы и состояние client model adapters")
     model_creds = models.add_parser("creds", help="Управлять локальными credentials provider моделей").add_subparsers(dest="model_creds_command", required=True)
     model_creds_import = model_creds.add_parser("import", help="Импортировать model credentials из env-файла")
@@ -149,6 +153,14 @@ def _parser() -> argparse.ArgumentParser:
     skills.add_parser("list", help="Показать состояние skills")
     skills.add_parser("status", help="Показать состояние skills")
     skills.add_parser("available", help="Показать полный доступный каталог skills")
+    read_skill = skills.add_parser('read', help='Прочитать skill только в текущем logical project')
+    read_skill.add_argument('id')
+    read_skill.add_argument('--project-id', required=True)
+    prefer = skills.add_parser('prefer', help='Явно выбрать источник при коллизии skill ID')
+    prefer.add_argument('id')
+    prefer.add_argument('--source', choices=['built-in', 'external-catalog', 'project-skills', 'local-override'], required=True)
+    prefer.add_argument('--scope', choices=['global', 'project'], required=True)
+    prefer.add_argument('--catalog-id', help='ID внешнего пакета при совпадении skill names внутри нескольких пакетов')
     _add_skill_source_arguments(skills.add_parser("add", help="Добавить bundled skill в текущий Kit"))
     for name, help_text in (
         ("enable", "Разрешить skill"),
@@ -221,6 +233,11 @@ def _parser() -> argparse.ArgumentParser:
     overrides = subs.add_parser("override", help="Управлять всеми локальными переопределениями").add_subparsers(dest="override_command", required=True)
     override_list = overrides.add_parser("list", help="Показать определения выбранного локального слоя")
     override_list.add_argument("--scope", choices=["global", "project"], required=True)
+    selection = overrides.add_parser("select", help="Выбрать локальное подмножество компонентов")
+    selection.add_argument("kind", choices=["skills", "mcp", "rules", "agents", "conventions"])
+    selection.add_argument("--allow", nargs="*", default=[])
+    selection.add_argument("--block", nargs="*", default=[])
+    selection.add_argument("--scope", choices=["global", "project"], required=True)
     override_explain = overrides.add_parser("explain", help="Объяснить локальное переопределение")
     override_explain.add_argument("kind", choices=sorted(GENERIC_OVERRIDE_KINDS))
     override_explain.add_argument("id")
@@ -275,6 +292,7 @@ def _parser() -> argparse.ArgumentParser:
     project_skill_add.add_argument("--checkout", type=Path, required=True, help="Каталог checkout project-skills")
     project_skill_index = project_skills.add_parser("index", help="Обновить skills/INDEX.md")
     project_skill_index.add_argument("--checkout", type=Path, required=True, help="Каталог checkout project-skills")
+    project.add_parser('memory-event', help=argparse.SUPPRESS)
     project_init = project.add_parser("init", help="Инициализировать проект по выбранному шаблону")
     project_init.add_argument("path", nargs="?", default=".")
     project_init.add_argument("--id", dest="identifier")
@@ -626,6 +644,17 @@ def _handle_generic_override(
 ) -> int:
     """Выполнить generic override без скрытого выбора области."""
     scope = resolve_scope(paths, args.scope, Path.cwd())
+    if args.override_command == "select":
+        from .io import load_yaml, atomic_write
+        import yaml
+        target = scope.root / 'access.yaml'
+        document = load_yaml(target) if target.is_file() else {'version': 1}
+        if set(args.allow) & set(args.block):
+            raise AgentKitError('ID одновременно в allow и block')
+        document[args.kind] = {'allow': args.allow, 'block': args.block}
+        atomic_write(target, yaml.safe_dump(document, sort_keys=False))
+        print(target)
+        return 0
     if args.override_command == "list":
         print(json.dumps(list_overrides(scope), ensure_ascii=False, indent=2))
         return 0
@@ -685,6 +714,51 @@ def run(argv: list[str] | None = None) -> int:
     paths = resolve_paths()
     repository = paths.repository
     try:
+        if args.command == 'project' and args.project_command == 'memory-event':
+            from .memory_events import enqueue
+            project = find_project(Path.cwd())
+            if project and read_status(paths).enabled:
+                enqueue(project, paths)
+            return 0
+        if args.command == 'skills' and args.skills_command == 'read':
+            from .clients import effective_skill_sources
+            from .local_runtime import model_enforcement, portable_content
+            project = find_project(Path.cwd())
+            if project is None or project.identifier != args.project_id:
+                raise AgentKitError('Skill не относится к текущему logical project')
+            sources = effective_skill_sources(repository, paths, project)
+            if args.id not in sources:
+                raise AgentKitError('Skill отключён или отсутствует')
+            content = (sources[args.id].path / 'SKILL.md').read_text(encoding='utf-8')
+            print(f'Resolve relative skill resources from: {sources[args.id].path}\n')
+            print(content if model_enforcement(paths, project.identifier) else portable_content(content))
+            return 0
+        if args.command == 'skills' and args.skills_command == 'prefer':
+            from .io import atomic_write
+            import yaml
+            import re
+            if not re.fullmatch(r'[a-z][a-z0-9-]*', args.id):
+                raise AgentKitError('Некорректный skill ID')
+            scope = resolve_scope(paths, args.scope, Path.cwd())
+            from .clients import effective_skill_sources
+            project = find_project(Path.cwd())
+            sources = effective_skill_sources(repository, paths, project, include_disabled=True)
+            candidates = [sources[args.id], *sources[args.id].shadowed] if args.id in sources else []
+            if not any(item.source == args.source and (not args.catalog_id or item.catalog_id == args.catalog_id) for item in candidates):
+                raise AgentKitError('Выбранный источник skill недоступен')
+            atomic_write(scope.root / 'skill-sources' / f'{args.id}.yaml', '# Явный выбор источника skill при совпадении ID.\n' + yaml.safe_dump({'source': args.source, 'catalog_id': args.catalog_id}))
+            print('Источник выбран; выполните resync')
+            return 0
+        if args.command == "models" and args.models_command == "enforcement":
+            from .local_runtime import model_enforcement, set_model_enforcement
+            scope = resolve_scope(paths, args.scope, Path.cwd())
+            project = find_project(Path.cwd())
+            if args.mode != "status":
+                set_model_enforcement(scope.root, args.mode == "on")
+            print(json.dumps({"enabled": model_enforcement(paths, project.identifier if project else None)}))
+            if args.resync:
+                _print_resync_report(resync(repository, paths, project=project, update_kit=False, force=False))
+            return 0
         if args.command in {"disable", "enable", "status"}:
             if args.command == "status":
                 state = read_status(paths)
@@ -990,7 +1064,7 @@ def run(argv: list[str] | None = None) -> int:
             if project is not None:
                 _refresh_project_memory(repository, paths, project)
             policy = effective_policy(repository, paths, project)
-            conventions = {"items": load_conventions(repository, project)}
+            conventions = {"items": load_conventions(repository, project, paths=paths)}
             harness = resolve_harness(
                 repository,
                 project.manifest if project else None,
@@ -1081,7 +1155,7 @@ def run(argv: list[str] | None = None) -> int:
                 task_id = args.reference
             _refresh_project_memory(repository, paths, project)
             policy = effective_policy(repository, paths, project)
-            conventions = {"items": load_conventions(repository, project)}
+            conventions = {"items": load_conventions(repository, project, paths=paths)}
             snapshots = _repository_snapshots(project, paths, require_git=True)
             if args.legacy_task_id is not None:
                 target = create_task_workspace(
