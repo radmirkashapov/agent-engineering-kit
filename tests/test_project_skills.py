@@ -137,7 +137,7 @@ def test_effective_skill_index_lists_project_winner_and_shadowed_sources(publica
 
     sync_clients(repository, paths, project=fixture.project)
 
-    index = paths.installations / "clients/shared/effective-skills.md"
+    index = paths.installations / "clients/projects/shared/effective-skills.md"
     content = index.read_text(encoding="utf-8")
     assert [line for line in content.splitlines() if "| `example` |" in line] == [
         f"| `example` | fixture | project-skills | ACTIVE | {status.active_revision} | built-in "
@@ -146,7 +146,7 @@ def test_effective_skill_index_lists_project_winner_and_shadowed_sources(publica
     assert (index.parent / "skills/example/SKILL.md").is_file()
     for client in ("codex", "claude-code", "claude-desktop", "opencode", "cline"):
         for root in (paths.installations, paths.runtime):
-            adapter = load_yaml(root / "clients" / client / "adapter.yaml")
+            adapter = load_yaml(root / "clients/projects/shared" / client / "adapter.yaml")
             assert adapter["effective_skills"] == str(index)
     sync_clients(repository, paths, project=fixture.project)
     assert index.read_text(encoding="utf-8") == content
@@ -185,7 +185,7 @@ def test_project_skills_are_published_with_provenance(publication_fixture, monke
     fixture.disable_remote()
     sync_clients(repository, paths, project=fixture.project)
 
-    shared = paths.installations / "clients/shared"
+    shared = paths.installations / "clients/projects/shared"
     assert (shared / "skills/example").resolve() == (local if local_override else manager.active_skills()["example"].resolve())
     assert not (shared / "skills/example/builtin-only.txt").exists()
     row = json.loads((shared / "skills-provenance.json").read_text())["skills"]["example"]
@@ -224,7 +224,7 @@ def test_project_skills_obey_explicit_local_overrides(publication_fixture, mode)
 
     sync_clients(paths.repository, paths, project=fixture.project)
 
-    shared = paths.installations / "clients/shared"
+    shared = paths.installations / "clients/projects/shared"
     rows = json.loads((shared / "skills-provenance.json").read_text())["skills"]
     if mode in {"disable", "block"}:
         assert not (shared / "skills/example").exists()
@@ -369,7 +369,7 @@ def test_client_sync_publishes_no_project_skills_without_active_pointer(publicat
 
     sync_clients(fixture.paths.repository, fixture.paths, project=fixture.project)
 
-    assert not (fixture.paths.installations / "clients/shared/skills/example").exists()
+    assert not (fixture.paths.installations / "clients/projects/shared/skills/example").exists()
 
 
 def test_native_project_skills_follow_new_active_revision_and_preserve_user_paths(publication_fixture):
@@ -383,15 +383,19 @@ def test_native_project_skills_follow_new_active_revision_and_preserve_user_path
 
     expose_native_skills(fixture.paths.repository, fixture.paths, project=fixture.project, roots=(native,))
 
-    assert revision in str((native / "example").resolve())
-    assert "Updated" in (native / "example/SKILL.md").read_text()
-    (native / "example").unlink()
+    assert not (native / 'example').exists()
+    scoped = fixture.paths.installations / 'clients/projects/shared/skills/example'
+    assert revision in str(scoped.resolve())
+    assert 'Updated' in (scoped / 'SKILL.md').read_text()
+    proxy = fixture.project.root / '.agents/skills/shared-example'
+    assert 'agent-kit skills read example --project-id shared' in (proxy / 'SKILL.md').read_text()
+    proxy.unlink()
     user = native.parent / "user-skill"
     user.mkdir()
-    (native / "example").symlink_to(user, target_is_directory=True)
+    proxy.symlink_to(user, target_is_directory=True)
     with pytest.raises(AgentKitError, match="пользовательским symlink"):
         expose_native_skills(fixture.paths.repository, fixture.paths, project=fixture.project, roots=(native,))
-    assert (native / "example").resolve() == user
+    assert proxy.resolve() == user
 
 
 def test_client_sync_rejects_project_pointer_changed_during_resolution(publication_fixture, monkeypatch):
@@ -407,7 +411,7 @@ def test_client_sync_rejects_project_pointer_changed_during_resolution(publicati
     with pytest.raises(AgentKitError, match="active pointer.*изменился"):
         sync_clients(fixture.paths.repository, fixture.paths, project=fixture.project)
 
-    assert not (fixture.paths.installations / "clients/shared/skills/example").exists()
+    assert not (fixture.paths.installations / "clients/projects/shared/skills/example").exists()
 
 
 def test_client_provenance_uses_active_source_after_failed_source_change(publication_fixture):
@@ -421,7 +425,7 @@ def test_client_provenance_uses_active_source_after_failed_source_change(publica
 
     sync_clients(fixture.paths.repository, fixture.paths, project=fixture.project)
 
-    provenance = fixture.paths.installations / "clients/shared/skills-provenance.json"
+    provenance = fixture.paths.installations / "clients/projects/shared/skills-provenance.json"
     row = json.loads(provenance.read_text())["skills"]["example"]
     assert row["source_url"] == str(fixture.upstream)
     assert row["revision"] == active.active_revision

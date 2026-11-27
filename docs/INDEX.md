@@ -1,5 +1,12 @@
 # Индекс документации agent-engineering-kit
 
+- [Команды локального runtime: модели, overrides, область skills и Git-события](wiki/Local-runtime-commands.md).
+- [Архитектура локальной политики и проектной публикации](adr/0014-local-runtime-isolation.md).
+
+- [Локальные модели, выбор компонентов и overrides: аудит и проект доработок](wiki/Local-customization.md).
+- [Root/nested project-skills и автоматическая память](wiki/Project-scope-and-memory.md).
+- [Полные примеры project.yaml](wiki/Project-manifest-examples.md).
+
 - [GitHub Wiki](wiki/Home.md) — русскоязычное руководство по установке, настройке и повседневной работе с Kit.
 - [README](../README.md) — назначение, архитектура и полное руководство по эксплуатации.
 - [Быстрый старт](../README.md#быстрый-старт).

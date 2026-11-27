@@ -14,6 +14,7 @@ from typing import Any
 from urllib.parse import quote
 
 from .access import resolve_access
+from .conventions import load_conventions
 from .catalog import resolve_desired
 from .component_state import Lifecycle, read_state
 from .errors import AgentKitError
@@ -334,9 +335,13 @@ _CLINE_RULE_START = "<!-- agent-engineering-kit:start -->"
 _CLINE_RULE_END = "<!-- agent-engineering-kit:end -->"
 
 
-def _mcp_execution_contract(repository: Path) -> str:
+def _mcp_execution_contract(repository: Path, paths: KitPaths | None = None) -> str:
     """Materialize critical tool-routing rules for clients without imports."""
     source = repository / "rules" / "mcp-execution.md"
+    if paths is not None and source.is_file():
+        items = apply_local_overrides([{'id': 'mcp-execution', 'content': source.read_text(encoding='utf-8')}], paths.overrides, 'rules')
+        access = resolve_access({'mcp-execution'}, paths.overrides, 'rules')
+        return items[0]['content'] if items and access['mcp-execution'].enabled else ''
     try:
         content = source.read_text(encoding="utf-8").strip()
     except OSError as error:
@@ -365,14 +370,16 @@ def _sync_cline_rule(
             "# Agent Engineering Kit\n\n"
             f"Используй canonical instructions: {repository / 'AI.md'}\n"
             f"Применяй effective local agents/rules из: {paths.installations / 'clients' / 'shared' / 'effective-policy.json'}\n"
+            "Для logical project используй installations/clients/projects/<project-id>/effective-policy.json. "
+            "Локальный models.enforcement=false отменяет model-привязки исходных описаний Kit; "
+            "применяй только включённые effective-компоненты.\n"
             "До анализа задачи, ответа, tool call или изменения файла обязательно выполни `agent-kit resync` без `--no-update` "
             "и продолжай только после успешного завершения. При ошибке preflight не обходи её и не используй `--no-update`, "
             "если пользователь не попросил этого явно; не копируй global rules в project.\n"
             "Если Cline создаёт commit, выполняй только `agent-kit git commit --client cline -m \"<message>\"`; "
             "не вызывай прямой `git commit`.\n\n"
-            "Ниже приведён обязательный MCP protocol. Это исполняемая инструкция, а не ссылка: "
-            "если запрос относится к доступному MCP, первый содержательный шаг — настоящий tool call, а не текст, код или browser.\n\n"
-            f"{_mcp_execution_contract(repository)}\n"
+            "Ниже приведён активный MCP protocol; локальное отключение правила оставляет этот раздел пустым.\n\n"
+            f"{_mcp_execution_contract(repository, paths)}\n"
             f"{_CLINE_RULE_END}\n"
         )
         atomic_write(target, content)
@@ -497,6 +504,27 @@ def effective_skill_sources(
             identifier, path, "local-override", None, 40, catalog_id=current.catalog_id if current else None,
         ))
     # Capability directories внешнего пакета наследуют доступ к catalog ID.
+    for identifier, current in list(sources.items()):
+        roots = [paths.overrides / 'global']
+        if project_id:
+            roots.append(paths.overrides / 'projects' / project_id)
+        preference = None
+        preferred_catalog = None
+        for root in roots:
+            path = root / 'skill-sources' / f'{identifier}.yaml'
+            if path.is_file():
+                selection = load_yaml(path)
+                preference = selection.get('source')
+                preferred_catalog = selection.get('catalog_id')
+        if preference:
+            candidates = [current, *current.shadowed]
+            matches = [item for item in candidates if item.source == preference and (not preferred_catalog or item.catalog_id == preferred_catalog)]
+            if len(matches) > 1:
+                raise AgentKitError(f'Для skill {identifier} уточните --catalog-id внешнего пакета')
+            chosen = matches[0] if matches else None
+            if chosen is None:
+                raise AgentKitError(f'Источник {preference} недоступен для skill {identifier}')
+            sources[identifier] = replace(chosen, shadowed=tuple(replace(item, shadowed=()) for item in candidates if item is not chosen))
     access = resolve_access({source.catalog_id or identifier for identifier, source in sources.items()},
                             paths.overrides, "skills", project_id)
     resolved: dict[str, EffectiveSkillSource] = {}
@@ -629,7 +657,7 @@ def _render_effective_skill_index(sources: dict[str, EffectiveSkillSource]) -> s
     return "\n".join(rows) + "\n"
 
 
-def sync_clients(
+def _sync_clients(
     repository: Path,
     paths: KitPaths,
     *,
@@ -642,7 +670,10 @@ def sync_clients(
     project_id = project.identifier if project else project_id
     skill_sources = effective_skill_sources(repository, paths, project, project_id)
 
-    shared = paths.installations / "clients" / "shared" / "skills"
+    from .local_runtime import model_enforcement, portable_content
+    enforce_models = model_enforcement(paths, project_id)
+    shared = (paths.installations / "clients" / "projects" / project_id / "skills"
+              if project_id else paths.installations / "clients" / "shared" / "skills")
     shared.mkdir(parents=True, exist_ok=True)
     for stale in sorted(shared.iterdir()):
         if stale.name not in skill_sources:
@@ -652,7 +683,17 @@ def sync_clients(
                 shutil.rmtree(stale)
     for identifier, source in skill_sources.items():
         target = shared / identifier
-        _managed_link(target, source.path, paths)
+        if enforce_models:
+            _managed_link(target, source.path, paths)
+        else:
+            # Копия сохраняет references/scripts; переносимые исходники не меняются.
+            if target.is_symlink():
+                target.unlink()
+            elif target.exists():
+                shutil.rmtree(target)
+            shutil.copytree(source.path, target)
+            document = target / 'SKILL.md'
+            atomic_write(document, portable_content(document.read_text(encoding='utf-8')))
     atomic_write(
         shared.parent / "skills-provenance.json",
         json.dumps({"version": 1, "skills": {identifier: source.as_dict()
@@ -687,15 +728,26 @@ def sync_clients(
         project_id,
         enforced={item["id"] for item in rules if item["policy"] == "enforced"},
     )
-    effective_policy = paths.installations / "clients" / "shared" / "effective-policy.json"
+    def selected(items, kind):
+        access = resolve_access({item['id'] for item in items}, paths.overrides, kind, project_id)
+        return [item for item in items if access[item['id']].enabled]
+    effective_agents = selected(effective_agents, 'agents')
+    effective_rules = selected(effective_rules, 'rules')
+    if not enforce_models:
+        for item in [*effective_agents, *effective_rules]:
+            item.pop('model', None)
+            item['content'] = portable_content(item['content'])
+    effective_policy = shared.parent / "effective-policy.json"
     atomic_write(
         effective_policy,
         json.dumps(
             {
                 "version": 2,
+                "model_enforcement": enforce_models,
                 "agents": effective_agents,
                 "rules": effective_rules,
-                "capability_policy": capability_policy or {"values": {}, "provenance": {}, "warnings": []},
+                "conventions": load_conventions(repository, project, paths=paths) if (repository / 'conventions').is_dir() else [],
+                "capability_policy": capability_policy or {"values": {"models.enforcement": enforce_models}, "provenance": {}, "warnings": []},
             },
             ensure_ascii=False,
             indent=2,
@@ -704,7 +756,8 @@ def sync_clients(
 
     for client in CLIENTS:
         adapter = load_yaml(repository / "clients" / client / "adapter.yaml")
-        target = paths.installations / "clients" / client / "adapter.yaml"
+        target = (shared.parent / client / 'adapter.yaml' if project_id
+                  else paths.installations / "clients" / client / "adapter.yaml")
         content = (
             "# Сгенерировано agent-kit; локальный runtime, не Git.\n"
             f"kit_repository: {repository}\n"
@@ -716,9 +769,19 @@ def sync_clients(
         )
         atomic_write(target, content)
         # Путь совместимости для прежнего `agent-kit sync`; каноническое состояние остаётся в installations/.
-        atomic_write(paths.runtime / "clients" / client / "adapter.yaml", content)
+        compatibility = (paths.runtime / 'clients' / 'projects' / project_id / client / 'adapter.yaml'
+                         if project_id else paths.runtime / "clients" / client / "adapter.yaml")
+        atomic_write(compatibility, content)
         generated.append(target)
     return generated
+
+
+def sync_clients(repository, paths, *, project=None, project_id=None, capability_policy=None):
+    from .project_skills import _repository_lock
+    identifier = project.identifier if project else project_id
+    with _repository_lock(paths.locks / f'client-publication-{identifier or "global"}.lock'):
+        return _sync_clients(repository, paths, project=project, project_id=project_id,
+                             capability_policy=capability_policy)
 
 
 def _managed_link(target: Path, source: Path, paths: KitPaths) -> None:
@@ -757,6 +820,35 @@ def expose_native_skills(
 ) -> list[Path]:
     """Подключить shared skills к официальным user-level discovery paths."""
     sync_clients(repository, paths, project=project, project_id=project_id)
+    if project is not None:
+        # Глобальные discovery paths получают только глобальный набор.
+        sync_clients(repository, paths)
+        scoped = paths.installations / 'clients' / 'projects' / project.identifier / 'skills'
+        from .bindings import repository_paths
+        project_exposures = []
+        for repository_root in repository_paths(project, paths).values():
+            if not repository_root.is_dir():
+                continue
+            for directory in ('.agents', '.claude', '.cline'):
+                for skill in scoped.iterdir():
+                    proxy = scoped.parent / 'proxies' / skill.name
+                    metadata = markdown_frontmatter(skill / 'SKILL.md')
+                    description = json.dumps(f"Only for logical project {project.identifier}. " + metadata.get('description', skill.name), ensure_ascii=False)
+                    atomic_write(proxy / 'SKILL.md',
+                        f'---\nname: {project.identifier}-{skill.name}\ndescription: {description}\n---\n'
+                        f'Load instructions by running `agent-kit skills read {skill.name} --project-id {project.identifier}` '
+                        'from the current working directory. If the command rejects the scope, do not apply this skill. '
+                        'Never load instructions from a parent project or a different working directory.\n')
+                    destination = repository_root / directory / 'skills' / f'{project.identifier}-{skill.name}'
+                    _managed_link(destination, proxy, paths)
+                    project_exposures.append(str(destination))
+        exposure_state = scoped.parent / 'exposures.json'
+        if exposure_state.is_file():
+            for stale in json.loads(exposure_state.read_text()).get('paths', []):
+                target = Path(stale)
+                if stale not in project_exposures and target.is_symlink() and _is_within(target.resolve(), scoped.parent):
+                    target.unlink()
+        atomic_write(exposure_state, json.dumps({'paths': project_exposures}))
     shared = paths.installations / "clients" / "shared" / "skills"
     discovery_roots = roots or (
         Path.home() / ".agents" / "skills",  # Codex и OpenCode читают этот Agent Skills scope.
@@ -814,15 +906,16 @@ def expose_native_instructions(
                 f"{start}\n"
                 f"Используй canonical instructions: {repository / 'AI.md'}\n"
                 f"Применяй effective local agents/rules из: {paths.installations / 'clients' / 'shared' / 'effective-policy.json'}\n"
+                "Если найден logical project, используй его effective-policy.json из installations/clients/projects/<project-id>/; "
+                "локальный models.enforcement=false отменяет привязку к конкретным моделям в описаниях Kit. "
+                "Проектные skills загружай только через `agent-kit skills read <id> --project-id <id>` из текущей папки.\n"
                 "До анализа задачи, ответа, tool call или изменения файла обязательно выполни `agent-kit resync` без `--no-update` "
                 "и продолжай только после успешного завершения. При ошибке preflight не обходи её и не используй `--no-update`, "
                 "если пользователь не попросил этого явно; не копируй global rules в project.\n"
                 f"Если {client} создаёт commit, выполняй только `agent-kit git commit --client {client} -m \"<message>\"`; "
                 "не вызывай прямой `git commit`.\n\n"
-                "Обязательный MCP protocol ниже materialized непосредственно в этой инструкции. "
-                "Если запрос относится к доступному MCP, первым содержательным действием должен быть настоящий tool call; "
-                "не заменяй его текстом, кодом или browser.\n\n"
-                f"{_mcp_execution_contract(repository)}\n"
+                "Ниже приведён активный MCP protocol; локальное отключение правила оставляет этот раздел пустым.\n\n"
+                f"{_mcp_execution_contract(repository, paths)}\n"
                 f"{end}"
             )
         return (

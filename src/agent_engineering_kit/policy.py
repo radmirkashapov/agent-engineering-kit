@@ -26,7 +26,6 @@ _ENUM_DOMAINS = {
 }
 TECHNICAL_INVARIANTS = (
     {"key": "secrets.in_git", "value": False, "classification": "invariant"},
-    {"key": "conventions.override", "value": False, "classification": "invariant"},
     {"key": "policy.invariants_override", "value": False, "classification": "invariant"},
 )
 
@@ -202,7 +201,7 @@ def effective_policy(repository: Path, paths: KitPaths, project: LogicalProject 
                 "source": f"project:{project.identifier}",
                 "entries": [{"key": "client.preferred", "value": preferred, "classification": "preference"}],
             })
-    conventions = load_conventions(repository, project)
+    conventions = load_conventions(repository, project, paths=paths if include_local else None)
     final_layers = [
         {
             "source": item["source"],
@@ -212,7 +211,13 @@ def effective_policy(repository: Path, paths: KitPaths, project: LogicalProject 
     ]
     final_layers.append({"source": "technical-invariants", "entries": list(TECHNICAL_INVARIANTS)})
     overrides = load_policy_overrides(repository, paths, project.identifier if project else None) if include_local else []
-    return resolve_policy(layers, overrides, final_layers=final_layers)
+    resolved = resolve_policy(layers, overrides, final_layers=final_layers)
+    from .local_runtime import model_enforcement
+    if include_local and not model_enforcement(paths, project.identifier if project else None):
+        resolved.values.pop("models.allowed", None)
+        resolved.classifications.pop("models.allowed", None)
+        resolved.values["models.enforcement"] = False
+    return resolved
 
 
 def validate_policy(repository: Path, paths: KitPaths, project: LogicalProject | None = None, *, include_local: bool = True) -> ValidationResult:

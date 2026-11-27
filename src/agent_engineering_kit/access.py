@@ -11,7 +11,7 @@ from .result import ValidationResult
 from .schema import repository_schema_path, validate_instance
 
 
-ACCESS_KINDS = frozenset({"mcp", "skills"})
+ACCESS_KINDS = frozenset({"mcp", "skills", "agents", "rules", "conventions"})
 
 
 @dataclass(frozen=True)
